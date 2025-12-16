@@ -16,6 +16,8 @@
 !.config/i3status
 !.config/i3status/conf/crontabfig/crontab
 !.config/rofimoji.rc
+!.cursor/
+!.cursor/mcp.json
 !.gitconfig
 !.gitignore
 !.gitignore_global

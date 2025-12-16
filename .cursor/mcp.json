@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "stack-mcp-server": {
+      "command": "npx",
+      "args": [
+          "mcp-remote",
+          "mcp.stackoverflow.com"
+      ]
+    }
+  }
+}
