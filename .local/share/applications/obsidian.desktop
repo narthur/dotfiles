@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Obsidian
+Exec=/home/narthur/.local/bin/obsidian %u
+Icon=obsidian
+Categories=Office;
+Terminal=false
+MimeType=x-scheme-handler/obsidian;
