@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Emoji
+Comment=Pick and copy emoji via rofimoji (Rofi mode)
+Exec=rofi -modi "emoji:rofimoji" -show emoji
+Terminal=false
+Categories=Utility;
+Keywords=emoji;emoticon;picker;rofi;

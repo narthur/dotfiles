@@ -1,0 +1,97 @@
+#!/bin/bash
+
+set -euo pipefail
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Logging functions
+log() {
+    echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')]${NC} $1"
+}
+
+log_success() {
+    echo -e "${GREEN}[$(date '+%Y-%m-%d %H:%M:%S')] ✓${NC} $1"
+}
+
+log_error() {
+    echo -e "${RED}[$(date '+%Y-%m-%d %H:%M:%S')] ✗${NC} $1" >&2
+}
+
+log_section() {
+    echo ""
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${BLUE}  $1${NC}"
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+}
+
+# Run a command with logging
+run() {
+    local description="$1"
+    shift
+    log "Running: $description"
+    if "$@"; then
+        log_success "$description"
+        return 0
+    else
+        log_error "$description failed (exit code: $?)"
+        return 1
+    fi
+}
+
+log_section "Apt Packages"
+run "apt update" sudo apt update
+run "apt install packages" sudo apt install -y $(grep -v '^#' ~/packages.txt | tr '\n' ' ')
+
+log_section "Brew Packages"
+run "brew bundle install" brew bundle install --global
+
+log_section "Pipx Packages"
+run "pipx ensurepath" pipx ensurepath
+run "pipx install rofimoji" pipx install rofimoji
+
+log_section "Binary Manager (bin)"
+if ! command -v bin &> /dev/null; then
+    log "bin not found, installing..."
+    run "download bin" curl -L -o /tmp/bin https://github.com/marcosnils/bin/releases/download/v0.24.2/bin_0.24.2_linux_amd64
+    run "install bin" /tmp/bin install github.com/marcosnils/bin
+else
+    log "bin already installed"
+fi
+
+run "update bin" bin update bin
+run "ensure buzz installed" bash -c 'bin ensure buzz || bin install github.com/pinepeakdigital/buzz'
+
+log_section "GitHub CLI"
+# Source: https://github.com/cli/cli/blob/trunk/docs/install_linux.md
+if ! command -v gh &> /dev/null; then
+    log "gh not found, installing..."
+    run "ensure wget installed" bash -c 'type -p wget >/dev/null || (sudo apt update && sudo apt install wget -y)'
+    run "create keyrings directory" sudo mkdir -p -m 755 /etc/apt/keyrings
+    
+    out=$(mktemp)
+    run "download gh keyring" wget -nv -O"$out" https://cli.github.com/packages/githubcli-archive-keyring.gpg
+    run "install gh keyring" sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg < "$out" > /dev/null
+    run "set keyring permissions" sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+    
+    run "create sources.list.d" sudo mkdir -p -m 755 /etc/apt/sources.list.d
+    run "add gh apt source" bash -c 'echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null'
+    run "apt update for gh" sudo apt update
+    run "apt install gh" sudo apt install gh -y
+else
+    log_success "gh already installed"
+fi
+
+log_section "asdf Plugins"
+run "add nodejs plugin" asdf plugin add nodejs https://github.com/asdf-vm/asdf-nodejs.git || true
+run "add pnpm plugin" asdf plugin add pnpm || true
+run "add ruby plugin" asdf plugin add ruby https://github.com/asdf-vm/asdf-ruby.git || true
+
+log_section "LLM Plugins"
+run "install llm-anthropic" llm install llm-anthropic
+
+log_section "Complete"
+log_success "All packages installed successfully!"

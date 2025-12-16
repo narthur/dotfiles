@@ -1,0 +1,24 @@
+#!/bin/bash
+
+# Get the directory where this script is located
+SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
+
+# Loop through the last 7 days (including today)
+for days_ago in {6..0}; do
+  target_date=$(date -d "$days_ago days ago" +%Y-%m-%d)
+  REQUEST_ID="$target_date"
+
+  # Get work time in seconds from ActivityWatch
+  seconds=$("$SCRIPT_DIR/get-work-time" "$target_date")
+
+  # Handle null/empty result
+  if [ -z "$seconds" ] || [ "$seconds" = "null" ]; then
+    seconds=0
+  fi
+
+  # Convert seconds to hours (with 2 decimal places)
+  hours=$(echo "scale=2; $seconds / 3600" | bc | sed 's/^\./0./')
+
+  echo "Syncing $target_date: $hours hours"
+  buzz add --requestid "$REQUEST_ID" bizsys "$hours" "Desktop work time for ${REQUEST_ID}"
+done

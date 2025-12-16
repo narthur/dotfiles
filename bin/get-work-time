@@ -1,0 +1,37 @@
+#!/bin/bash
+
+# Accept optional date argument (format: YYYY-MM-DD), defaults to today
+target_date="${1:-$(date +%Y-%m-%d)}"
+
+# Get timestamps for the target date
+day_start=$(date -d "$target_date" +%Y-%m-%dT00:00:00%:z)
+day_end=$(date -d "$target_date + 1 day" +%Y-%m-%dT00:00:00%:z)
+timeperiod="${day_start}/${day_end}"
+
+# Fetch settings including categories
+settings=$(curl -s 'http://localhost:5600/api/0/settings')
+
+# Extract categories from settings and transform to query format
+# Settings format: {"name": [...], "rule": {...}} -> Query format: [[...], {...}]
+# Filter out categories with null type (like "Uncategorized")
+categories=$(echo "$settings" | jq -c '[.classes[] | select(.rule.type != null) | [.name, .rule]]')
+
+# Build the query with dynamic categories
+query=$(jq -n --argjson cats "$categories" --arg tp "$timeperiod" '{
+  "query": [
+    "afk_events = query_bucket(find_bucket(\"aw-watcher-afk_\"));",
+    "window_events = query_bucket(find_bucket(\"aw-watcher-window_\"));",
+    "window_events = filter_period_intersect(window_events, filter_keyvals(afk_events, \"status\", [\"not-afk\"]));",
+    "merged_events = merge_events_by_keys(window_events, [\"app\", \"title\"]);",
+    ("merged_events = categorize(merged_events, " + ($cats | tostring) + ");"),
+    "RETURN = merged_events;",
+    ";"
+  ],
+  "timeperiods": [$tp]
+}')
+
+# Run query and filter for Work category, then sum durations
+curl -s 'http://localhost:5600/api/0/query/' \
+  -X POST \
+  -H 'Content-Type: application/json' \
+  --data-raw "$query" | jq '[.[0][] | select(.data["$category"][0] == "Work") | .duration] | add'

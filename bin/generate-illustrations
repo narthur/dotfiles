@@ -1,0 +1,109 @@
+#!/bin/bash
+
+model="anthropic/claude-3-haiku-20240307"
+
+prompt=$(cat <<'PROMPT_END'
+Please provide me with prompts for an image generator to create illustrations for the following 
+article. Generate TWO prompts for each of the following abstractness levels (8 prompts total):
+
+1. VERY CONCRETE: Literal, representational illustrations showing specific scenes, objects, people, 
+   or events directly from the article. These should be recognizable depictions of the article's 
+   subject matter.
+
+2. MODERATELY CONCRETE: Semi-representational illustrations that show recognizable elements from 
+   the article but with some symbolic or metaphorical interpretation. The connection to the article 
+   should be clear but not purely literal.
+
+3. MODERATELY ABSTRACT: Symbolic or metaphorical illustrations that represent concepts, themes, 
+   or emotions from the article through visual metaphors, abstracted forms, or conceptual imagery. 
+   The connection to the article should be interpretable but not immediately obvious.
+
+4. VERY ABSTRACT: Highly abstract, non-representational illustrations that capture the essence, 
+   mood, or energy of the article through pure form, color, texture, and composition. The 
+   connection to the article should be felt rather than seen.
+
+CRITICAL: Before creating prompts, carefully analyze the article content. Extract key themes, 
+concepts, subjects, and visual elements from the article. Each prompt must directly reflect and 
+connect to specific aspects of the article's content - its subject matter, themes, concepts, or 
+narrative elements. Do not create generic artistic prompts; instead, ensure each prompt visually 
+represents something meaningful from the article, even at the most abstract levels.
+
+For each prompt, include:
+- Visual elements appropriate to the abstractness level (from literal to purely abstract)
+- Specific art medium and technique (e.g., "Oil painting", "Watercolor", "Acrylic", "Impasto technique")
+- Detailed color palette descriptions that reflect the mood and themes of the article
+- Lighting details that enhance the article's atmosphere
+- Texture and brushwork (e.g., "visible brushstrokes", "heavy texture", "smooth blended surfaces")
+- Artistic style references that complement the article's tone and abstractness level
+- Composition and mood elements that capture the essence of the article
+- Specific visual details that create atmosphere and depth while staying true to the article's content
+
+Make each prompt rich, evocative, and detailed - like a professional art director's brief. Use 
+artistic terminology and descriptive language that will produce high-quality, visually striking 
+illustrations that are thematically connected to the article.
+
+IMPORTANT: Output ONLY the prompts, one per line, with no introductions, summaries, explanations, 
+or numbering. Each line should be a complete, detailed prompt ready to use. Do not include any 
+other text. Order the prompts: two very concrete, two moderately concrete, two moderately abstract, 
+two very abstract.
+PROMPT_END
+)
+
+echo "Paste your text (type 'END' on a new line when finished):"
+pasted_text=$(sed '/^END$/q' | sed '$d')
+
+# Append the pasted text to the prompt
+full_prompt="$prompt
+
+$pasted_text"
+
+llm keys list
+llm models list | grep $model
+
+script_dir="/mnt/backup/ProgrammingProjects/z-experiments"
+images_dir="$script_dir/images"
+output_dir="$HOME/Pictures/Illustrations"
+
+full_response=$(llm prompt --model $model "$full_prompt")
+
+echo ""
+echo "=== Full LLM Response ==="
+echo "$full_response"
+echo "=== End of Response ==="
+echo ""
+
+read -p "Press Enter to start image generation, or Ctrl+C to cancel..."
+
+# Create output directory if it doesn't exist
+mkdir -p "$output_dir"
+
+image_width=1024
+image_height=608
+
+while IFS= read -r prompt_line; do
+    if [[ -n "$prompt_line" ]]; then
+        echo "Processing: $prompt_line"
+
+        # Run image generation locally
+        (
+            cd "$script_dir"
+            source .venv/bin/activate
+            python main.py --prompt "$prompt_line" \
+                --width "$image_width" \
+                --height "$image_height"
+        )
+
+        # Get the most recently created image file
+        latest_image=$(ls -t "$images_dir"/*.png 2>/dev/null | head -1)
+        
+        if [[ -n "$latest_image" ]]; then
+            filename=$(basename "$latest_image")
+            echo "Copying: $filename"
+            
+            cp "$latest_image" "$output_dir/$filename"
+            echo "Saved to: $output_dir/$filename"
+        else
+            echo "Warning: No image found in $images_dir"
+        fi
+    fi
+done < <(echo "$full_response")

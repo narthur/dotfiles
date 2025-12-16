@@ -1,0 +1,23 @@
+#!/bin/bash
+# Configure postfix for local-only mail delivery
+# This ensures cron job output is captured in local mailbox
+
+set -e
+
+echo "Configuring postfix for local-only delivery..."
+
+# Configure postfix to only listen on localhost
+sudo postconf -e "inet_interfaces = loopback-only"
+sudo postconf -e "mydestination = \$myhostname, localhost.\$mydomain, localhost"
+
+# Restart postfix to apply changes
+sudo systemctl restart postfix
+sudo systemctl enable postfix
+
+echo "✓ Postfix configured for local-only mail delivery"
+echo "✓ Cron jobs will now send output to local mailbox"
+echo ""
+echo "To read your mail, use:"
+echo "  mail        - Interactive mail reader"
+echo "  mail -H     - List messages"
+echo "  cat /var/mail/\$USER - View mailbox directly"

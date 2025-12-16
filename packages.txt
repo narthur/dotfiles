@@ -1,0 +1,15 @@
+bc
+build-essential
+curl
+feh
+i3
+i3blocks
+jq
+mailutils
+moreutils
+pipx
+postfix
+python3-venv
+rofi
+taskwarrior
+zoxide

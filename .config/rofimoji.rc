@@ -1,0 +1,8 @@
+# ~/.config/rofimoji.rc
+selector = rofi
+action = copy
+skin-tone = neutral
+max-recent = 10
+# Example extra tuning (uncomment to use):
+# hidden-descriptions = True
+# selector-args = "-kb-row-left Left -kb-row-right Right"

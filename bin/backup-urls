@@ -1,0 +1,97 @@
+#!/bin/bash
+
+# URL Backup Script
+# Downloads URLs weekly and keeps a year's worth of versions
+
+set -euo pipefail
+
+# Configuration
+BACKUP_DIR="$HOME/.local/share/backup-urls"
+URLS_FILE="$HOME/.config/backup-urls/urls.txt"
+LOG_FILE="$HOME/.local/log/backup-urls.log"
+MAX_AGE_DAYS=365
+
+# Create directories
+mkdir -p "$BACKUP_DIR"
+mkdir -p "$(dirname "$LOG_FILE")"
+
+# Function to log messages
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
+}
+
+# Function to clean old backups
+clean_old_backups() {
+    log "Cleaning backups older than $MAX_AGE_DAYS days..."
+    find "$BACKUP_DIR" -type f -mtime +$MAX_AGE_DAYS -delete 2>/dev/null || true
+    find "$BACKUP_DIR" -type d -empty -delete 2>/dev/null || true
+}
+
+# Function to download a URL
+download_url() {
+    local url="$1"
+    local timestamp=$(date '+%Y%m%d_%H%M%S')
+
+    # Extract filename from URL, or use a default
+    local filename=$(basename "$url")
+    if [[ "$filename" == "." ]] || [[ "$filename" == "" ]] || [[ "$filename" == "/" ]]; then
+        filename="index.html"
+    fi
+
+    # Create a safe directory name from the URL
+    local safe_url=$(echo "$url" | sed 's|https\?://||' | sed 's|/|_|g' | sed 's|[^a-zA-Z0-9._-]|_|g')
+    local backup_subdir="$BACKUP_DIR/$safe_url"
+    mkdir -p "$backup_subdir"
+
+    local output_file="$backup_subdir/${timestamp}_${filename}"
+
+    log "Downloading: $url"
+    if wget --timeout=30 --tries=3 --user-agent="Mozilla/5.0 (compatible; backup-script)" \
+            --output-document="$output_file" "$url" 2>>"$LOG_FILE"; then
+        log "Successfully downloaded: $url -> $output_file"
+
+        # Create a 'latest' symlink
+        local latest_link="$backup_subdir/latest_${filename}"
+        rm -f "$latest_link"
+        ln -s "$(basename "$output_file")" "$latest_link"
+    else
+        log "Failed to download: $url"
+        rm -f "$output_file"  # Remove empty/partial file
+        return 1
+    fi
+}
+
+# Main execution
+main() {
+    log "Starting URL backup process..."
+
+    # Check if URLs file exists
+    if [[ ! -f "$URLS_FILE" ]]; then
+        log "ERROR: URLs file not found at $URLS_FILE"
+        log "Please create this file with one URL per line"
+        exit 1
+    fi
+
+    # Clean old backups first
+    clean_old_backups
+
+    # Download each URL
+    local success_count=0
+    local total_count=0
+
+    while IFS= read -r url || [[ -n "$url" ]]; do
+        # Skip empty lines and comments
+        [[ -z "$url" ]] || [[ "$url" =~ ^[[:space:]]*# ]] && continue
+
+        total_count=$((total_count + 1))
+        if download_url "$url"; then
+            success_count=$((success_count + 1))
+        fi
+    done < "$URLS_FILE"
+
+    log "Backup process completed: $success_count/$total_count URLs downloaded successfully"
+    log "Backup directory: $BACKUP_DIR"
+}
+
+# Run main function
+main "$@"

@@ -1,0 +1,8 @@
+# After making changes to this file, reinstall using command:
+# crontab ~/.config/crontab
+
+PATH=/usr/local/bin:/usr/bin:/bin:/home/narthur/bin:/home/narthur/.local/bin:/home/linuxbrew/.linuxbrew/bin
+
+*/10 * * * * cron-run sync-work-time /home/narthur/bin/sync-work-time
+0 * * * * cron-run dashlane-sync dcli sync
+0 3 * * 0 cron-run backup-urls /home/narthur/bin/backup-urls

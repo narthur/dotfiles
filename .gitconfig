@@ -1,0 +1,15 @@
+[credential "https://github.com"]
+	helper = 
+	helper = !/usr/bin/gh auth git-credential
+[credential "https://gist.github.com"]
+	helper = 
+	helper = !/usr/bin/gh auth git-credential
+[init]
+	defaultBranch = main
+[user]
+	email = nathan@nathanarthur.com
+	name = Nathan Arthur
+[push]
+	autoSetupRemote = true
+[core]
+	excludesfile = /home/narthur/.gitignore_global
