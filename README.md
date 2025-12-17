@@ -36,6 +36,14 @@ Personal dotfiles and scripts for my Linux desktop setup.
 
 ### Scripts
 
+- **`.local/bin/slack-handler`** - Protocol handler for slack:// URLs
+  - Launches Flatpak Slack app when clicking slack:// links in browser
+  - Firefox setup:
+    1. Set `network.protocol-handler.expose.slack` to `false` in `about:config`
+    2. Set `network.protocol-handler.external.slack` to `true` in `about:config`
+    3. Restart Firefox
+    4. Click a slack:// link and choose `~/.local/bin/slack-handler` as the handler
+
 - **`bin/get-work-time`** - Fetches productive work time from ActivityWatch
   - Queries ActivityWatch API for window events
   - Uses your configured categories from ActivityWatch settings
