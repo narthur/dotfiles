@@ -125,6 +125,7 @@ export PATH="$PATH:/home/narthur/.local/bin"
 eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 . <(asdf completion bash)
 
+export XDG_DATA_DIRS="/var/lib/flatpak/exports/share:$XDG_DATA_DIRS"
 
 # Disabling zoxide doctor since my computer has bash-preexec installed which triggers
 # zoxide's warning. I determined this was the issue by running the following command:
