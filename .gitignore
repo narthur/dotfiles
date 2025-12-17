@@ -28,6 +28,7 @@
 !.local/share/applications
 !.local/share/applications/emoji-picker.desktop
 !.local/share/applications/obsidian.desktop
+!.local/share/applications/logout.desktop
 !bin/
 !bin/*
 !packages.txt
