@@ -13,3 +13,4 @@ python3-venv
 rofi
 taskwarrior
 zoxide
+flatpak

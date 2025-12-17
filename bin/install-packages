@@ -93,5 +93,9 @@ run "add ruby plugin" asdf plugin add ruby https://github.com/asdf-vm/asdf-ruby.
 log_section "LLM Plugins"
 run "install llm-anthropic" llm install llm-anthropic
 
+log_section "Flatpak packages"
+run "add flathub remote" flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+run "install slack" flatpak install flathub com.slack.Slack
+
 log_section "Complete"
 log_success "All packages installed successfully!"
