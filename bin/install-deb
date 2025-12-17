@@ -1,0 +1,32 @@
+#!/bin/bash
+
+set -euo pipefail
+
+if [[ $# -ne 1 ]]; then
+    echo "Usage: install-deb <path-to-deb-file>"
+    exit 1
+fi
+
+deb_file="$1"
+
+if [[ ! -f "$deb_file" ]]; then
+    echo "Error: File not found: $deb_file"
+    exit 1
+fi
+
+# Get absolute path so apt recognizes it as a local file
+deb_file="$(realpath "$deb_file")"
+
+echo "Making executable: $deb_file"
+chmod +x "$deb_file"
+
+echo "Installing: $deb_file"
+sudo apt install "$deb_file"
+
+read -p "Delete $deb_file? [y/N] " confirm
+if [[ "$confirm" =~ ^[Yy]$ ]]; then
+    rm "$deb_file"
+    echo "Deleted: $deb_file"
+else
+    echo "Kept: $deb_file"
+fi
