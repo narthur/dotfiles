@@ -1,0 +1,201 @@
+#!/usr/bin/env bash
+
+# recent-commits - List recent git commits with improved formatting
+# Usage:
+#   bash recent-commits [--days N] [--limit N] [--author AUTHOR] [--format FORMAT]
+
+set -euo pipefail
+
+DAYS=7
+LIMIT=0
+AUTHOR=""
+FORMAT="human"
+DEBUG=false
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --days|-d) DAYS="$2"; shift 2;;
+    --limit|-l) LIMIT="$2"; shift 2;;
+    --author|-a) AUTHOR="$2"; shift 2;;
+    --format|-f) FORMAT="$2"; shift 2;;
+    --debug) DEBUG=true; shift;;
+    -h|--help)
+      cat <<EOF
+Usage: $0 [options]
+
+Options:
+  --days|-d N        Number of days to look back (default: 7)
+  --limit|-l N       Limit number of results
+  --author|-a USER   Filter by author email/name
+  --format FORMAT    Output format: human, json (default: human)
+  --debug            Show debug information
+  -h, --help         Show this help
+
+Examples:
+  $0 --days 14
+  $0 --limit 10 --author "user@example.com"
+  $0 --format json
+EOF
+      exit 0
+      ;;
+    *) echo "Unknown option: $1" >&2; exit 1;;
+  esac
+done
+
+# Debug output
+if [[ "$DEBUG" == true ]]; then
+  echo "Debug: Days: $DAYS" >&2
+  echo "Debug: Limit: $LIMIT" >&2
+  echo "Debug: Author: ${AUTHOR:-all}" >&2
+  echo "Debug: Format: $FORMAT" >&2
+fi
+
+# Function to calculate relative time
+relative_time() {
+  local timestamp="$1"
+  local now=$(date +%s)
+  local then=$(date -d "$timestamp" +%s 2>/dev/null || echo "$now")
+  local diff=$((now - then))
+  
+  if [[ $diff -lt 3600 ]]; then
+    echo "$((diff / 60))m ago"
+  elif [[ $diff -lt 86400 ]]; then
+    echo "$((diff / 3600))h ago"
+  elif [[ $diff -lt 604800 ]]; then
+    echo "$((diff / 86400))d ago"
+  else
+    echo "$((diff / 604800))w ago"
+  fi
+}
+
+# Build git log command
+GIT_CMD="git --no-pager log --all --since=\"$DAYS days ago\""
+if [[ -n "$AUTHOR" ]]; then
+  GIT_CMD="$GIT_CMD --author=\"$AUTHOR\""
+fi
+if [[ "$LIMIT" -gt 0 ]]; then
+  GIT_CMD="$GIT_CMD --max-count=$LIMIT"
+fi
+GIT_CMD="$GIT_CMD --format=\"%H|%ae|%an|%at|%s\""
+
+# Fetch commits
+COMMITS=$(eval "$GIT_CMD" 2>&1) || {
+  echo "Error: Failed to fetch commits." >&2
+  exit 1
+}
+
+# Output based on format
+if [[ "$FORMAT" == "json" ]]; then
+  echo "$COMMITS" | while IFS='|' read -r hash email author timestamp subject; do
+    if [[ -z "$hash" ]]; then continue; fi
+    date_str=$(date -d "@$timestamp" -Iseconds 2>/dev/null || echo "")
+    jq -n \
+      --arg hash "$hash" \
+      --arg email "$email" \
+      --arg author "$author" \
+      --arg timestamp "$timestamp" \
+      --arg date "$date_str" \
+      --arg subject "$subject" \
+      '{hash: $hash, email: $email, author: $author, timestamp: $timestamp, date: $date, subject: $subject}'
+  done | jq -s '.'
+else
+  # Human-readable table format
+  # Count commits (lines with pipe separator)
+  if [[ -z "$COMMITS" ]] || [[ "$COMMITS" =~ ^[[:space:]]*$ ]]; then
+    COUNT=0
+  else
+    COUNT=$(echo "$COMMITS" | grep -c '|' || echo "0")
+  fi
+  echo "Recent Commits (last $DAYS days)"
+  if [[ -n "$AUTHOR" ]]; then
+    echo "Author: $AUTHOR"
+  fi
+  echo "Found: $COUNT commits"
+  echo ""
+  
+  if [[ "$COUNT" -eq 0 ]]; then
+    echo "No commits found matching the criteria."
+    echo ""
+    echo "Search criteria:"
+    echo "  - Committed in last $DAYS days"
+    if [[ -n "$AUTHOR" ]]; then
+      echo "  - Author: $AUTHOR"
+    fi
+    if [[ "$LIMIT" -gt 0 ]]; then
+      echo "  - Limit: $LIMIT"
+    fi
+    echo ""
+    echo "Try:"
+    echo "  - Increasing days: $0 --days $((DAYS * 2))"
+    if [[ -n "$AUTHOR" ]]; then
+      echo "  - Removing author filter: $0 --author ''"
+    fi
+    exit 0
+  fi
+  
+  # Get terminal width (default to 80 if not available)
+  TERM_WIDTH=${COLUMNS:-$(tput cols 2>/dev/null || echo 80)}
+  
+  # Fixed column widths
+  HASH_WIDTH=10   # Hash column (short hash)
+  AUTHOR_WIDTH=20 # Author column
+  TIME_WIDTH=10   # Time column
+  EMAIL_WIDTH=25  # Email column
+  
+  # Calculate subject width (remaining space after fixed columns and spacing)
+  SPACING=4  # 4 spaces between columns
+  SUBJECT_WIDTH=$((TERM_WIDTH - HASH_WIDTH - AUTHOR_WIDTH - TIME_WIDTH - EMAIL_WIDTH - SPACING))
+  # Ensure minimum subject width
+  if [[ $SUBJECT_WIDTH -lt 20 ]]; then
+    SUBJECT_WIDTH=20
+  fi
+  
+  # Print header
+  printf "%-${HASH_WIDTH}s %-${AUTHOR_WIDTH}s %-${EMAIL_WIDTH}s %-${TIME_WIDTH}s %-${SUBJECT_WIDTH}s\n" \
+    "Hash" "Author" "Email" "Time" "Subject"
+  
+  # Print separator line
+  printf "%-${HASH_WIDTH}s %-${AUTHOR_WIDTH}s %-${EMAIL_WIDTH}s %-${TIME_WIDTH}s %-${SUBJECT_WIDTH}s\n" \
+    "$(printf '%*s' $HASH_WIDTH '' | tr ' ' '-')" \
+    "$(printf '%*s' $AUTHOR_WIDTH '' | tr ' ' '-')" \
+    "$(printf '%*s' $EMAIL_WIDTH '' | tr ' ' '-')" \
+    "$(printf '%*s' $TIME_WIDTH '' | tr ' ' '-')" \
+    "$(printf '%*s' $SUBJECT_WIDTH '' | tr ' ' '-')"
+  
+  # Print commits
+  echo "$COMMITS" | while IFS='|' read -r hash email author timestamp subject; do
+    if [[ -z "$hash" ]]; then continue; fi
+    
+    # Format short hash with color
+    short_hash="${hash:0:7}"
+    color_reset=$'\033[0m'
+    color_hash=$'\033[36m'  # Cyan
+    hash_fmt="${color_hash}${short_hash}${color_reset}"
+    
+    # Format relative time
+    date_str=$(date -d "@$timestamp" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "")
+    relative=$(relative_time "$date_str")
+    
+    # Truncate long subjects to fit terminal width
+    subject_short="${subject:0:$((SUBJECT_WIDTH - 3))}"
+    [[ ${#subject} -gt $((SUBJECT_WIDTH - 3)) ]] && subject_short="${subject_short}..."
+    
+    # Truncate author name if needed
+    author_short="$author"
+    if [[ ${#author} -gt $AUTHOR_WIDTH ]]; then
+      author_short="${author:0:$((AUTHOR_WIDTH - 2))}.."
+    fi
+    
+    # Truncate email if needed
+    email_short="$email"
+    if [[ ${#email} -gt $EMAIL_WIDTH ]]; then
+      email_short="${email:0:$((EMAIL_WIDTH - 2))}.."
+    fi
+    
+    printf "%-${HASH_WIDTH}s %-${AUTHOR_WIDTH}s %-${EMAIL_WIDTH}s %-${TIME_WIDTH}s %-${SUBJECT_WIDTH}s\n" \
+      "$hash_fmt" "$author_short" "$email_short" "$relative" "$subject_short"
+  done
+  
+  echo ""
+fi
