@@ -127,6 +127,15 @@ eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 
 export XDG_DATA_DIRS="/var/lib/flatpak/exports/share:$XDG_DATA_DIRS"
 
+# pnpm
+export PNPM_HOME="/home/narthur/.local/share/pnpm"
+case ":$PATH:" in
+  *":$PNPM_HOME:"*) ;;
+  *) export PATH="$PNPM_HOME:$PATH" ;;
+esac
+# pnpm end
+
+
 # Disabling zoxide doctor since my computer has bash-preexec installed which triggers
 # zoxide's warning. I determined this was the issue by running the following command:
 # echo "${PROMPT_COMMAND}"
