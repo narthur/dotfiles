@@ -69,6 +69,26 @@ relative_time() {
   fi
 }
 
+# Function to format hash with ANSI colors
+# Returns hash padded to consistent width for column alignment
+format_hash() {
+  local hash="$1"
+  local short_hash="${hash:0:7}"
+  local visible_len=7  # Short hash is always 7 characters
+  local color_reset=$'\033[0m'
+  local color_hash=$'\033[36m'  # Cyan
+  local hash_str="${color_hash}${short_hash}${color_reset}"
+  
+  # Pad to HASH_WIDTH characters for consistent column width
+  # Calculate padding based on visible text length (ANSI codes don't count)
+  local padding=$((10 - visible_len))  # HASH_WIDTH is 10
+  if [[ $padding -gt 0 ]]; then
+    printf "%s%*s" "$hash_str" "$padding" ""
+  else
+    printf "%s" "$hash_str"
+  fi
+}
+
 # Build git log command
 GIT_CMD="git --no-pager log --all --since=\"$DAYS days ago\""
 if [[ -n "$AUTHOR" ]]; then
@@ -167,11 +187,8 @@ else
   echo "$COMMITS" | while IFS='|' read -r hash email author timestamp subject; do
     if [[ -z "$hash" ]]; then continue; fi
     
-    # Format short hash with color
-    short_hash="${hash:0:7}"
-    color_reset=$'\033[0m'
-    color_hash=$'\033[36m'  # Cyan
-    hash_fmt="${color_hash}${short_hash}${color_reset}"
+    # Format hash with color and proper padding
+    hash_fmt=$(format_hash "$hash")
     
     # Format relative time
     date_str=$(date -d "@$timestamp" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "")
@@ -193,7 +210,8 @@ else
       email_short="${email:0:$((EMAIL_WIDTH - 2))}.."
     fi
     
-    printf "%-${HASH_WIDTH}s %-${AUTHOR_WIDTH}s %-${EMAIL_WIDTH}s %-${TIME_WIDTH}s %-${SUBJECT_WIDTH}s\n" \
+    # Note: hash_fmt already includes padding, so we don't use %-${HASH_WIDTH}s
+    printf "%s %-${AUTHOR_WIDTH}s %-${EMAIL_WIDTH}s %-${TIME_WIDTH}s %-${SUBJECT_WIDTH}s\n" \
       "$hash_fmt" "$author_short" "$email_short" "$relative" "$subject_short"
   done
   
