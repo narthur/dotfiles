@@ -1,0 +1,287 @@
+#!/usr/bin/env bash
+
+# recent-issues - List recent GitHub issues with improved formatting
+# Usage:
+#   bash recent-issues [--days N] [--state STATE] [--json] [--human] [--limit N] [--assignee USER]
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+DAYS=7
+STATE="all"
+FORMAT="human"
+LIMIT=0
+ASSIGNEE=""
+DEBUG=false
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --days|-d) DAYS="$2"; shift 2;;
+    --state|-s) STATE="$2"; shift 2;;
+    --json) FORMAT="json"; shift;;
+    --human) FORMAT="human"; shift;;
+    --limit|-l) LIMIT="$2"; shift 2;;
+    --assignee|-a) ASSIGNEE="$2"; shift 2;;
+    --debug) DEBUG=true; shift;;
+    -h|--help)
+      cat <<EOF
+Usage: $0 [options]
+
+Options:
+  --days|-d N        Number of days to look back (default: 7)
+  --state STATE      Issue state: all, open, closed (default: all)
+  --json             JSON output format
+  --human            Human-readable format (default)
+  --limit|-l N       Limit number of results
+  --assignee|-a USER Filter by assignee
+  --debug            Show debug information (query, etc.)
+  -h, --help         Show this help
+
+Examples:
+  $0 --days 14 --state open
+  $0 --json --limit 10
+  $0 --assignee narthur --days 30
+EOF
+      exit 0
+      ;;
+    *) echo "Unknown option: $1" >&2; exit 1;;
+  esac
+done
+
+# Build search query
+SINCE=$(date -u -d "$DAYS days ago" +%Y-%m-%d)
+SEARCH_QUERY="updated:>=$SINCE sort:updated-desc"
+
+# Build command arguments
+CMD_ARGS=("--state" "$STATE")
+if [[ -n "$SEARCH_QUERY" ]]; then
+  CMD_ARGS+=("--search" "$SEARCH_QUERY")
+fi
+if [[ "$LIMIT" -gt 0 ]]; then
+  CMD_ARGS+=("--limit" "$LIMIT")
+fi
+if [[ -n "$ASSIGNEE" ]]; then
+  CMD_ARGS+=("--assignee" "$ASSIGNEE")
+fi
+
+# Debug output
+if [[ "$DEBUG" == true ]]; then
+  echo "Debug: Search query: $SEARCH_QUERY" >&2
+  echo "Debug: Command: gh issue list ${CMD_ARGS[*]}" >&2
+  echo "Debug: Since date: $SINCE" >&2
+  if [[ -n "$ASSIGNEE" ]]; then
+    echo "Debug: Assignee filter: $ASSIGNEE" >&2
+  fi
+fi
+
+# Fetch issues
+ISSUES_JSON=$(gh issue list "${CMD_ARGS[@]}" \
+  --json number,title,author,updatedAt,state,url,labels,assignees,comments,closedAt 2>&1) || {
+  echo "Error: Failed to fetch issues. Check your GitHub CLI authentication and permissions." >&2
+  exit 1
+}
+
+# Function to calculate relative time
+relative_time() {
+  local timestamp="$1"
+  local now=$(date +%s)
+  local then=$(date -d "$timestamp" +%s 2>/dev/null || echo "$now")
+  local diff=$((now - then))
+  
+  if [[ $diff -lt 3600 ]]; then
+    echo "$((diff / 60))m ago"
+  elif [[ $diff -lt 86400 ]]; then
+    echo "$((diff / 3600))h ago"
+  elif [[ $diff -lt 604800 ]]; then
+    echo "$((diff / 86400))d ago"
+  else
+    echo "$((diff / 604800))w ago"
+  fi
+}
+
+# Function to format state with ANSI colors
+# Returns state padded to consistent width for column alignment
+format_state() {
+  local state="$1"
+  local state_str=""
+  local color_reset=$'\033[0m'
+  local visible_len=0
+  
+  case "$state" in
+    OPEN)
+      local color=$'\033[32m'  # Green
+      state_str="${color}open${color_reset}"
+      visible_len=4  # "open"
+      ;;
+    CLOSED)
+      local color=$'\033[31m'  # Red
+      state_str="${color}closed${color_reset}"
+      visible_len=6  # "closed"
+      ;;
+    *)
+      state_str="$state"
+      visible_len=${#state}
+      ;;
+  esac
+  # Pad to 8 characters for consistent column width
+  # Calculate padding based on visible text length (ANSI codes don't count)
+  local padding=$((8 - visible_len))
+  if [[ $padding -gt 0 ]]; then
+    printf "%s%*s" "$state_str" "$padding" ""
+  else
+    printf "%s" "$state_str"
+  fi
+}
+
+# Function to format number with color
+format_number() {
+  local number="$1"
+  local color_reset=$'\033[0m'
+  local color_num=$'\033[36m'  # Cyan
+  local num_str="${color_num}#$number${color_reset}"
+  local visible_len=$((${#number} + 1))  # +1 for the #
+  
+  # Pad to 8 characters for consistent column width
+  local padding=$((8 - visible_len))
+  if [[ $padding -gt 0 ]]; then
+    printf "%s%*s" "$num_str" "$padding" ""
+  else
+    printf "%s" "$num_str"
+  fi
+}
+
+# Output based on format
+if [[ "$FORMAT" == "json" ]]; then
+  echo "$ISSUES_JSON" | jq '.'
+else
+  # Human-readable table format
+  COUNT=$(echo "$ISSUES_JSON" | jq 'length')
+  echo "Recent Issues (last $DAYS days)"
+  echo "State: $STATE | Found: $COUNT issues"
+  if [[ -n "$ASSIGNEE" ]]; then
+    echo "Assignee: $ASSIGNEE"
+  fi
+  echo ""
+  
+  if [[ "$COUNT" -eq 0 ]]; then
+    echo "No issues found matching the criteria."
+    echo ""
+    echo "Search criteria:"
+    echo "  - Updated in last $DAYS days (since $SINCE)"
+    echo "  - State: $STATE"
+    if [[ -n "$ASSIGNEE" ]]; then
+      echo "  - Assignee: $ASSIGNEE"
+    fi
+    echo ""
+    echo "Try:"
+    echo "  - Increasing days: $0 --days $((DAYS * 2))"
+    echo "  - Removing assignee filter: $0 --assignee ''"
+    echo "  - Checking different state: $0 --state open"
+    if [[ "$DEBUG" != true ]]; then
+      echo "  - Debug mode: $0 --debug"
+    fi
+    exit 0
+  fi
+  
+  # Get terminal width (default to 80 if not available)
+  TERM_WIDTH=${COLUMNS:-$(tput cols 2>/dev/null || echo 80)}
+  
+  # Fixed column widths
+  NUM_WIDTH=8      # Number column
+  STATE_WIDTH=8    # State column
+  UPDATED_WIDTH=10 # Updated column
+  AUTHOR_WIDTH=20  # Author column
+  
+  # Calculate title width (remaining space after fixed columns and spacing)
+  # Account for: number + space + state + space + updated + space + author + space + title
+  SPACING=4  # 4 spaces between columns
+  TITLE_WIDTH=$((TERM_WIDTH - NUM_WIDTH - STATE_WIDTH - UPDATED_WIDTH - AUTHOR_WIDTH - SPACING))
+  # Ensure minimum title width
+  if [[ $TITLE_WIDTH -lt 20 ]]; then
+    TITLE_WIDTH=20
+  fi
+  
+  # Print header
+  printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${AUTHOR_WIDTH}s %-${TITLE_WIDTH}s\n" \
+    "Number" "State" "Updated" "Author" "Title"
+  
+  # Print separator line
+  printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${AUTHOR_WIDTH}s %-${TITLE_WIDTH}s\n" \
+    "$(printf '%*s' $NUM_WIDTH '' | tr ' ' '-')" \
+    "$(printf '%*s' $STATE_WIDTH '' | tr ' ' '-')" \
+    "$(printf '%*s' $UPDATED_WIDTH '' | tr ' ' '-')" \
+    "$(printf '%*s' $AUTHOR_WIDTH '' | tr ' ' '-')" \
+    "$(printf '%*s' $TITLE_WIDTH '' | tr ' ' '-')"
+  
+  # Print issues
+  echo "$ISSUES_JSON" | jq -r '.[] | 
+    "\(.number)|\(.state)|\(.updatedAt)|\(.author.login)|\(.labels | map(.name) | join(",") // "")|\(.assignees | map(.login) | join(",") // "")|\(.comments | if type == "array" then length else 0 end)|\(.title)"' | \
+  while IFS='|' read -r number state updated author labels assignees comments title; do
+    relative=$(relative_time "$updated")
+    state_fmt=$(format_state "$state")
+    num_fmt=$(format_number "$number")
+    
+    # Truncate long titles to fit terminal width
+    title_short="${title:0:$((TITLE_WIDTH - 3))}"
+    [[ ${#title} -gt $((TITLE_WIDTH - 3)) ]] && title_short="${title_short}..."
+    
+    # Truncate author name if needed
+    author_short="$author"
+    if [[ ${#author} -gt $AUTHOR_WIDTH ]]; then
+      author_short="${author:0:$((AUTHOR_WIDTH - 2))}.."
+    fi
+    
+    printf "%s %s %-${UPDATED_WIDTH}s %-${AUTHOR_WIDTH}s %-${TITLE_WIDTH}s\n" \
+      "$num_fmt" "$state_fmt" "$relative" "$author_short" "$title_short"
+    
+    # Show labels and assignees on second line if present
+    second_line_parts=()
+    if [[ -n "$labels" ]] && [[ "$labels" != "null" ]] && [[ "$labels" != "" ]]; then
+      # Show first 2-3 labels max, truncate if needed
+      IFS=',' read -ra LABEL_ARRAY <<< "$labels"
+      label_display=""
+      for i in "${!LABEL_ARRAY[@]}"; do
+        if [[ $i -lt 3 ]]; then
+          label="${LABEL_ARRAY[$i]}"
+          if [[ ${#label} -gt 15 ]]; then
+            label="${label:0:12}..."
+          fi
+          if [[ -z "$label_display" ]]; then
+            label_display="🏷️  $label"
+          else
+            label_display="$label_display, $label"
+          fi
+        fi
+      done
+      [[ ${#LABEL_ARRAY[@]} -gt 3 ]] && label_display="${label_display}..."
+      second_line_parts+=("$label_display")
+    fi
+    
+    if [[ -n "$assignees" ]] && [[ "$assignees" != "null" ]] && [[ "$assignees" != "" ]]; then
+      assignee_display="👤 $assignees"
+      second_line_parts+=("$assignee_display")
+    fi
+    
+    # Safely check if comments is a number and greater than 0
+    if [[ -n "$comments" ]] && [[ "$comments" =~ ^[0-9]+$ ]] && [[ "$comments" -gt 0 ]]; then
+      comment_display="💬 $comments"
+      second_line_parts+=("$comment_display")
+    fi
+    
+    if [[ ${#second_line_parts[@]} -gt 0 ]]; then
+      second_line=$(IFS=' | '; echo "${second_line_parts[*]}")
+      # Truncate if too long
+      if [[ ${#second_line} -gt $TITLE_WIDTH ]]; then
+        second_line="${second_line:0:$((TITLE_WIDTH - 3))}..."
+      fi
+      printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${AUTHOR_WIDTH}s %-${TITLE_WIDTH}s\n" \
+        "" "" "" "" "  └─ $second_line"
+    fi
+  done
+  
+  echo ""
+  echo -e "Legend: \033[32mopen\033[0m \033[31mclosed\033[0m"
+  echo "        🏷️=labels 👤=assignees 💬=comments"
+fi
