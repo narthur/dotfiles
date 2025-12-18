@@ -1,0 +1,269 @@
+#!/usr/bin/env bash
+
+# recent-prs.sh - List recent pull requests with improved formatting
+# Usage:
+#   bash recent-prs.sh [--days N] [--state STATE] [--json] [--human] [--limit N]
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_FILE="$SCRIPT_DIR/../config.json"
+
+DAYS=7
+STATE="all"
+FORMAT="human"
+LIMIT=0
+OWNER=""
+DEBUG=false
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --days|-d) DAYS="$2"; shift 2;;
+    --state|-s) STATE="$2"; shift 2;;
+    --json) FORMAT="json"; shift;;
+    --human) FORMAT="human"; shift;;
+    --limit|-l) LIMIT="$2"; shift 2;;
+    --owner|-o) OWNER="$2"; shift 2;;
+    --debug) DEBUG=true; shift;;
+    -h|--help)
+      cat <<EOF
+Usage: $0 [options]
+
+Options:
+  --days|-d N        Number of days to look back (default: 7)
+  --state STATE      PR state: all, open, closed, merged (default: all)
+  --json             JSON output format
+  --human            Human-readable format (default)
+  --limit|-l N       Limit number of results
+  --owner|-o USER    Filter by owner/organization
+  --debug            Show debug information (query, etc.)
+  -h, --help         Show this help
+
+Examples:
+  $0 --days 14 --state open
+  $0 --json --limit 10
+  $0 --owner narthur --days 30
+EOF
+      exit 0
+      ;;
+    *) echo "Unknown option: $1" >&2; exit 1;;
+  esac
+done
+
+# Owner filtering is opt-in only (via --owner flag), not loaded from config
+
+# Build search query
+SINCE=$(date -u -d "$DAYS days ago" +%Y-%m-%d)
+SEARCH_QUERY="updated:>=$SINCE sort:updated-desc"
+
+# Build command arguments
+CMD_ARGS=("--state" "$STATE")
+if [[ -n "$SEARCH_QUERY" ]]; then
+  CMD_ARGS+=("--search" "$SEARCH_QUERY")
+fi
+if [[ "$LIMIT" -gt 0 ]]; then
+  CMD_ARGS+=("--limit" "$LIMIT")
+fi
+
+# Debug output
+if [[ "$DEBUG" == true ]]; then
+  echo "Debug: Search query: $SEARCH_QUERY" >&2
+  echo "Debug: Command: gh pr list ${CMD_ARGS[*]}" >&2
+  echo "Debug: Since date: $SINCE" >&2
+  if [[ -n "$OWNER" ]]; then
+    echo "Debug: Owner filter: $OWNER (note: owner filtering may need to be done post-query)" >&2
+  fi
+fi
+
+# Fetch PRs (owner filtering will be done post-query if needed)
+PRS_JSON=$(gh pr list "${CMD_ARGS[@]}" \
+  --json number,title,author,updatedAt,state,headRepository,headRepositoryOwner,url,labels,isDraft,reviewDecision 2>&1) || {
+  echo "Error: Failed to fetch PRs. Check your GitHub CLI authentication and permissions." >&2
+  exit 1
+}
+
+# Filter by owner only if explicitly specified via --owner flag
+if [[ -n "$OWNER" ]]; then
+  PRS_JSON=$(echo "$PRS_JSON" | jq --arg owner "$OWNER" '
+    map(select(
+      (.headRepository.owner.login == $owner) or 
+      (.headRepositoryOwner.login == $owner)
+    ))
+  ')
+  if [[ "$DEBUG" == true ]]; then
+    echo "Debug: Filtered by owner: $OWNER" >&2
+  fi
+fi
+
+# Function to calculate relative time
+relative_time() {
+  local timestamp="$1"
+  local now=$(date +%s)
+  local then=$(date -d "$timestamp" +%s 2>/dev/null || echo "$now")
+  local diff=$((now - then))
+  
+  if [[ $diff -lt 3600 ]]; then
+    echo "$((diff / 60))m ago"
+  elif [[ $diff -lt 86400 ]]; then
+    echo "$((diff / 3600))h ago"
+  elif [[ $diff -lt 604800 ]]; then
+    echo "$((diff / 86400))d ago"
+  else
+    echo "$((diff / 604800))w ago"
+  fi
+}
+
+# Function to format state with ANSI colors
+# Returns state padded to consistent width for column alignment
+format_state() {
+  local state="$1"
+  local is_draft="$2"
+  local state_str=""
+  local color_reset=$'\033[0m'
+  local visible_len=0
+  
+  case "$state" in
+    OPEN)
+      if [[ "$is_draft" == "true" ]]; then
+        local color=$'\033[90m'  # Gray
+        state_str="${color}draft${color_reset}"
+        visible_len=5  # "draft"
+      else
+        local color=$'\033[32m'  # Green
+        state_str="${color}open${color_reset}"
+        visible_len=4  # "open"
+      fi
+      ;;
+    CLOSED)
+      local color=$'\033[31m'  # Red
+      state_str="${color}closed${color_reset}"
+      visible_len=6  # "closed"
+      ;;
+    MERGED)
+      local color=$'\033[34m'  # Blue
+      state_str="${color}merged${color_reset}"
+      visible_len=6  # "merged"
+      ;;
+    *)
+      state_str="$state"
+      visible_len=${#state}
+      ;;
+  esac
+  # Pad to 8 characters for consistent column width
+  # Calculate padding based on visible text length (ANSI codes don't count)
+  local padding=$((8 - visible_len))
+  if [[ $padding -gt 0 ]]; then
+    printf "%s%*s" "$state_str" "$padding" ""
+  else
+    printf "%s" "$state_str"
+  fi
+}
+
+# Function to format review decision
+format_review() {
+  local decision="$1"
+  case "$decision" in
+    APPROVED) echo "✓ approved" ;;
+    CHANGES_REQUESTED) echo "⚠ changes" ;;
+    REVIEW_REQUIRED) echo "⏳ review" ;;
+    *) echo "" ;;
+  esac
+}
+
+
+# Output based on format
+if [[ "$FORMAT" == "json" ]]; then
+  echo "$PRS_JSON" | jq '.'
+else
+  # Human-readable table format
+  COUNT=$(echo "$PRS_JSON" | jq 'length')
+  echo "Recent Pull Requests (last $DAYS days)"
+  echo "State: $STATE | Found: $COUNT PRs"
+  if [[ -n "$OWNER" ]]; then
+    echo "Owner: $OWNER"
+  fi
+  echo ""
+  
+  if [[ "$COUNT" -eq 0 ]]; then
+    echo "No pull requests found matching the criteria."
+    echo ""
+    echo "Search criteria:"
+    echo "  - Updated in last $DAYS days (since $SINCE)"
+    echo "  - State: $STATE"
+    if [[ -n "$OWNER" ]]; then
+      echo "  - Owner: $OWNER"
+    fi
+    echo ""
+    echo "Try:"
+    echo "  - Increasing days: $0 --days $((DAYS * 2))"
+    echo "  - Removing owner filter: $0 --owner ''"
+    echo "  - Checking different state: $0 --state open"
+    if [[ "$DEBUG" != true ]]; then
+      echo "  - Debug mode: $0 --debug"
+    fi
+    exit 0
+  fi
+  
+  # Get terminal width (default to 80 if not available)
+  TERM_WIDTH=${COLUMNS:-$(tput cols 2>/dev/null || echo 80)}
+  
+  # Fixed column widths
+  NUM_WIDTH=8      # Number column
+  STATE_WIDTH=8    # State column (max visible width: "closed"/"merged" = 6 chars)
+  UPDATED_WIDTH=10 # Updated column
+  AUTHOR_WIDTH=20  # Author column
+  
+  # Calculate title width (remaining space after fixed columns and spacing)
+  # Account for: number + space + state + space + updated + space + author + space + title
+  SPACING=4  # 4 spaces between columns
+  TITLE_WIDTH=$((TERM_WIDTH - NUM_WIDTH - STATE_WIDTH - UPDATED_WIDTH - AUTHOR_WIDTH - SPACING))
+  # Ensure minimum title width
+  if [[ $TITLE_WIDTH -lt 20 ]]; then
+    TITLE_WIDTH=20
+  fi
+  
+  # Print header
+  printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${AUTHOR_WIDTH}s %-${TITLE_WIDTH}s\n" \
+    "Number" "State" "Updated" "Author" "Title"
+  
+  # Print separator line
+  printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${AUTHOR_WIDTH}s %-${TITLE_WIDTH}s\n" \
+    "$(printf '%*s' $NUM_WIDTH '' | tr ' ' '-')" \
+    "$(printf '%*s' $STATE_WIDTH '' | tr ' ' '-')" \
+    "$(printf '%*s' $UPDATED_WIDTH '' | tr ' ' '-')" \
+    "$(printf '%*s' $AUTHOR_WIDTH '' | tr ' ' '-')" \
+    "$(printf '%*s' $TITLE_WIDTH '' | tr ' ' '-')"
+  
+  # Print PRs
+  echo "$PRS_JSON" | jq -r '.[] | 
+    "\(.number)|\(.state)|\(if .headRepository.name and .headRepository.owner.login then "\(.headRepository.owner.login)/\(.headRepository.name)" elif .headRepositoryOwner.login and .headRepository.name then "\(.headRepositoryOwner.login)/\(.headRepository.name)" else "unknown/unknown" end)|\(.updatedAt)|\(.author.login)|\(.isDraft)|\(.reviewDecision // "none")|\(.title)"' | \
+  while IFS='|' read -r number state repo updated author draft review title; do
+    relative=$(relative_time "$updated")
+    state_fmt=$(format_state "$state" "$draft")
+    review_fmt=$(format_review "$review")
+    
+    # Truncate long titles to fit terminal width
+    title_short="${title:0:$((TITLE_WIDTH - 3))}"
+    [[ ${#title} -gt $((TITLE_WIDTH - 3)) ]] && title_short="${title_short}..."
+    
+    # Truncate author name if needed (max 10 chars to match column width)
+    author_short="$author"
+    if [[ ${#author} -gt $AUTHOR_WIDTH ]]; then
+      author_short="${author:0:$((AUTHOR_WIDTH - 2))}.."
+    fi
+    
+    printf "%-${NUM_WIDTH}s %s %-${UPDATED_WIDTH}s %-${AUTHOR_WIDTH}s %-${TITLE_WIDTH}s\n" \
+      "#$number" "$state_fmt" "$relative" "$author_short" "$title_short"
+    
+    # Show review status on second line if present
+    if [[ -n "$review_fmt" ]]; then
+      printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${AUTHOR_WIDTH}s %-${TITLE_WIDTH}s\n" \
+        "" "" "" "" "  └─ $review_fmt"
+    fi
+  done
+  
+  echo ""
+  echo -e "Legend: \033[32mopen\033[0m \033[31mclosed\033[0m \033[34mmerged\033[0m \033[90mdraft\033[0m"
+  echo "        ✓=approved ⚠=changes requested ⏳=review required"
+fi
