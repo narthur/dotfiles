@@ -17,6 +17,6 @@ signal=10
 separator_block_width=30
 
 [time]
-command=date '+%Y-%m-%d %H:%M'
+command=date '+%Y-%m-%d %H:%M '
 interval=60
 separator_block_width=30
