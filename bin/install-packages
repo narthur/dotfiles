@@ -90,6 +90,12 @@ run "add nodejs plugin" asdf plugin add nodejs https://github.com/asdf-vm/asdf-n
 run "add pnpm plugin" asdf plugin add pnpm || true
 run "add ruby plugin" asdf plugin add ruby https://github.com/asdf-vm/asdf-ruby.git || true
 
+log_section "asdf"
+run "install global tools" bash -c 'cd ~ && asdf install'
+
+log_section "Global pnpm packages"
+run "install neonctl" bash -c 'cd ~ && pnpm install -g neonctl'
+
 log_section "LLM Plugins"
 run "install llm-anthropic" llm install llm-anthropic
 
