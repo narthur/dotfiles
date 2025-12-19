@@ -1,0 +1,56 @@
+#!/bin/bash
+
+set -euo pipefail
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Logging functions
+log() {
+    echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')]${NC} $1"
+}
+
+log_success() {
+    echo -e "${GREEN}[$(date '+%Y-%m-%d %H:%M:%S')] ✓${NC} $1"
+}
+
+log_error() {
+    echo -e "${RED}[$(date '+%Y-%m-%d %H:%M:%S')] ✗${NC} $1" >&2
+}
+
+log_section() {
+    echo ""
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${BLUE}  $1${NC}"
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+}
+
+# Run a command with logging
+run() {
+    local description="$1"
+    shift
+    log "Running: $description"
+    if "$@"; then
+        log_success "$description"
+        return 0
+    else
+        log_error "$description failed (exit code: $?)"
+        return 1
+    fi
+}
+
+log_section "Setting Firefox ESR as Default Browser"
+
+run "Set default for text/html" xdg-mime default firefox-esr.desktop text/html
+run "Set default for application/xhtml+xml" xdg-mime default firefox-esr.desktop application/xhtml+xml
+run "Set default for x-scheme-handler/http" xdg-mime default firefox-esr.desktop x-scheme-handler/http
+run "Set default for x-scheme-handler/https" xdg-mime default firefox-esr.desktop x-scheme-handler/https
+
+log_section "Verification"
+log "Current default browser: $(xdg-mime query default text/html)"
+
+log_section "Complete"
+log_success "Firefox ESR is now the default browser!"

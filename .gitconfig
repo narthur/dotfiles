@@ -13,3 +13,5 @@
 	autoSetupRemote = true
 [core]
 	excludesfile = /home/narthur/.gitignore_global
+[pull]
+	rebase = true
