@@ -15,4 +15,4 @@ taskwarrior
 zoxide
 flatpak
 chromium
-
+qt6ct

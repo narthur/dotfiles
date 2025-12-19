@@ -135,6 +135,7 @@ case ":$PATH:" in
 esac
 # pnpm end
 
+export QT_QPA_PLATFORMTHEME=qt6ct
 
 # Disabling zoxide doctor since my computer has bash-preexec installed which triggers
 # zoxide's warning. I determined this was the issue by running the following command:
