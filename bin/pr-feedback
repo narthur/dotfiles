@@ -81,51 +81,191 @@ if [[ "$DEBUG" == true ]]; then
   echo "Debug: Repository: $OWNER/$REPO" >&2
 fi
 
-# Get review comment threads using GraphQL (includes resolution status)
-# Note: PR_NUMBER must be passed as an integer, not a string
-THREADS_JSON=$(gh api graphql -f query='
-  query($owner: String!, $repo: String!, $prNumber: Int!) {
-    repository(owner: $owner, name: $repo) {
-      pullRequest(number: $prNumber) {
-        reviewThreads(first: 100) {
-          nodes {
-            id
-            isResolved
-            isOutdated
-            comments(first: 100) {
-              nodes {
-                id
-                body
-                author {
-                  login
+# Function to fetch all review threads with pagination
+fetch_all_threads() {
+  local all_threads="[]"
+  local cursor=""
+  local has_next_page=true
+  
+  while [[ "$has_next_page" == true ]]; do
+    local query='query($owner: String!, $repo: String!, $prNumber: Int!, $cursor: String) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $prNumber) {
+          reviewThreads(first: 100, after: $cursor) {
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+            nodes {
+              id
+              isResolved
+              isOutdated
+              comments(first: 100) {
+                pageInfo {
+                  hasNextPage
+                  endCursor
                 }
-                createdAt
-                path
-                line
-                startLine
-                diffHunk
-                url
+                nodes {
+                  id
+                  body
+                  author {
+                    login
+                  }
+                  createdAt
+                  path
+                  line
+                  startLine
+                  diffHunk
+                  url
+                }
               }
             }
           }
         }
       }
-    }
-  }
-' -f owner="$OWNER" -f repo="$REPO" -F prNumber="$PR_NUMBER" 2>&1) || {
-  echo "Error: Failed to fetch review threads." >&2
-  if [[ "$DEBUG" == true ]]; then
-    echo "Debug: Owner: $OWNER, Repo: $REPO, PR Number: $PR_NUMBER" >&2
-    echo "Debug: GraphQL response: $THREADS_JSON" >&2
-  fi
-  exit 1
+    }'
+    
+    local response
+    # Build the GraphQL request - only include cursor if it's not empty
+    if [[ -n "$cursor" ]]; then
+      response=$(gh api graphql -f query="$query" \
+        -f owner="$OWNER" \
+        -f repo="$REPO" \
+        -F prNumber="$PR_NUMBER" \
+        -f cursor="$cursor" 2>&1) || {
+        echo "Error: Failed to fetch review threads." >&2
+        if [[ "$DEBUG" == true ]]; then
+          echo "Debug: Owner: $OWNER, Repo: $REPO, PR Number: $PR_NUMBER, Cursor: $cursor" >&2
+          echo "Debug: GraphQL response: $response" >&2
+        fi
+        exit 1
+      }
+    else
+      # First page - don't pass cursor
+      response=$(gh api graphql -f query="$query" \
+        -f owner="$OWNER" \
+        -f repo="$REPO" \
+        -F prNumber="$PR_NUMBER" 2>&1) || {
+        echo "Error: Failed to fetch review threads." >&2
+        if [[ "$DEBUG" == true ]]; then
+          echo "Debug: Owner: $OWNER, Repo: $REPO, PR Number: $PR_NUMBER" >&2
+          echo "Debug: GraphQL response: $response" >&2
+        fi
+        exit 1
+      }
+    fi
+    
+    # Extract page info and nodes
+    has_next_page=$(echo "$response" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage // false')
+    # Handle null or invalid hasNextPage
+    if [[ "$has_next_page" != "true" ]]; then
+      has_next_page=false
+    fi
+    cursor=$(echo "$response" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // ""')
+    # Handle null cursor - if cursor is null/empty but hasNextPage is true, that's an error condition
+    if [[ "$cursor" == "null" ]] || [[ -z "$cursor" ]]; then
+      cursor=""
+      # If we expected more pages but have no cursor, stop to avoid infinite loop
+      if [[ "$has_next_page" == true ]]; then
+        echo "Warning: hasNextPage is true but endCursor is missing. Stopping pagination." >&2
+        has_next_page=false
+      fi
+    fi
+    local nodes=$(echo "$response" | jq -c '.data.repository.pullRequest.reviewThreads.nodes[]')
+    
+    # For each thread, check if comments need pagination
+    while IFS= read -r thread; do
+      local thread_id=$(echo "$thread" | jq -r '.id')
+      local comment_has_next=$(echo "$thread" | jq -r '.comments.pageInfo.hasNextPage // false')
+      local comment_cursor=$(echo "$thread" | jq -r '.comments.pageInfo.endCursor // ""')
+      # Handle null cursor
+      if [[ "$comment_cursor" == "null" ]]; then
+        comment_cursor=""
+      fi
+      local all_comments=$(echo "$thread" | jq -c '.comments.nodes[]' | jq -s '.')
+      
+      # If comments need pagination, fetch additional pages
+      if [[ "$comment_has_next" == true ]] && [[ -n "$comment_cursor" ]]; then
+        while [[ "$comment_has_next" == true ]] && [[ -n "$comment_cursor" ]]; do
+          local comment_query='query($owner: String!, $repo: String!, $prNumber: Int!, $threadId: ID!, $commentCursor: String) {
+            repository(owner: $owner, name: $repo) {
+              pullRequest(number: $prNumber) {
+                reviewThread(id: $threadId) {
+                  comments(first: 100, after: $commentCursor) {
+                    pageInfo {
+                      hasNextPage
+                      endCursor
+                    }
+                    nodes {
+                      id
+                      body
+                      author {
+                        login
+                      }
+                      createdAt
+                      path
+                      line
+                      startLine
+                      diffHunk
+                      url
+                    }
+                  }
+                }
+              }
+            }
+          }'
+          
+          local comment_response
+          comment_response=$(gh api graphql -f query="$comment_query" \
+            -f owner="$OWNER" \
+            -f repo="$REPO" \
+            -F prNumber="$PR_NUMBER" \
+            -f threadId="$thread_id" \
+            -f commentCursor="$comment_cursor" 2>&1) || {
+            echo "Error: Failed to fetch comments for thread $thread_id." >&2
+            exit 1
+          }
+          
+          comment_has_next=$(echo "$comment_response" | jq -r '.data.repository.pullRequest.reviewThread.comments.pageInfo.hasNextPage // false')
+          # Handle null or invalid hasNextPage
+          if [[ "$comment_has_next" != "true" ]]; then
+            comment_has_next=false
+          fi
+          comment_cursor=$(echo "$comment_response" | jq -r '.data.repository.pullRequest.reviewThread.comments.pageInfo.endCursor // ""')
+          # Handle null cursor
+          if [[ "$comment_cursor" == "null" ]] || [[ -z "$comment_cursor" ]]; then
+            comment_cursor=""
+            comment_has_next=false
+          fi
+          local comment_nodes=$(echo "$comment_response" | jq -c '.data.repository.pullRequest.reviewThread.comments.nodes[]')
+          
+          # Merge comments
+          while IFS= read -r comment; do
+            all_comments=$(echo "$all_comments" | jq --argjson comment "$comment" '. + [$comment]')
+          done <<< "$comment_nodes"
+        done
+      fi
+      
+      # Reconstruct thread with all comments
+      thread=$(echo "$thread" | jq --argjson comments "$all_comments" '.comments.nodes = $comments | del(.comments.pageInfo)')
+      
+      # Add thread to all_threads
+      all_threads=$(echo "$all_threads" | jq --argjson thread "$thread" '. + [$thread]')
+    done <<< "$nodes"
+  done
+  
+  echo "$all_threads"
 }
 
+# Get all review comment threads using GraphQL with pagination
+THREADS_JSON=$(fetch_all_threads)
+
 # Extract comments from threads, filtering by resolution status
+# THREADS_JSON is now a direct array of threads from our pagination function
 if [[ "$SHOW_ALL" == true ]]; then
   # Show all non-outdated comments
   FILTERED_COMMENTS=$(echo "$THREADS_JSON" | jq -r '
-    .data.repository.pullRequest.reviewThreads.nodes[] |
+    .[] |
     select(.isOutdated == false) |
     . as $thread |
     .comments.nodes[] |
@@ -146,7 +286,7 @@ if [[ "$SHOW_ALL" == true ]]; then
 else
   # Only show unresolved, non-outdated comments
   FILTERED_COMMENTS=$(echo "$THREADS_JSON" | jq -r '
-    .data.repository.pullRequest.reviewThreads.nodes[] |
+    .[] |
     select(.isResolved == false and .isOutdated == false) |
     . as $thread |
     .comments.nodes[] |
@@ -164,35 +304,6 @@ else
       isResolved: false
     }
   ' | jq -s '.')
-fi
-
-# If GraphQL didn't return valid data, try REST API fallback
-if [[ -z "$FILTERED_COMMENTS" ]] || [[ "$FILTERED_COMMENTS" == "[]" ]] || [[ "$FILTERED_COMMENTS" == "null" ]]; then
-  if [[ "$DEBUG" == true ]]; then
-    echo "Debug: GraphQL returned no results, trying REST API fallback" >&2
-  fi
-  
-  # Fetch review comments using REST API
-  COMMENTS_JSON=$(gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/comments" 2>&1) || {
-    echo "Error: Failed to fetch review comments." >&2
-    exit 1
-  }
-  
-  # Convert REST API format to our format
-  FILTERED_COMMENTS=$(echo "$COMMENTS_JSON" | jq '
-    map({
-      id: (.id | tostring),
-      threadId: (.id | tostring),  # For REST API, use comment ID as thread ID fallback
-      body: .body,
-      author: .user.login,
-      createdAt: .created_at,
-      path: .path,
-      line: (.line // .start_line),
-      diffHunk: .diff_hunk,
-      url: .html_url,
-      isResolved: false
-    })
-  ')
 fi
 
 # Apply limit if specified
