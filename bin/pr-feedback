@@ -9,6 +9,7 @@ set -euo pipefail
 FORMAT="human"
 SHOW_ALL=false
 DEBUG=false
+LIMIT=0
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -16,6 +17,7 @@ while [[ $# -gt 0 ]]; do
     --json) FORMAT="json"; shift;;
     --human) FORMAT="human"; shift;;
     --all) SHOW_ALL=true; shift;;
+    --limit|-l) LIMIT="$2"; shift 2;;
     --debug) DEBUG=true; shift;;
     -h|--help)
       cat <<EOF
@@ -25,6 +27,7 @@ Options:
   --json             JSON output format
   --human            Human-readable format (default)
   --all              Show all comments, including resolved ones
+  --limit|-l N       Limit number of results
   --debug            Show debug information
   -h, --help         Show this help
 
@@ -32,6 +35,7 @@ Examples:
   $0
   $0 --json
   $0 --all
+  $0 --limit 10
 EOF
       exit 0
       ;;
@@ -61,6 +65,7 @@ if [[ "$DEBUG" == true ]]; then
   echo "Debug: PR Number: $PR_NUMBER" >&2
   echo "Debug: PR Title: $PR_TITLE" >&2
   echo "Debug: Branch: $BRANCH" >&2
+  echo "Debug: Limit: ${LIMIT:-0}" >&2
 fi
 
 # Get repository owner and name
@@ -186,6 +191,11 @@ if [[ -z "$FILTERED_COMMENTS" ]] || [[ "$FILTERED_COMMENTS" == "[]" ]] || [[ "$F
   ')
 fi
 
+# Apply limit if specified
+if [[ "$LIMIT" -gt 0 ]]; then
+  FILTERED_COMMENTS=$(echo "$FILTERED_COMMENTS" | jq --argjson limit "$LIMIT" 'if type == "array" then .[:$limit] else . end')
+fi
+
 # Count comments - handle empty arrays and null
 COMMENT_COUNT=$(echo "$FILTERED_COMMENTS" | jq 'if . == null or . == [] then 0 elif type == "array" then length else 0 end')
 
@@ -228,7 +238,11 @@ else
     exit 0
   fi
   
-  echo "Found $COMMENT_COUNT resolvable review comment(s):"
+  if [[ "$LIMIT" -gt 0 ]]; then
+    echo "Found $COMMENT_COUNT resolvable review comment(s) (showing up to $LIMIT):"
+  else
+    echo "Found $COMMENT_COUNT resolvable review comment(s):"
+  fi
   echo ""
   
   # Get terminal width (default to 80 if not available)
