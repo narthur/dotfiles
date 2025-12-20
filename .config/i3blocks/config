@@ -5,14 +5,14 @@ command=seconds=$(~/bin/get-work-time); seconds=${seconds:-0}; [ "$seconds" = "n
 interval=60
 separator_block_width=30
 
-[buzz]
-command=echo "🐝 $(buzz next)"
-interval=30
-separator_block_width=30
-
 [gh-commits]
 command=echo "✅ $(~/bin/gh-commits-today)"
 interval=300
+separator_block_width=30
+
+[buzz]
+command=echo "🐝 $(buzz next)"
+interval=30
 separator_block_width=30
 
 [volume]
