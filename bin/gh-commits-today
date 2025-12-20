@@ -1,0 +1,18 @@
+#!/bin/bash
+
+# Get today's date in ISO 8601 format
+today=$(date -u +"%Y-%m-%dT00:00:00Z")
+tomorrow=$(date -u -d "tomorrow" +"%Y-%m-%dT00:00:00Z")
+
+# Query GitHub GraphQL API for contributions today
+gh api graphql -f query="
+  query {
+    viewer {
+      contributionsCollection(from: \"$today\", to: \"$tomorrow\") {
+        contributionCalendar {
+          totalContributions
+        }
+      }
+    }
+  }
+" --jq '.data.viewer.contributionsCollection.contributionCalendar.totalContributions' 2>/dev/null || echo "0"
