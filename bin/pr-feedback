@@ -81,13 +81,21 @@ if [[ "$DEBUG" == true ]]; then
   echo "Debug: Repository: $OWNER/$REPO" >&2
 fi
 
-# Function to fetch all review threads with pagination
-fetch_all_threads() {
-  local all_threads="[]"
+# Function to fetch review threads with pagination, stopping early if limit is reached
+# Parameters: show_all (true/false), limit (0 = no limit)
+fetch_threads_with_limit() {
+  local show_all="$1"
+  local limit="$2"
+  local all_comments="[]"
   local cursor=""
   local has_next_page=true
+  local comment_count=0
   
   while [[ "$has_next_page" == true ]]; do
+    # Stop if we've reached the limit
+    if [[ "$limit" -gt 0 ]] && [[ "$comment_count" -ge "$limit" ]]; then
+      break
+    fi
     local query='query($owner: String!, $repo: String!, $prNumber: Int!, $cursor: String) {
       repository(owner: $owner, name: $repo) {
         pullRequest(number: $prNumber) {
@@ -173,20 +181,77 @@ fetch_all_threads() {
     fi
     local nodes=$(echo "$response" | jq -c '.data.repository.pullRequest.reviewThreads.nodes[]')
     
-    # For each thread, check if comments need pagination
+    # For each thread, extract comments and stop early if limit reached
     while IFS= read -r thread; do
+      # Stop if we've reached the limit
+      if [[ "$limit" -gt 0 ]] && [[ "$comment_count" -ge "$limit" ]]; then
+        break
+      fi
+      
       local thread_id=$(echo "$thread" | jq -r '.id')
+      local is_resolved=$(echo "$thread" | jq -r '.isResolved')
+      local is_outdated=$(echo "$thread" | jq -r '.isOutdated')
+      
+      # Skip threads based on filters
+      if [[ "$is_outdated" == "true" ]]; then
+        continue
+      fi
+      if [[ "$show_all" != "true" ]] && [[ "$is_resolved" == "true" ]]; then
+        continue
+      fi
+      
       local comment_has_next=$(echo "$thread" | jq -r '.comments.pageInfo.hasNextPage // false')
       local comment_cursor=$(echo "$thread" | jq -r '.comments.pageInfo.endCursor // ""')
       # Handle null cursor
       if [[ "$comment_cursor" == "null" ]]; then
         comment_cursor=""
       fi
-      local all_comments=$(echo "$thread" | jq -c '.comments.nodes[]' | jq -s '.')
+      local thread_comments=$(echo "$thread" | jq -c '.comments.nodes[]')
       
-      # If comments need pagination, fetch additional pages
+      # Process initial comments from thread
+      while IFS= read -r comment; do
+        # Stop if we've reached the limit
+        if [[ "$limit" -gt 0 ]] && [[ "$comment_count" -ge "$limit" ]]; then
+          break
+        fi
+        
+        local body=$(echo "$comment" | jq -r '.body // ""')
+        if [[ -z "$body" ]] || [[ "$body" == "null" ]]; then
+          continue
+        fi
+        
+        # Extract comment data
+        local comment_data=$(echo "$comment" | jq --arg thread_id "$thread_id" --arg is_resolved "$is_resolved" '{
+          id: .id,
+          threadId: $thread_id,
+          body: .body,
+          author: .author.login,
+          createdAt: .createdAt,
+          path: .path,
+          line: (.line // .startLine),
+          diffHunk: .diffHunk,
+          url: .url,
+          isResolved: ($is_resolved == "true")
+        }')
+        
+        all_comments=$(echo "$all_comments" | jq --argjson comment "$comment_data" '. + [$comment]')
+        comment_count=$((comment_count + 1))
+      done <<< "$thread_comments"
+      
+      # Stop processing this thread if we've reached the limit
+      if [[ "$limit" -gt 0 ]] && [[ "$comment_count" -ge "$limit" ]]; then
+        break
+      fi
+      
+      # If comments need pagination and we haven't reached the limit, fetch additional pages
       if [[ "$comment_has_next" == true ]] && [[ -n "$comment_cursor" ]]; then
+        if [[ "$limit" -eq 0 ]] || [[ "$comment_count" -lt "$limit" ]]; then
         while [[ "$comment_has_next" == true ]] && [[ -n "$comment_cursor" ]]; do
+          # Stop if we've reached the limit
+          if [[ "$limit" -gt 0 ]] && [[ "$comment_count" -ge "$limit" ]]; then
+            break
+          fi
+          
           local comment_query='query($owner: String!, $repo: String!, $prNumber: Int!, $threadId: ID!, $commentCursor: String) {
             repository(owner: $owner, name: $repo) {
               pullRequest(number: $prNumber) {
@@ -239,77 +304,57 @@ fetch_all_threads() {
           fi
           local comment_nodes=$(echo "$comment_response" | jq -c '.data.repository.pullRequest.reviewThread.comments.nodes[]')
           
-          # Merge comments
+          # Process and add comments
           while IFS= read -r comment; do
-            all_comments=$(echo "$all_comments" | jq --argjson comment "$comment" '. + [$comment]')
+            # Stop if we've reached the limit
+            if [[ "$limit" -gt 0 ]] && [[ "$comment_count" -ge "$limit" ]]; then
+              break
+            fi
+            
+            local body=$(echo "$comment" | jq -r '.body // ""')
+            if [[ -z "$body" ]] || [[ "$body" == "null" ]]; then
+              continue
+            fi
+            
+            # Extract comment data
+            local comment_data=$(echo "$comment" | jq --arg thread_id "$thread_id" --arg is_resolved "$is_resolved" '{
+              id: .id,
+              threadId: $thread_id,
+              body: .body,
+              author: .author.login,
+              createdAt: .createdAt,
+              path: .path,
+              line: (.line // .startLine),
+              diffHunk: .diffHunk,
+              url: .url,
+              isResolved: ($is_resolved == "true")
+            }')
+            
+            all_comments=$(echo "$all_comments" | jq --argjson comment "$comment_data" '. + [$comment]')
+            comment_count=$((comment_count + 1))
           done <<< "$comment_nodes"
         done
+        fi
       fi
       
-      # Reconstruct thread with all comments
-      thread=$(echo "$thread" | jq --argjson comments "$all_comments" '.comments.nodes = $comments | del(.comments.pageInfo)')
-      
-      # Add thread to all_threads
-      all_threads=$(echo "$all_threads" | jq --argjson thread "$thread" '. + [$thread]')
+      # Stop outer loop if we've reached the limit
+      if [[ "$limit" -gt 0 ]] && [[ "$comment_count" -ge "$limit" ]]; then
+        break
+      fi
     done <<< "$nodes"
+    
+    # Stop outer pagination loop if we've reached the limit
+    if [[ "$limit" -gt 0 ]] && [[ "$comment_count" -ge "$limit" ]]; then
+      has_next_page=false
+    fi
   done
   
-  echo "$all_threads"
+  echo "$all_comments"
 }
 
-# Get all review comment threads using GraphQL with pagination
-THREADS_JSON=$(fetch_all_threads)
-
-# Extract comments from threads, filtering by resolution status
-# THREADS_JSON is now a direct array of threads from our pagination function
-if [[ "$SHOW_ALL" == true ]]; then
-  # Show all non-outdated comments
-  FILTERED_COMMENTS=$(echo "$THREADS_JSON" | jq -r '
-    .[] |
-    select(.isOutdated == false) |
-    . as $thread |
-    .comments.nodes[] |
-    select(.body != null and .body != "") |
-    {
-      id: .id,
-      threadId: $thread.id,
-      body: .body,
-      author: .author.login,
-      createdAt: .createdAt,
-      path: .path,
-      line: (.line // .startLine),
-      diffHunk: .diffHunk,
-      url: .url,
-      isResolved: $thread.isResolved
-    }
-  ' | jq -s '.')
-else
-  # Only show unresolved, non-outdated comments
-  FILTERED_COMMENTS=$(echo "$THREADS_JSON" | jq -r '
-    .[] |
-    select(.isResolved == false and .isOutdated == false) |
-    . as $thread |
-    .comments.nodes[] |
-    select(.body != null and .body != "") |
-    {
-      id: .id,
-      threadId: $thread.id,
-      body: .body,
-      author: .author.login,
-      createdAt: .createdAt,
-      path: .path,
-      line: (.line // .startLine),
-      diffHunk: .diffHunk,
-      url: .url,
-      isResolved: false
-    }
-  ' | jq -s '.')
-fi
-
-# Apply limit if specified
-if [[ "$LIMIT" -gt 0 ]]; then
-  FILTERED_COMMENTS=$(echo "$FILTERED_COMMENTS" | jq --argjson limit "$LIMIT" 'if type == "array" then .[:$limit] else . end')
-fi
+# Get review comments using GraphQL with pagination, stopping early if limit is reached
+# The function already filters and applies the limit, so we get the final result directly
+FILTERED_COMMENTS=$(fetch_threads_with_limit "$SHOW_ALL" "$LIMIT")
 
 # Count comments - handle empty arrays and null
 COMMENT_COUNT=$(echo "$FILTERED_COMMENTS" | jq 'if . == null or . == [] then 0 elif type == "array" then length else 0 end')
