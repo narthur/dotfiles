@@ -132,6 +132,7 @@ if [[ "$SHOW_ALL" == true ]]; then
     select(.body != null and .body != "") |
     {
       id: .id,
+      threadId: $thread.id,
       body: .body,
       author: .author.login,
       createdAt: .createdAt,
@@ -147,10 +148,12 @@ else
   FILTERED_COMMENTS=$(echo "$THREADS_JSON" | jq -r '
     .data.repository.pullRequest.reviewThreads.nodes[] |
     select(.isResolved == false and .isOutdated == false) |
+    . as $thread |
     .comments.nodes[] |
     select(.body != null and .body != "") |
     {
       id: .id,
+      threadId: $thread.id,
       body: .body,
       author: .author.login,
       createdAt: .createdAt,
@@ -179,6 +182,7 @@ if [[ -z "$FILTERED_COMMENTS" ]] || [[ "$FILTERED_COMMENTS" == "[]" ]] || [[ "$F
   FILTERED_COMMENTS=$(echo "$COMMENTS_JSON" | jq '
     map({
       id: (.id | tostring),
+      threadId: (.id | tostring),  # For REST API, use comment ID as thread ID fallback
       body: .body,
       author: .user.login,
       createdAt: .created_at,
@@ -251,6 +255,7 @@ else
   # Print comments - process each comment as JSON to handle special characters
   echo "$FILTERED_COMMENTS" | jq -c '.[]' | while IFS= read -r comment_json; do
     id=$(echo "$comment_json" | jq -r '.id')
+    thread_id=$(echo "$comment_json" | jq -r '.threadId // .id')
     author=$(echo "$comment_json" | jq -r '.author')
     created=$(echo "$comment_json" | jq -r '.createdAt')
     path=$(echo "$comment_json" | jq -r '.path // "general"')
@@ -265,8 +270,9 @@ else
     color_author=$'\033[36m'  # Cyan
     color_path=$'\033[33m'   # Yellow
     color_line=$'\033[90m'   # Gray
+    color_id=$'\033[35m'    # Magenta
     
-    echo -e "${color_author}@${author}${color_reset} ${color_path}${path}${color_reset}:${color_line}${line}${color_reset} (${relative})"
+    echo -e "${color_id}[Thread: ${thread_id}]${color_reset} ${color_author}@${author}${color_reset} ${color_path}${path}${color_reset}:${color_line}${line}${color_reset} (${relative})"
     echo ""
     
     # Format body with word wrapping

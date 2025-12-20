@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+
+# resolve-feedback - Resolve PR review feedback by thread ID
+# Usage:
+#   bash resolve-feedback [THREAD_ID] [--unresolve] [--current-pr]
+
+set -euo pipefail
+
+UNRESOLVE=false
+THREAD_ID=""
+USE_CURRENT_PR=true
+PR_NUMBER=""
+DEBUG=false
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --unresolve|-u) UNRESOLVE=true; shift;;
+    --current-pr|-c) USE_CURRENT_PR=true; shift;;
+    --pr|-p) PR_NUMBER="$2"; USE_CURRENT_PR=false; shift 2;;
+    --debug) DEBUG=true; shift;;
+    -h|--help)
+      cat <<EOF
+Usage: $0 [THREAD_ID] [options]
+
+Resolves or unresolves a PR review comment thread by thread ID.
+
+Arguments:
+  THREAD_ID              Thread ID to resolve (required if not using --current-pr)
+
+Options:
+  --unresolve|-u         Unresolve the thread instead of resolving
+  --current-pr|-c        Use the PR for the current branch (default)
+  --pr|-p NUMBER        Specify PR number explicitly (use with --current-pr=false)
+  --debug                Show debug information
+  -h, --help             Show this help
+
+Examples:
+  $0 PRRT_kwDOOt68LM5jUu7o
+  $0 PRRT_kwDOOt68LM5jUu7o --unresolve
+  $0 --current-pr PRRT_kwDOOt68LM5jUu7o
+EOF
+      exit 0
+      ;;
+    *)
+      if [[ -z "$THREAD_ID" ]]; then
+        THREAD_ID="$1"
+      else
+        echo "Error: Unknown argument: $1" >&2
+        exit 1
+      fi
+      shift
+      ;;
+  esac
+done
+
+# Get PR information (optional, for display purposes)
+PR_TITLE=""
+PR_NUMBER=""
+if [[ "$USE_CURRENT_PR" == true ]]; then
+  PR_INFO=$(gh pr view --json number,title 2>&1) || PR_INFO=""
+  
+  # Not a fatal error - we can still resolve without PR info
+  if [[ -z "${PR_INFO:-}" ]] && [[ "$DEBUG" == true ]]; then
+    echo "Debug: Could not get PR info (not required)" >&2
+  fi
+  
+  if [[ -n "${PR_INFO:-}" ]] && [[ "$PR_INFO" != *"Error"* ]]; then
+    PR_NUMBER=$(echo "$PR_INFO" | jq -r '.number // empty' 2>/dev/null || echo "")
+    PR_TITLE=$(echo "$PR_INFO" | jq -r '.title // ""' 2>/dev/null || echo "")
+  fi
+fi
+
+if [[ "$DEBUG" == true ]]; then
+  if [[ -n "${PR_NUMBER:-}" ]]; then
+    echo "Debug: PR Number: $PR_NUMBER" >&2
+  fi
+  echo "Debug: Thread ID: $THREAD_ID" >&2
+  echo "Debug: Unresolve: $UNRESOLVE" >&2
+fi
+
+# Validate thread ID
+if [[ -z "$THREAD_ID" ]]; then
+  echo "Error: Thread ID is required." >&2
+  echo "Run 'pr-feedback' to see available thread IDs." >&2
+  exit 1
+fi
+
+# Resolve or unresolve the thread using GraphQL mutation
+if [[ "$UNRESOLVE" == true ]]; then
+  MUTATION_NAME="unresolveReviewThread"
+  ACTION="unresolved"
+else
+  MUTATION_NAME="resolveReviewThread"
+  ACTION="resolved"
+fi
+
+RESULT=$(gh api graphql -f query="
+  mutation(\$threadId: ID!) {
+    ${MUTATION_NAME}(input: {threadId: \$threadId}) {
+      thread {
+        id
+        isResolved
+      }
+    }
+  }
+" -f threadId="$THREAD_ID" 2>&1) || {
+  echo "Error: Failed to ${ACTION} review thread." >&2
+  if [[ "$DEBUG" == true ]]; then
+    echo "Debug: GraphQL response: $RESULT" >&2
+  fi
+  exit 1
+}
+
+# Check for errors in the response
+ERROR=$(echo "$RESULT" | jq -r '.errors[0].message // empty' 2>/dev/null)
+if [[ -n "$ERROR" ]]; then
+  echo "Error: $ERROR" >&2
+  if [[ "$DEBUG" == true ]]; then
+    echo "Debug: Full response: $RESULT" >&2
+  fi
+  exit 1
+fi
+
+# Verify the result
+IS_RESOLVED=$(echo "$RESULT" | jq -r ".data.${MUTATION_NAME}.thread.isResolved" 2>/dev/null)
+
+if [[ "$IS_RESOLVED" == "true" && "$UNRESOLVE" == false ]] || [[ "$IS_RESOLVED" == "false" && "$UNRESOLVE" == true ]]; then
+  echo "✓ Successfully ${ACTION} review thread: $THREAD_ID"
+  if [[ -n "${PR_NUMBER:-}" ]] && [[ -n "$PR_TITLE" ]]; then
+    echo "  PR #$PR_NUMBER: $PR_TITLE"
+  fi
+else
+  echo "Warning: Thread resolution status may not have changed as expected." >&2
+  if [[ "$DEBUG" == true ]]; then
+    echo "Debug: Expected resolved=$([[ "$UNRESOLVE" == false ]] && echo true || echo false), got: $IS_RESOLVED" >&2
+    echo "Debug: Full response: $RESULT" >&2
+  fi
+fi
