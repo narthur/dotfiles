@@ -1,0 +1,15 @@
+#!/bin/bash
+set -e
+
+echo "Configuring Podman unqualified-search registries..."
+
+# Check if docker.io is already configured
+if grep -q "unqualified-search-registries.*docker.io" /etc/containers/registries.conf 2>/dev/null; then
+    echo "docker.io is already configured in unqualified-search registries"
+else
+    echo "Adding docker.io to unqualified-search registries..."
+    sudo sh -c 'echo "unqualified-search-registries = [\"docker.io\"]" >> /etc/containers/registries.conf'
+    echo "Configuration added successfully"
+fi
+
+echo "Done!"
