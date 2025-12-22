@@ -1,0 +1,26 @@
+#!/bin/bash
+
+# Configure Cursor as the default application for JavaScript and TypeScript files
+
+set -e
+
+echo "Setting Cursor as default for JavaScript and TypeScript files..."
+
+# JavaScript MIME types
+xdg-mime default cursor.desktop text/javascript
+xdg-mime default cursor.desktop application/javascript
+xdg-mime default cursor.desktop application/x-javascript
+
+# TypeScript MIME types
+xdg-mime default cursor.desktop text/x-typescript
+xdg-mime default cursor.desktop application/x-typescript
+
+# JSX/TSX (these typically use the same MIME types as JS/TS)
+xdg-mime default cursor.desktop text/jsx
+xdg-mime default cursor.desktop text/tsx
+
+echo "✓ Configuration complete!"
+echo ""
+echo "Current settings:"
+echo "  .js  → $(xdg-mime query default text/javascript)"
+echo "  .ts  → $(xdg-mime query default text/x-typescript)"
