@@ -7,9 +7,16 @@ Personal dotfiles and scripts for my Linux desktop setup.
 ### Shell Configuration
 
 - **`.bashrc`** - Bash shell configuration
+  - Sources `.env` for environment variables
   - Adds `~/bin` to PATH
   - Configures Docker host for Podman
   - Initializes zoxide for directory navigation
+
+- **`.env`** - Environment variables for shell scripts
+  - `PROJECTS_DIR` - `/mnt/backup/ProgrammingProjects`
+  - `Z_EXPERIMENTS_DIR` - Path to z-experiments project
+  - `OBSIDIAN_VAULT` - Path to main Obsidian vault
+  - `OBSIDIAN_DAILY_NOTES` - Path to daily notes directory
 
 - **`.gitconfig`** - Git configuration
   - GitHub credential helper via `gh` CLI
