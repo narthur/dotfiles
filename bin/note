@@ -1,0 +1,30 @@
+#!/bin/bash
+
+# Append a note to today's Obsidian daily note
+
+VAULT_PATH="$HOME/vaults/Main"
+DAILY_NOTES_DIR="$VAULT_PATH/Daily Notes"
+TODAY=$(date +%Y-%m-%d)
+NOTE_FILE="$DAILY_NOTES_DIR/$TODAY.md"
+
+# Create Daily Notes directory if it doesn't exist
+mkdir -p "$DAILY_NOTES_DIR"
+
+# Create the daily note file if it doesn't exist
+if [ ! -f "$NOTE_FILE" ]; then
+    touch "$NOTE_FILE"
+fi
+
+# If no arguments provided, print usage
+if [ $# -eq 0 ]; then
+    echo "Usage: note <text to append>"
+    echo "Example: note This is my note"
+    exit 1
+fi
+
+# Append the note with a timestamp
+TIMESTAMP=$(date +%H:%M)
+echo "" >> "$NOTE_FILE"
+echo "- $TIMESTAMP: $*" >> "$NOTE_FILE"
+
+echo "Note added to $TODAY.md"
