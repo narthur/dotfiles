@@ -2,8 +2,8 @@
 
 # Append a note to today's Obsidian daily note
 
-VAULT_PATH="$HOME/vaults/Main"
-DAILY_NOTES_DIR="$VAULT_PATH/Daily Notes"
+VAULT_PATH="${OBSIDIAN_VAULT:-$HOME/vaults/Main}"
+DAILY_NOTES_DIR="${OBSIDIAN_DAILY_NOTES:-$VAULT_PATH/Daily Notes}"
 TODAY=$(date +%Y-%m-%d)
 NOTE_FILE="$DAILY_NOTES_DIR/$TODAY.md"
 
