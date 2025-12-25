@@ -6,6 +6,10 @@
 
 set -euo pipefail
 
+# Source shared functions
+SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SOURCE_DIR/pr-feedback-common.sh"
+
 UNRESOLVE=false
 THREAD_ID=""
 USE_CURRENT_PR=true
@@ -137,3 +141,6 @@ else
     echo "Debug: Full response: $RESULT" >&2
   fi
 fi
+
+# Show tools documentation
+print_pr_tools_help

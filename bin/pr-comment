@@ -7,6 +7,10 @@
 
 set -euo pipefail
 
+# Source shared functions
+SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SOURCE_DIR/pr-feedback-common.sh"
+
 # Check for gh CLI
 if ! command -v gh &> /dev/null; then
   echo "Error: gh CLI not found. Please install it first." >&2
@@ -119,3 +123,6 @@ COMMENT_URL=$(echo "$RESPONSE" | jq -r '.data.addPullRequestReviewComment.commen
 echo "Comment posted successfully!"
 echo "ID: $COMMENT_ID"
 echo "URL: $COMMENT_URL"
+
+# Show tools documentation
+print_pr_tools_help

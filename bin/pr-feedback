@@ -6,6 +6,10 @@
 
 set -euo pipefail
 
+# Source shared functions
+SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SOURCE_DIR/pr-feedback-common.sh"
+
 FORMAT="human"
 SHOW_ALL=false
 DEBUG=false
@@ -439,4 +443,7 @@ else
     echo "$(printf '%*s' $TERM_WIDTH '' | tr ' ' '-')"
     echo ""
   done
+  
+  # Show tools documentation
+  print_pr_tools_help
 fi
