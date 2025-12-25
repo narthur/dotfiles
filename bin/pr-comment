@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+
+# pr-comment - Reply to a PR review comment by thread ID
+# Usage:
+#   pr-comment <thread-id> <comment-text>
+#   pr-comment <thread-id>  (will prompt for comment in $EDITOR)
+
+set -euo pipefail
+
+# Check for gh CLI
+if ! command -v gh &> /dev/null; then
+  echo "Error: gh CLI not found. Please install it first." >&2
+  exit 1
+fi
+
+# Parse arguments
+if [[ $# -lt 1 ]]; then
+  cat <<EOF
+Usage: $0 <thread-id> [comment-text]
+
+Arguments:
+  <thread-id>      The thread ID to reply to (from pr-feedback output)
+  [comment-text]   The comment to post. If omitted, will open \$EDITOR
+
+Examples:
+  $0 PRRT_kwDOABCDEF4ABCDEFG "Thanks for the feedback!"
+  $0 PRRT_kwDOABCDEF4ABCDEFG  # Opens editor for multi-line comment
+
+Environment:
+  EDITOR           Text editor to use for composing comment (default: vi)
+EOF
+  exit 1
+fi
+
+THREAD_ID="$1"
+COMMENT_TEXT="${2:-}"
+
+# If no comment text provided, open editor
+if [[ -z "$COMMENT_TEXT" ]]; then
+  EDITOR="${EDITOR:-vi}"
+  TEMP_FILE=$(mktemp)
+  
+  # Add helpful header
+  cat > "$TEMP_FILE" <<EOF
+# Enter your comment below. Lines starting with # will be ignored.
+# Thread ID: $THREAD_ID
+
+EOF
+  
+  # Open editor
+  "$EDITOR" "$TEMP_FILE"
+  
+  # Extract comment (remove lines starting with #)
+  COMMENT_TEXT=$(grep -v '^#' "$TEMP_FILE" | sed '/^$/d')
+  
+  # Clean up
+  rm -f "$TEMP_FILE"
+  
+  # Check if comment is empty
+  if [[ -z "$COMMENT_TEXT" ]]; then
+    echo "Error: No comment text provided." >&2
+    exit 1
+  fi
+fi
+
+# Get current PR number
+PR_INFO=$(gh pr view --json number 2>&1) || {
+  echo "Error: No pull request found for current branch." >&2
+  echo "Make sure you're on a branch with an associated PR." >&2
+  exit 1
+}
+
+PR_NUMBER=$(echo "$PR_INFO" | jq -r '.number')
+
+if [[ "$PR_NUMBER" == "null" ]] || [[ -z "$PR_NUMBER" ]]; then
+  echo "Error: Could not determine PR number." >&2
+  exit 1
+fi
+
+# Get repository owner and name
+REPO_INFO=$(gh repo view --json owner,name 2>&1) || {
+  echo "Error: Could not determine repository information." >&2
+  exit 1
+}
+
+OWNER=$(echo "$REPO_INFO" | jq -r '.owner.login')
+REPO=$(echo "$REPO_INFO" | jq -r '.name')
+
+# Post comment using GraphQL mutation
+MUTATION='mutation($threadId: ID!, $body: String!) {
+  addPullRequestReviewComment(input: {pullRequestReviewThreadId: $threadId, body: $body}) {
+    comment {
+      id
+      body
+      url
+    }
+  }
+}'
+
+RESPONSE=$(gh api graphql -f query="$MUTATION" \
+  -f threadId="$THREAD_ID" \
+  -f body="$COMMENT_TEXT" 2>&1) || {
+  echo "Error: Failed to post comment." >&2
+  echo "Response: $RESPONSE" >&2
+  exit 1
+}
+
+# Check for errors in response
+if echo "$RESPONSE" | jq -e '.errors' > /dev/null 2>&1; then
+  echo "Error: Failed to post comment." >&2
+  echo "$RESPONSE" | jq -r '.errors[].message' >&2
+  exit 1
+fi
+
+# Extract comment details
+COMMENT_ID=$(echo "$RESPONSE" | jq -r '.data.addPullRequestReviewComment.comment.id')
+COMMENT_URL=$(echo "$RESPONSE" | jq -r '.data.addPullRequestReviewComment.comment.url')
+
+echo "Comment posted successfully!"
+echo "ID: $COMMENT_ID"
+echo "URL: $COMMENT_URL"
