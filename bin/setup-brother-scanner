@@ -1,0 +1,83 @@
+#!/bin/bash
+set -e
+
+# Brother DS-740D Scanner Setup Script
+# This script installs the Brother brscan5 driver and brscan-skey tool
+
+TEMP_DIR=$(mktemp -d)
+cd "$TEMP_DIR"
+
+echo "Setting up Brother DS-740D scanner..."
+echo
+
+# Install libsane dependency
+echo "Checking libsane dependency..."
+if ! dpkg -l | grep -q "^ii  libsane1\?"; then
+    echo "Installing libsane..."
+    sudo apt-get update -qq
+    sudo apt-get install -y libsane libsane1
+else
+    echo "libsane already installed, skipping..."
+fi
+echo
+
+# Download and install brscan5 driver
+if dpkg -l | grep -q "^ii  brscan5"; then
+    echo "brscan5 driver already installed, skipping..."
+else
+    echo "Downloading brscan5 driver..."
+    wget -q https://download.brother.com/welcome/dlf006645/brscan5-1.5.1-0.amd64.deb
+    echo "Installing brscan5 driver..."
+    sudo dpkg -i brscan5-1.5.1-0.amd64.deb
+fi
+echo
+
+# Download and install brscan-skey tool
+if dpkg -l | grep -q "^ii  brscan-skey"; then
+    echo "brscan-skey tool already installed, skipping..."
+else
+    echo "Downloading brscan-skey tool..."
+    wget -q https://download.brother.com/welcome/dlf006652/brscan-skey-0.3.2-0.amd64.deb
+    echo "Installing brscan-skey tool..."
+    # Use --force-depends because Debian has libsane1 instead of libsane
+    sudo dpkg -i --force-depends brscan-skey-0.3.2-0.amd64.deb
+fi
+echo
+
+# Configure scan destination folder
+if [ -f "$HOME/.env" ]; then
+    source "$HOME/.env"
+fi
+
+SCAN_DIR="${BROTHER_SCAN_DIR:-$HOME/brscan}"
+
+echo "Configuring scan destination folder..."
+echo "Scan folder: $SCAN_DIR"
+
+# Create the scan directory if it doesn't exist
+mkdir -p "$SCAN_DIR"
+
+# Update brscan-skey configuration files if they exist
+if [ -d "/opt/brother/scanner/brscan-skey" ]; then
+    for cfg in /opt/brother/scanner/brscan-skey/brscan-skey*.cfg; do
+        if [ -f "$cfg" ]; then
+            echo "Updating configuration: $cfg"
+            sudo sed -i "s|SCAN_PATH=.*|SCAN_PATH=\"$SCAN_DIR\"|g" "$cfg"
+        fi
+    done
+fi
+echo
+
+# Clean up
+cd ~
+rm -rf "$TEMP_DIR"
+
+echo "Installation complete!"
+echo
+echo "Scanner setup instructions:"
+echo "1. Make sure your scanner is plugged in via USB"
+echo "2. Verify detection with: scanimage -L"
+echo "3. To enable the physical scan button, run: brscan-skey"
+echo "4. Scanned files will be saved to: $SCAN_DIR"
+echo "5. To customize scan folder, add BROTHER_SCAN_DIR=/path/to/folder to ~/.env"
+echo "6. To start brscan-skey automatically at login, add it to your autostart applications"
