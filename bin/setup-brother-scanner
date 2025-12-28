@@ -57,14 +57,41 @@ echo "Scan folder: $SCAN_DIR"
 # Create the scan directory if it doesn't exist
 mkdir -p "$SCAN_DIR"
 
-# Update brscan-skey configuration files if they exist
-if [ -d "/opt/brother/scanner/brscan-skey" ]; then
-    for cfg in /opt/brother/scanner/brscan-skey/brscan-skey*.cfg; do
-        if [ -f "$cfg" ]; then
-            echo "Updating configuration: $cfg"
-            sudo sed -i "s|SCAN_PATH=.*|SCAN_PATH=\"$SCAN_DIR\"|g" "$cfg"
-        fi
-    done
+# Create user config directory and override OUTPUT variable
+mkdir -p "$HOME/.brscan-skey"
+
+cat > "$HOME/.brscan-skey/scantofile.config" << EOF
+# Custom scan directory
+OUTPUT_DIR="$SCAN_DIR"
+mkdir -p "\$OUTPUT_DIR"
+OUTPUT="\$OUTPUT_DIR/brscan_\$(date +%Y-%m-%d-%H-%M-%S).tif"
+EOF
+
+echo "Created user config: ~/.brscan-skey/scantofile.config"
+echo
+
+# Patch the scantofile.sh script to respect OUTPUT from config
+if [ -f "/opt/brother/scanner/brscan-skey/script/scantofile.sh" ]; then
+    echo "Patching scantofile.sh to respect config OUTPUT variable..."
+    # Backup original if not already backed up
+    if [ ! -f "/opt/brother/scanner/brscan-skey/script/scantofile.sh.backup" ]; then
+        sudo cp /opt/brother/scanner/brscan-skey/script/scantofile.sh /opt/brother/scanner/brscan-skey/script/scantofile.sh.backup
+    fi
+    # Patch line 16 to only set OUTPUT if not already set
+    sudo sed -i '16s|OUTPUT=~/brscan/brscan_.*|if [ -z "$OUTPUT" ]; then OUTPUT=~/brscan/brscan_"$(date +%Y-%m-%d-%H-%M-%S)".tif; fi|' /opt/brother/scanner/brscan-skey/script/scantofile.sh
+    echo "Script patched successfully"
+fi
+echo
+
+# Restart brscan-skey if it's running
+if pgrep -f brscan-skey > /dev/null; then
+    echo "Restarting brscan-skey..."
+    pkill -f brscan-skey
+    sleep 1
+    brscan-skey &
+    echo "brscan-skey restarted"
+else
+    echo "brscan-skey is not running. Start it with: brscan-skey"
 fi
 echo
 
