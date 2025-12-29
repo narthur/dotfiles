@@ -92,7 +92,7 @@ REPO=$(echo "$REPO_INFO" | jq -r '.name')
 
 # Post comment using GraphQL mutation
 MUTATION='mutation($threadId: ID!, $body: String!) {
-  addPullRequestReviewComment(input: {pullRequestReviewThreadId: $threadId, body: $body}) {
+  addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: $threadId, body: $body}) {
     comment {
       id
       body
@@ -117,8 +117,8 @@ if echo "$RESPONSE" | jq -e '.errors' > /dev/null 2>&1; then
 fi
 
 # Extract comment details
-COMMENT_ID=$(echo "$RESPONSE" | jq -r '.data.addPullRequestReviewComment.comment.id')
-COMMENT_URL=$(echo "$RESPONSE" | jq -r '.data.addPullRequestReviewComment.comment.url')
+COMMENT_ID=$(echo "$RESPONSE" | jq -r '.data.addPullRequestReviewThreadReply.comment.id')
+COMMENT_URL=$(echo "$RESPONSE" | jq -r '.data.addPullRequestReviewThreadReply.comment.url')
 
 echo "Comment posted successfully!"
 echo "ID: $COMMENT_ID"
