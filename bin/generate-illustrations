@@ -28,7 +28,7 @@ connect to specific aspects of the article's content - its subject matter, theme
 narrative elements. Do not create generic artistic prompts; instead, ensure each prompt visually 
 represents something meaningful from the article, even at the most abstract levels.
 
-For each prompt, include:
+For each prompt, include ONLY visual description elements:
 - Visual elements appropriate to the abstractness level (from literal to purely abstract)
 - Specific art medium and technique (e.g., "Oil painting", "Watercolor", "Acrylic", "Impasto technique")
 - Detailed color palette descriptions that reflect the mood and themes of the article
@@ -38,14 +38,29 @@ For each prompt, include:
 - Composition and mood elements that capture the essence of the article
 - Specific visual details that create atmosphere and depth while staying true to the article's content
 
+IMPORTANT: Write each prompt as a pure visual description. Do NOT include:
+- Explanations of why you chose certain elements
+- Rationale for the abstractness level
+- Meta-commentary about the prompt itself
+- References to "this prompt" or "this illustration"
+- Phrases like "to represent", "to show", "to capture" - just describe what IS in the image
+- Conceptual justifications - only describe the visual elements
+
 Make each prompt rich, evocative, and detailed - like a professional art director's brief. Use 
 artistic terminology and descriptive language that will produce high-quality, visually striking 
-illustrations that are thematically connected to the article.
+illustrations. Write as if describing an existing image, not explaining a concept.
 
-IMPORTANT: Output ONLY the prompts, one per line, with no introductions, summaries, explanations, 
-or numbering. Each line should be a complete, detailed prompt ready to use. Do not include any 
-other text. Order the prompts: two very concrete, two moderately concrete, two moderately abstract, 
-two very abstract.
+CRITICAL OUTPUT FORMAT REQUIREMENTS:
+- Output ONLY the image generation prompts themselves
+- ONE prompt per line
+- NO headings, labels, or category names (do NOT include "VERY CONCRETE:", "MODERATELY CONCRETE:", etc.)
+- NO explanations, rationale, or justification text
+- NO numbering or bullet points
+- NO meta-commentary about the prompt
+- Each line must be ONLY the visual description for the image generator
+- Focus exclusively on WHAT should appear in the image, not WHY or HOW it relates to the article
+- Order: two very concrete, two moderately concrete, two moderately abstract, two very abstract
+- Each prompt should start directly with the visual description (e.g., "Oil painting of..." not "VERY CONCRETE: Oil painting of...")
 PROMPT_END
 )
 
@@ -77,6 +92,36 @@ read -p "Press Enter to start image generation, or Ctrl+C to cancel..."
 # Create output directory if it doesn't exist
 mkdir -p "$output_dir"
 
+# Filter out headings, explanations, and non-prompt lines
+filtered_response=$(echo "$full_response" | \
+    # Remove category headings
+    grep -v -iE '^(very|moderately|abstract|concrete)[\s]*:' | \
+    # Remove numbered list items
+    grep -v -iE '^[0-9]+\.[\s]*' | \
+    # Remove bullet points
+    grep -v -iE '^[-*•][\s]*' | \
+    # Remove meta labels
+    grep -v -iE '^(prompt|illustration|image|output|result)[\s]*[0-9]*[\s]*:' | \
+    # Remove lines that are clearly explanatory (start with explanatory phrases)
+    grep -v -iE '^(this (prompt|illustration|image|represents|shows|depicts))' | \
+    grep -v -iE '^(the|this) (represents|shows|depicts|captures|illustrates|is meant to)' | \
+    grep -v -iE '^(to (represent|show|depict|capture|illustrate|convey|express))' | \
+    grep -v -iE '^(in order to|because|since|due to|based on|according to)' | \
+    # Trim whitespace
+    sed 's/^[[:space:]]*//' | \
+    sed 's/[[:space:]]*$//' | \
+    # Remove empty lines
+    grep -v '^$' | \
+    # Filter out very short lines (likely headings or fragments)
+    awk 'length > 20'
+)
+
+echo ""
+echo "=== Filtered Prompts (ready for image generation) ==="
+echo "$filtered_response"
+echo "=== End of Filtered Prompts ==="
+echo ""
+
 image_width=1024
 image_height=608
 
@@ -106,4 +151,4 @@ while IFS= read -r prompt_line; do
             echo "Warning: No image found in $images_dir"
         fi
     fi
-done < <(echo "$full_response")
+done < <(echo "$filtered_response")

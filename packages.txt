@@ -16,3 +16,4 @@ zoxide
 flatpak
 chromium
 qt6ct
+gnome-screenshot
