@@ -13,5 +13,6 @@
 	autoSetupRemote = true
 [core]
 	excludesfile = /home/narthur/.gitignore_global
+	editor = nano
 [pull]
 	rebase = true
