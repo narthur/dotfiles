@@ -2,75 +2,100 @@
 
 model="anthropic/claude-3-haiku-20240307"
 
-prompt=$(cat <<'PROMPT_END'
-Please provide me with prompts for an image generator to create illustrations for the following 
-article. Generate TWO prompts for each of the following abstractness levels (8 prompts total):
+# Define styles: each entry has a name, abstractness level, and artistic style description
+declare -a styles=(
+    "Very Concrete:Photo-realistic documentary style"
+    "Very Concrete:Realistic academic oil painting"
+    "Moderately Concrete:Impressionist representational"
+    "Moderately Concrete:Expressionist semi-representational"
+    "Moderately Abstract:Abstract expressionist symbolic"
+    "Moderately Abstract:Surrealist metaphorical"
+    "Very Abstract:Geometric abstract pure form"
+    "Very Abstract:Color field atmospheric"
+)
 
-1. VERY CONCRETE: Literal, representational illustrations showing specific scenes, objects, people, 
-   or events directly from the article. These should be recognizable depictions of the article's 
-   subject matter.
+# Prompt template for extracting key themes and concepts from the article
+extraction_prompt_template=$(cat <<'PROMPT_END'
+Analyze the following article and extract the key themes, concepts, subjects, and narrative 
+elements that would be important for creating illustrations. Provide a concise but comprehensive 
+summary that captures:
 
-2. MODERATELY CONCRETE: Semi-representational illustrations that show recognizable elements from 
-   the article but with some symbolic or metaphorical interpretation. The connection to the article 
-   should be clear but not purely literal.
+- Main subject matter and topics
+- Key themes and concepts
+- Mood, tone, and atmosphere
+- Narrative elements or story points (if applicable)
+- Symbolic or metaphorical elements that could be visualized
 
-3. MODERATELY ABSTRACT: Symbolic or metaphorical illustrations that represent concepts, themes, 
-   or emotions from the article through visual metaphors, abstracted forms, or conceptual imagery. 
-   The connection to the article should be interpretable but not immediately obvious.
+IMPORTANT: Do NOT include specific visual elements (objects, scenes, people, settings, etc.). 
+The level of visual specificity should be determined by the illustration style (from very concrete 
+to very abstract). Focus only on conceptual, thematic, and atmospheric content that can be 
+interpreted visually at different levels of abstraction.
 
-4. VERY ABSTRACT: Highly abstract, non-representational illustrations that capture the essence, 
-   mood, or energy of the article through pure form, color, texture, and composition. The 
-   connection to the article should be felt rather than seen.
+Output ONLY the summary - no introductions, explanations, or meta-commentary. Just the extracted 
+themes, concepts, and atmospheric elements in a clear, structured format.
 
-CRITICAL: Before creating prompts, carefully analyze the article content. Extract key themes, 
-concepts, subjects, and visual elements from the article. Each prompt must directly reflect and 
-connect to specific aspects of the article's content - its subject matter, themes, concepts, or 
-narrative elements. Do not create generic artistic prompts; instead, ensure each prompt visually 
-represents something meaningful from the article, even at the most abstract levels.
+ARTICLE:
+{ARTICLE}
+PROMPT_END
+)
 
-For each prompt, include ONLY visual description elements:
-- Visual elements appropriate to the abstractness level (from literal to purely abstract)
+# Base prompt template for generating a single image prompt
+base_prompt_template=$(cat <<'PROMPT_END'
+Create a single, detailed prompt for an image generator to create an illustration based on the 
+following summary of key themes, concepts, and atmospheric elements from an article.
+
+STYLE REQUIREMENTS:
+Abstractness Level: {ABSTRACTNESS}
+Artistic Style: {ARTISTIC_STYLE}
+
+CRITICAL: The prompt must directly reflect and connect to specific aspects from the summary - its 
+subject matter, themes, concepts, mood, tone, or narrative elements. The level of visual specificity 
+should be determined by the abstractness level:
+- Very Concrete: Include specific, recognizable visual elements from the article's subject matter
+- Moderately Concrete: Include recognizable elements but with some abstraction or symbolism
+- Moderately Abstract: Use symbolic or metaphorical visual elements that represent the themes
+- Very Abstract: Use pure form, color, texture, and composition to capture mood and essence
+
+Do not create generic artistic prompts; instead, ensure the prompt visually represents something 
+meaningful from the article's content at the appropriate level of abstraction for the specified style.
+
+The prompt should include ONLY visual description elements:
+- Visual elements appropriate to the specified abstractness level and artistic style
 - Specific art medium and technique (e.g., "Oil painting", "Watercolor", "Acrylic", "Impasto technique")
 - Detailed color palette descriptions that reflect the mood and themes of the article
 - Lighting details that enhance the article's atmosphere
 - Texture and brushwork (e.g., "visible brushstrokes", "heavy texture", "smooth blended surfaces")
-- Artistic style references that complement the article's tone and abstractness level
 - Composition and mood elements that capture the essence of the article
 - Specific visual details that create atmosphere and depth while staying true to the article's content
 
-IMPORTANT: Write each prompt as a pure visual description. Do NOT include:
+IMPORTANT: Write the prompt as a pure visual description. Do NOT include:
 - Explanations of why you chose certain elements
-- Rationale for the abstractness level
+- Rationale for the abstractness level or style
 - Meta-commentary about the prompt itself
 - References to "this prompt" or "this illustration"
 - Phrases like "to represent", "to show", "to capture" - just describe what IS in the image
 - Conceptual justifications - only describe the visual elements
 
-Make each prompt rich, evocative, and detailed - like a professional art director's brief. Use 
+Make the prompt rich, evocative, and detailed - like a professional art director's brief. Use 
 artistic terminology and descriptive language that will produce high-quality, visually striking 
 illustrations. Write as if describing an existing image, not explaining a concept.
 
-CRITICAL OUTPUT FORMAT REQUIREMENTS:
-- Output ONLY the image generation prompts themselves
-- ONE prompt per line
-- NO headings, labels, or category names (do NOT include "VERY CONCRETE:", "MODERATELY CONCRETE:", etc.)
+CRITICAL OUTPUT FORMAT:
+- Output ONLY the image generation prompt itself
+- NO headings, labels, or category names
 - NO explanations, rationale, or justification text
 - NO numbering or bullet points
-- NO meta-commentary about the prompt
-- Each line must be ONLY the visual description for the image generator
+- NO meta-commentary
+- The prompt should start directly with the visual description (e.g., "Oil painting of..." not "VERY CONCRETE: Oil painting of...")
 - Focus exclusively on WHAT should appear in the image, not WHY or HOW it relates to the article
-- Order: two very concrete, two moderately concrete, two moderately abstract, two very abstract
-- Each prompt should start directly with the visual description (e.g., "Oil painting of..." not "VERY CONCRETE: Oil painting of...")
+
+ARTICLE SUMMARY:
+{SUMMARY}
 PROMPT_END
 )
 
 echo "Paste your text (type 'END' on a new line when finished):"
-pasted_text=$(sed '/^END$/q' | sed '$d')
-
-# Append the pasted text to the prompt
-full_prompt="$prompt
-
-$pasted_text"
+article_text=$(sed '/^END$/q' | sed '$d')
 
 llm keys list
 llm models list | grep $model
@@ -79,12 +104,89 @@ script_dir="${Z_EXPERIMENTS_DIR:-/mnt/backup/ProgrammingProjects/z-experiments}"
 images_dir="$script_dir/images"
 output_dir="$HOME/Pictures/Illustrations"
 
-full_response=$(llm prompt --model $model "$full_prompt")
+echo ""
+echo "=== Extracting key themes and concepts from article ==="
+echo ""
+
+# Extract key themes and concepts from the article
+extraction_prompt="${extraction_prompt_template//\{ARTICLE\}/$article_text}"
+article_summary=$(llm prompt --model $model "$extraction_prompt")
+
+echo "Article Summary:"
+echo "$article_summary"
+echo ""
+echo "=== End of Summary ==="
+echo ""
+
+# Array to store all collected prompts
+declare -a all_prompts=()
 
 echo ""
-echo "=== Full LLM Response ==="
-echo "$full_response"
-echo "=== End of Response ==="
+echo "=== Generating prompts for each style ==="
+echo ""
+
+# Loop through each style and generate 2 prompts per style
+for style_entry in "${styles[@]}"; do
+    IFS=':' read -r abstractness artistic_style <<< "$style_entry"
+    
+    echo "Style: $abstractness - $artistic_style"
+    
+    # Generate 2 prompts for this style
+    for prompt_num in 1 2; do
+        # Build the prompt by replacing placeholders
+        # Use parameter expansion to safely build the prompt
+        prompt="${base_prompt_template//\{ABSTRACTNESS\}/$abstractness}"
+        prompt="${prompt//\{ARTISTIC_STYLE\}/$artistic_style}"
+        prompt="${prompt//\{SUMMARY\}/$article_summary}"
+        
+        echo "  Generating prompt $prompt_num..."
+        
+        # Call LLM to generate a single prompt
+        response=$(llm prompt --model $model "$prompt")
+        
+        # Clean the response (remove any headings, explanations, etc.)
+        cleaned_prompt=$(echo "$response" | \
+            # Remove category headings
+            grep -v -iE '^(very|moderately|abstract|concrete)[\s]*:' | \
+            # Remove numbered list items
+            grep -v -iE '^[0-9]+\.[\s]*' | \
+            # Remove bullet points
+            grep -v -iE '^[-*•][\s]*' | \
+            # Remove meta labels
+            grep -v -iE '^(prompt|illustration|image|output|result)[\s]*[0-9]*[\s]*:' | \
+            # Remove lines that are clearly explanatory
+            grep -v -iE '^(this (prompt|illustration|image|represents|shows|depicts))' | \
+            grep -v -iE '^(the|this) (represents|shows|depicts|captures|illustrates|is meant to)' | \
+            grep -v -iE '^(to (represent|show|depict|capture|illustrate|convey|express))' | \
+            grep -v -iE '^(in order to|because|since|due to|based on|according to)' | \
+            # Trim whitespace
+            sed 's/^[[:space:]]*//' | \
+            sed 's/[[:space:]]*$//' | \
+            # Remove empty lines
+            grep -v '^$' | \
+            # Filter out very short lines (likely headings or fragments)
+            awk 'length > 20' | \
+            # Join multiple lines with spaces (in case prompt spans multiple lines)
+            tr '\n' ' ' | \
+            # Trim final whitespace
+            sed 's/[[:space:]]*$//')
+        
+        if [[ -n "$cleaned_prompt" ]]; then
+            all_prompts+=("$cleaned_prompt")
+            echo "  ✓ Prompt: $cleaned_prompt"
+        else
+            echo "  ✗ Warning: No valid prompt extracted from response"
+        fi
+        
+        echo ""
+    done
+done
+
+echo ""
+echo "=== All Generated Prompts ==="
+for i in "${!all_prompts[@]}"; do
+    echo "$((i+1)). ${all_prompts[$i]}"
+done
 echo ""
 
 read -p "Press Enter to start image generation, or Ctrl+C to cancel..."
@@ -92,42 +194,20 @@ read -p "Press Enter to start image generation, or Ctrl+C to cancel..."
 # Create output directory if it doesn't exist
 mkdir -p "$output_dir"
 
-# Filter out headings, explanations, and non-prompt lines
-filtered_response=$(echo "$full_response" | \
-    # Remove category headings
-    grep -v -iE '^(very|moderately|abstract|concrete)[\s]*:' | \
-    # Remove numbered list items
-    grep -v -iE '^[0-9]+\.[\s]*' | \
-    # Remove bullet points
-    grep -v -iE '^[-*•][\s]*' | \
-    # Remove meta labels
-    grep -v -iE '^(prompt|illustration|image|output|result)[\s]*[0-9]*[\s]*:' | \
-    # Remove lines that are clearly explanatory (start with explanatory phrases)
-    grep -v -iE '^(this (prompt|illustration|image|represents|shows|depicts))' | \
-    grep -v -iE '^(the|this) (represents|shows|depicts|captures|illustrates|is meant to)' | \
-    grep -v -iE '^(to (represent|show|depict|capture|illustrate|convey|express))' | \
-    grep -v -iE '^(in order to|because|since|due to|based on|according to)' | \
-    # Trim whitespace
-    sed 's/^[[:space:]]*//' | \
-    sed 's/[[:space:]]*$//' | \
-    # Remove empty lines
-    grep -v '^$' | \
-    # Filter out very short lines (likely headings or fragments)
-    awk 'length > 20'
-)
-
-echo ""
-echo "=== Filtered Prompts (ready for image generation) ==="
-echo "$filtered_response"
-echo "=== End of Filtered Prompts ==="
-echo ""
-
 image_width=1024
 image_height=608
 
-while IFS= read -r prompt_line; do
+echo ""
+echo "=== Generating Images ==="
+echo ""
+
+# Generate images for each collected prompt
+for i in "${!all_prompts[@]}"; do
+    prompt_line="${all_prompts[$i]}"
+    
     if [[ -n "$prompt_line" ]]; then
-        echo "Processing: $prompt_line"
+        echo "[$((i+1))/${#all_prompts[@]}] Processing: $prompt_line"
+        echo ""
 
         # Run image generation locally
         (
@@ -143,12 +223,17 @@ while IFS= read -r prompt_line; do
         
         if [[ -n "$latest_image" ]]; then
             filename=$(basename "$latest_image")
-            echo "Copying: $filename"
+            echo "  ✓ Copied: $filename"
             
             cp "$latest_image" "$output_dir/$filename"
-            echo "Saved to: $output_dir/$filename"
+            echo "  Saved to: $output_dir/$filename"
         else
-            echo "Warning: No image found in $images_dir"
+            echo "  ✗ Warning: No image found in $images_dir"
         fi
+        
+        echo ""
     fi
-done < <(echo "$filtered_response")
+done
+
+echo "=== Image Generation Complete ==="
+echo "All images saved to: $output_dir"
