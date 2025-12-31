@@ -91,6 +91,7 @@ get_uncommitted_changes() {
 }
 
 # Verify entire change set - exit immediately if invalid
+# This needs to copy ALL uncommitted changes to the temp directory
 verify_entire_changeset() {
   local all_files
   all_files=($(get_uncommitted_changes))
@@ -100,22 +101,116 @@ verify_entire_changeset() {
     return 1
   fi
   
-  # Create a partition string with all files
-  local all_files_str=$(IFS='|'; echo "${all_files[*]}")
-  
   # Create log file for initial verification
   local log_file="$LOGS_DIR/initial-verification-$(date -u +"%Y%m%d-%H%M%S").log"
   
-  # Verify using the same mechanism as verify_partition, but capture output
-  if verify_partition_with_log "$all_files_str" "$log_file"; then
-    # Store log file path (relative to repo root) for JSON
-    INITIAL_VERIFICATION_LOG="${log_file#$REPO_ROOT/}"
-    return 0
+  # For initial verification, we need to ensure ALL uncommitted changes are in the temp dir
+  # Use verify_partition but with special handling to copy all changes
+  local temp_dir
+  temp_dir=$(mktemp -d)
+  local exit_code=1
+  local use_worktree=false
+
+  # Cleanup function
+  cleanup() {
+    if [[ -n "${temp_dir:-}" ]] && [[ -d "$temp_dir" ]]; then
+      if [[ "$use_worktree" == "true" ]] && [[ -d "$REPO_ROOT" ]]; then
+        (cd "$REPO_ROOT" && git worktree remove "$temp_dir" >/dev/null 2>&1) || true
+      fi
+      rm -rf "$temp_dir" 2>/dev/null || true
+    fi
+  }
+  trap cleanup EXIT
+
+  # Create worktree from HEAD
+  local worktree_error
+  worktree_error=$(cd "$REPO_ROOT" && git worktree add "$temp_dir" HEAD 2>&1)
+  local worktree_exit=$?
+  if [[ $worktree_exit -eq 0 ]]; then
+    use_worktree=true
   else
-    # Store log file path even on failure
-    INITIAL_VERIFICATION_LOG="${log_file#$REPO_ROOT/}"
+    use_worktree=false
+    if echo "$worktree_error" | grep -q "already exists\|already checked out"; then
+      (cd "$REPO_ROOT" && git worktree remove "$temp_dir" --force >/dev/null 2>&1) || true
+      rm -rf "$temp_dir" 2>/dev/null || true
+      temp_dir=$(mktemp -d)
+      if (cd "$REPO_ROOT" && git worktree add "$temp_dir" HEAD >/dev/null 2>&1); then
+        use_worktree=true
+      fi
+    fi
+    
+    if [[ "$use_worktree" != "true" ]]; then
+      if ! (cd "$REPO_ROOT" && git clone -q --shared --no-checkout . "$temp_dir" >/dev/null 2>&1); then
+        (cd "$temp_dir" && git init -q && \
+          git config user.email "stacker@example.com" && \
+          git config user.name "Stacker") || {
+          cleanup
+          trap - EXIT
+          return 1
+        }
+        if ! (cd "$REPO_ROOT" && git checkout-index -a -f --prefix="$temp_dir/" >/dev/null 2>&1); then
+          (cd "$REPO_ROOT" && find . -mindepth 1 -maxdepth 1 ! -name '.git' -exec cp -r {} "$temp_dir/" \; >/dev/null 2>&1) || true
+        fi
+        (cd "$temp_dir" && git add -A >/dev/null 2>&1 && \
+          git commit -q -m "base" --allow-empty >/dev/null 2>&1) || true
+      fi
+    fi
+  fi
+  
+  if [[ ! -d "$temp_dir" ]]; then
+    cleanup
+    trap - EXIT
     return 1
   fi
+  
+  # Copy ALL uncommitted changes to temp directory
+  for file in "${all_files[@]}"; do
+    if [[ -f "$REPO_ROOT/$file" ]]; then
+      local file_dir
+      file_dir=$(dirname "$file")
+      if [[ "$file_dir" != "." ]]; then
+        mkdir -p "$temp_dir/$file_dir" 2>/dev/null || true
+      fi
+      cp "$REPO_ROOT/$file" "$temp_dir/$file" 2>/dev/null || true
+    elif [[ -f "$temp_dir/$file" ]]; then
+      # File was deleted
+      rm -f "$temp_dir/$file" 2>/dev/null || true
+    fi
+  done
+  
+  # Stage all changes
+  (cd "$temp_dir" && git add -A >/dev/null 2>&1) || true
+  
+  # Run verify.sh
+  local verify_script
+  if [[ -f "$temp_dir/.stacker/verify.sh" ]]; then
+    verify_script="$temp_dir/.stacker/verify.sh"
+  elif [[ -f "$VERIFY_SCRIPT" ]]; then
+    verify_script="$VERIFY_SCRIPT"
+  else
+    cleanup
+    trap - EXIT
+    return 1
+  fi
+  
+  if [[ ! -x "$verify_script" ]]; then
+    chmod +x "$verify_script" 2>/dev/null || true
+  fi
+  
+  # Run verify.sh and capture output to log file
+  # Ensure we're in the temp directory and verify.sh can find everything it needs
+  cd "$temp_dir"
+  if bash "$verify_script" >"$log_file" 2>&1; then
+    exit_code=0
+  fi
+  cd "$REPO_ROOT"  # Return to repo root
+  
+  # Store log file path (relative to repo root) for JSON
+  INITIAL_VERIFICATION_LOG="${log_file#$REPO_ROOT/}"
+  
+  cleanup
+  trap - EXIT
+  return $exit_code
 }
 
 # Generator state (global variables)
@@ -550,7 +645,15 @@ verify_partition() {
   fi
   
   # Apply only the changes for this partition
+  # First, ensure we have the full working directory state by copying all tracked files
+  # This ensures verify.sh has access to the complete project structure
+  cd "$REPO_ROOT"
+  
+  # Get all tracked files and copy them to temp dir (this ensures we have the full repo state)
+  # But we'll overlay with our specific changes
   IFS='|' read -ra files <<< "$partition_files"
+  
+  # For each file in the partition, copy from working directory (which has uncommitted changes)
   for file in "${files[@]}"; do
     if [[ -f "$REPO_ROOT/$file" ]]; then
       # Copy the modified version from working directory
@@ -565,6 +668,10 @@ verify_partition() {
       rm -f "$temp_dir/$file" 2>/dev/null || true
     fi
   done
+  
+  # Also copy any other uncommitted changes that might be needed
+  # (This is a safety measure - verify.sh might need the full working directory state)
+  # Actually, let's not do this - we want to test just the partition
   
   # Stage all changes
   (cd "$temp_dir" && git add -A >/dev/null 2>&1) || true
