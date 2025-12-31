@@ -255,6 +255,7 @@ generate_next_partition() {
   local num_files=${#GENERATOR_FILES[@]}
   
   if [[ $num_files -eq 0 ]]; then
+    echo "DEBUG: generate_next_partition: no files in GENERATOR_FILES" >&2
     return 1
   fi
   
@@ -996,6 +997,12 @@ main() {
   init_coverage
   init_partition_generator "${changed_files[@]}"
   
+  # Debug: Check if generator was initialized correctly
+  if [[ "$VERBOSE" == "true" ]]; then
+    echo "DEBUG: Generator initialized with ${#GENERATOR_FILES[@]} files" >&2
+    echo "DEBUG: Generator state: $GENERATOR_STATE" >&2
+  fi
+  
   # Step 2: Incremental generation and verification
   local valid_partitions=()
   local partition_id=0
@@ -1006,58 +1013,90 @@ main() {
   echo "" >&2
   
   # Ensure signals are not blocked in the loop
-  while partition=$(generate_next_partition); do
-    ((partition_id++))
-    
+  # Temporarily disable exit on error for the loop condition to handle empty partitions gracefully
+  set +e
+  partition=$(generate_next_partition)
+  local gen_exit=$?
+  if [[ "$VERBOSE" == "true" ]]; then
+    echo "DEBUG: First generate_next_partition call: exit_code=$gen_exit, partition='$partition'" >&2
+  fi
+  
+  if [[ $gen_exit -eq 0 ]] && [[ -n "$partition" ]]; then
+    # We have at least one partition, enter the loop
     if [[ "$VERBOSE" == "true" ]]; then
-      echo "Verifying partition $partition_id: $partition" >&2
-    else
-      echo "Verifying partition $partition_id..." >&2
+      echo "DEBUG: Entering partition verification loop with partition='$partition'" >&2
     fi
-    
-    # Create log file for this partition
-    local log_file="$LOGS_DIR/partition-$partition_id-$(date -u +"%Y%m%d-%H%M%S").log"
-    
-    # Verify partition (temporarily disable exit on error to allow signal handling)
-    # Note: We keep set +e here so that verify_partition failures don't exit the script
-    # Signals (Ctrl+C) will still be caught by the trap handler
-    set +e
-    local verified=false
-    local error=""
-    # Run verification with log capture - if user presses Ctrl+C, the trap will catch it
-    if verify_partition_with_log "$partition" "$log_file"; then
-      verified=true
-      valid_partitions+=("$partition")
-      add_to_coverage "$partition"
-      echo "  ✓ Valid" >&2
-      # Show coverage progress after each valid partition
-      echo "  Coverage: $COVERED_COUNT of ${#changed_files[@]} files covered ($(($COVERED_COUNT * 100 / ${#changed_files[@]}))%)" >&2
-    else
-      error="Partition verification failed"
-      echo "  ✗ Invalid" >&2
-      # Still show coverage progress periodically even for invalid partitions
-      if [[ $((partition_id % 5)) -eq 0 ]]; then
-        echo "  Coverage: $COVERED_COUNT of ${#changed_files[@]} files covered ($(($COVERED_COUNT * 100 / ${#changed_files[@]}))%)" >&2
+    while [[ -n "$partition" ]]; do
+      if [[ "$VERBOSE" == "true" ]]; then
+        echo "DEBUG: Loop iteration starting, partition_id=$partition_id, partition='$partition'" >&2
       fi
+      ((partition_id++)) || true  # Increment before setting -e to avoid false positive exit
+      set -e
+      
+      if [[ "$VERBOSE" == "true" ]]; then
+        echo "Verifying partition $partition_id: $partition" >&2
+      else
+        echo "Verifying partition $partition_id..." >&2
+      fi
+      
+      # Create log file for this partition
+      local log_file="$LOGS_DIR/partition-$partition_id-$(date -u +"%Y%m%d-%H%M%S").log"
+      
+      # Verify partition (temporarily disable exit on error to allow signal handling)
+      # Note: We keep set +e here so that verify_partition failures don't exit the script
+      # Signals (Ctrl+C) will still be caught by the trap handler
+      set +e
+      local verified=false
+      local error=""
+      # Run verification with log capture - if user presses Ctrl+C, the trap will catch it
+      if verify_partition_with_log "$partition" "$log_file"; then
+        verified=true
+        valid_partitions+=("$partition")
+        add_to_coverage "$partition"
+        echo "  ✓ Valid" >&2
+        # Show coverage progress after each valid partition
+        echo "  Coverage: $COVERED_COUNT of ${#changed_files[@]} files covered ($(($COVERED_COUNT * 100 / ${#changed_files[@]}))%)" >&2
+      else
+        error="Partition verification failed"
+        echo "  ✗ Invalid" >&2
+        # Still show coverage progress periodically even for invalid partitions
+        if [[ $((partition_id % 5)) -eq 0 ]]; then
+          echo "  Coverage: $COVERED_COUNT of ${#changed_files[@]} files covered ($(($COVERED_COUNT * 100 / ${#changed_files[@]}))%)" >&2
+        fi
+      fi
+      set -e
+      
+      # Store log file path (relative to repo root) for JSON
+      local log_file_rel="${log_file#$REPO_ROOT/}"
+      
+      # Add to JSON with log file reference
+      add_partition_to_json "$partition_id" "$partition" "$verified" "$error" "$log_file_rel"
+      
+      # Update coverage in JSON
+      update_json_coverage "${changed_files[@]}"
+      
+      # Check if coverage is complete
+      if is_coverage_complete ${#changed_files[@]}; then
+        echo "" >&2
+        echo "✓ Coverage complete! All ${#changed_files[@]} files are covered by valid partitions." >&2
+        break
+      fi
+      set +e  # Re-disable exit on error for next loop iteration
+      partition=$(generate_next_partition)
+      gen_exit=$?
+      if [[ "$VERBOSE" == "true" ]] && [[ $gen_exit -ne 0 ]]; then
+        echo "DEBUG: generate_next_partition returned exit_code=$gen_exit, ending loop" >&2
+      fi
+    done
+  else
+    if [[ "$VERBOSE" == "true" ]]; then
+      echo "DEBUG: No partitions generated (exit_code=$gen_exit, partition='$partition')" >&2
+      echo "DEBUG: GENERATOR_FILES has ${#GENERATOR_FILES[@]} files" >&2
+      echo "DEBUG: GENERATOR_STATE=$GENERATOR_STATE" >&2
     fi
-    set -e
-    
-    # Store log file path (relative to repo root) for JSON
-    local log_file_rel="${log_file#$REPO_ROOT/}"
-    
-    # Add to JSON with log file reference
-    add_partition_to_json "$partition_id" "$partition" "$verified" "$error" "$log_file_rel"
-    
-    # Update coverage in JSON
-    update_json_coverage "${changed_files[@]}"
-    
-    # Check if coverage is complete
-    if is_coverage_complete ${#changed_files[@]}; then
-      echo "" >&2
-      echo "✓ Coverage complete! All ${#changed_files[@]} files are covered by valid partitions." >&2
-      break
-    fi
-  done
+    echo "No partitions to verify." >&2
+  fi
+  set -e  # Re-enable exit on error after loop
   
   echo "" >&2
   echo "Partition verification complete: ${#valid_partitions[@]} valid partition(s) found" >&2
