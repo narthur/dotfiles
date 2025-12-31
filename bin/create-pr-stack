@@ -85,9 +85,12 @@ if [[ ! -x "$VERIFY_SCRIPT" ]]; then
   }
 fi
 
-# Get uncommitted changes (modified, added, deleted files)
+# Get uncommitted changes (modified, added, deleted files, and untracked files)
 get_uncommitted_changes() {
+  # Get tracked changes (modified, added, deleted, renamed)
   git diff --name-only --diff-filter=ACDMR
+  # Get untracked files (including renamed files that appear as new untracked files)
+  git ls-files --others --exclude-standard
 }
 
 # Verify entire change set - exit immediately if invalid
