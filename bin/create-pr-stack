@@ -250,22 +250,34 @@ init_partition_generator() {
   fi
 }
 
-# Generate next partition (returns partition string or empty if done)
+# Global variable to hold the next partition (to avoid subshell issues)
+NEXT_PARTITION=""
+
+# Generate next partition (sets NEXT_PARTITION global variable, returns 0 if partition found, 1 if done)
 generate_next_partition() {
   local num_files=${#GENERATOR_FILES[@]}
   
+  NEXT_PARTITION=""  # Clear previous value
+  
   if [[ $num_files -eq 0 ]]; then
-    echo "DEBUG: generate_next_partition: no files in GENERATOR_FILES" >&2
+    if [[ "$VERBOSE" == "true" ]]; then
+      echo "DEBUG: generate_next_partition: no files in GENERATOR_FILES" >&2
+    fi
     return 1
   fi
   
   # Strategy 1: Single-file partitions
   if [[ "$GENERATOR_STATE" == "single" ]]; then
     if [[ $GENERATOR_INDEX -lt $num_files ]] && [[ $GENERATOR_COUNT -lt $MAX_PARTITIONS ]]; then
-      local partition="${GENERATOR_FILES[$GENERATOR_INDEX]}"
+      NEXT_PARTITION="${GENERATOR_FILES[$GENERATOR_INDEX]}"
+      if [[ "$VERBOSE" == "true" ]]; then
+        echo "DEBUG: generate_next_partition: GENERATOR_INDEX=$GENERATOR_INDEX, partition='$NEXT_PARTITION'" >&2
+      fi
       ((GENERATOR_INDEX++))
       ((GENERATOR_COUNT++))
-      echo "$partition"
+      if [[ "$VERBOSE" == "true" ]]; then
+        echo "DEBUG: generate_next_partition: after increment, GENERATOR_INDEX=$GENERATOR_INDEX" >&2
+      fi
       return 0
     else
       GENERATOR_STATE="two"
@@ -278,12 +290,11 @@ generate_next_partition() {
     if [[ $GENERATOR_COUNT -lt $MAX_PARTITIONS ]] && [[ $num_files -gt 1 ]]; then
       if [[ $GENERATOR_INDEX -lt $((num_files - 1)) ]]; then
         local next_idx=$((GENERATOR_INDEX + 1))
-        if [[ $next_idx -lt $num_files ]]; then
-          local partition="${GENERATOR_FILES[$GENERATOR_INDEX]}|${GENERATOR_FILES[$next_idx]}"
-          ((GENERATOR_INDEX++))
-          ((GENERATOR_COUNT++))
-          echo "$partition"
-          return 0
+      if [[ $next_idx -lt $num_files ]]; then
+        NEXT_PARTITION="${GENERATOR_FILES[$GENERATOR_INDEX]}|${GENERATOR_FILES[$next_idx]}"
+        ((GENERATOR_INDEX++))
+        ((GENERATOR_COUNT++))
+        return 0
         fi
       fi
       GENERATOR_STATE="directory"
@@ -298,10 +309,9 @@ generate_next_partition() {
   if [[ "$GENERATOR_STATE" == "directory" ]]; then
     if [[ $GENERATOR_COUNT -lt $MAX_PARTITIONS ]] && [[ ${#GENERATOR_DIR_GROUPS[@]} -gt 0 ]]; then
       if [[ $GENERATOR_DIR_INDEX -lt ${#GENERATOR_DIR_GROUPS[@]} ]]; then
-        local partition="${GENERATOR_DIR_GROUPS[$GENERATOR_DIR_INDEX]}"
+        NEXT_PARTITION="${GENERATOR_DIR_GROUPS[$GENERATOR_DIR_INDEX]}"
         ((GENERATOR_DIR_INDEX++))
         ((GENERATOR_COUNT++))
-        echo "$partition"
         return 0
       fi
       GENERATOR_STATE="larger"
@@ -318,14 +328,13 @@ generate_next_partition() {
       # Try combinations of GENERATOR_COMBO_INDEX files
       local max_start=$((num_files - GENERATOR_COMBO_INDEX))
       if [[ $GENERATOR_INDEX -le $max_start ]]; then
-        local partition=$(IFS='|'; echo "${GENERATOR_FILES[*]:$GENERATOR_INDEX:$GENERATOR_COMBO_INDEX}")
+        NEXT_PARTITION=$(IFS='|'; echo "${GENERATOR_FILES[*]:$GENERATOR_INDEX:$GENERATOR_COMBO_INDEX}")
         ((GENERATOR_INDEX++))
         if [[ $GENERATOR_INDEX -gt $max_start ]]; then
           GENERATOR_INDEX=0
           ((GENERATOR_COMBO_INDEX++))
         fi
         ((GENERATOR_COUNT++))
-        echo "$partition"
         return 0
       fi
       GENERATOR_INDEX=0
@@ -341,10 +350,9 @@ generate_next_partition() {
   # Strategy 5: All files together (as fallback)
   if [[ "$GENERATOR_STATE" == "all" ]]; then
     if [[ $GENERATOR_COUNT -lt $MAX_PARTITIONS ]]; then
-      local partition=$(IFS='|'; echo "${GENERATOR_FILES[*]}")
+      NEXT_PARTITION=$(IFS='|'; echo "${GENERATOR_FILES[*]}")
       GENERATOR_STATE="done"
       ((GENERATOR_COUNT++))
-      echo "$partition"
       return 0
     fi
   fi
@@ -1015,8 +1023,9 @@ main() {
   # Ensure signals are not blocked in the loop
   # Temporarily disable exit on error for the loop condition to handle empty partitions gracefully
   set +e
-  partition=$(generate_next_partition)
+  generate_next_partition
   local gen_exit=$?
+  local partition="$NEXT_PARTITION"
   if [[ "$VERBOSE" == "true" ]]; then
     echo "DEBUG: First generate_next_partition call: exit_code=$gen_exit, partition='$partition'" >&2
   fi
@@ -1082,10 +1091,18 @@ main() {
         break
       fi
       set +e  # Re-disable exit on error for next loop iteration
-      partition=$(generate_next_partition)
+      local old_partition="$partition"
+      generate_next_partition
       gen_exit=$?
-      if [[ "$VERBOSE" == "true" ]] && [[ $gen_exit -ne 0 ]]; then
-        echo "DEBUG: generate_next_partition returned exit_code=$gen_exit, ending loop" >&2
+      partition="$NEXT_PARTITION"
+      if [[ "$VERBOSE" == "true" ]]; then
+        echo "DEBUG: After generate_next_partition: exit_code=$gen_exit, old='$old_partition', new='$partition'" >&2
+      fi
+      if [[ $gen_exit -ne 0 ]] || [[ -z "$partition" ]]; then
+        if [[ "$VERBOSE" == "true" ]]; then
+          echo "DEBUG: generate_next_partition returned exit_code=$gen_exit or empty partition, ending loop" >&2
+        fi
+        break
       fi
     done
   else
