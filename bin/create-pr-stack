@@ -103,10 +103,17 @@ verify_entire_changeset() {
   # Create a partition string with all files
   local all_files_str=$(IFS='|'; echo "${all_files[*]}")
   
-  # Verify using the same mechanism as verify_partition
-  if verify_partition "$all_files_str"; then
+  # Create log file for initial verification
+  local log_file="$LOGS_DIR/initial-verification-$(date -u +"%Y%m%d-%H%M%S").log"
+  
+  # Verify using the same mechanism as verify_partition, but capture output
+  if verify_partition_with_log "$all_files_str" "$log_file"; then
+    # Store log file path (relative to repo root) for JSON
+    INITIAL_VERIFICATION_LOG="${log_file#$REPO_ROOT/}"
     return 0
   else
+    # Store log file path even on failure
+    INITIAL_VERIFICATION_LOG="${log_file#$REPO_ROOT/}"
     return 1
   fi
 }
@@ -290,15 +297,23 @@ get_uncovered_files() {
 # JSON storage
 JSON_FILE=""
 JSON_PARTITIONS=()
+LOGS_DIR=""
 
 # Initialize JSON storage
 init_json_storage() {
   local timestamp=$(date -u +"%Y-%m-%d-%H-%M-%S")
   JSON_FILE="$REPO_ROOT/.stacker/stack-results-$timestamp.json"
+  LOGS_DIR="$REPO_ROOT/.stacker/logs"
   
   # Create .stacker directory if it doesn't exist
   mkdir -p "$REPO_ROOT/.stacker" || {
     echo "Error: Could not create .stacker directory" >&2
+    return 1
+  }
+  
+  # Create logs directory if it doesn't exist
+  mkdir -p "$LOGS_DIR" || {
+    echo "Error: Could not create .stacker/logs directory" >&2
     return 1
   }
   
@@ -309,7 +324,8 @@ init_json_storage() {
   "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
   "total_files": $total_files,
   "initial_verification": {
-    "verified": false
+    "verified": false,
+    "log_file": null
   },
   "partitions": [],
   "coverage": {
@@ -326,10 +342,15 @@ EOF
 update_json_initial_verification() {
   local verified="$1"
   local error="${2:-}"
+  local log_file="${3:-}"
   
   # Use jq if available, otherwise use sed
   if command -v jq >/dev/null 2>&1; then
-    jq ".initial_verification.verified = $verified | .initial_verification.error = \"$error\"" "$JSON_FILE" > "$JSON_FILE.tmp" && mv "$JSON_FILE.tmp" "$JSON_FILE"
+    if [[ -n "$log_file" ]]; then
+      jq ".initial_verification.verified = $verified | .initial_verification.error = \"$error\" | .initial_verification.log_file = \"$log_file\"" "$JSON_FILE" > "$JSON_FILE.tmp" && mv "$JSON_FILE.tmp" "$JSON_FILE"
+    else
+      jq ".initial_verification.verified = $verified | .initial_verification.error = \"$error\"" "$JSON_FILE" > "$JSON_FILE.tmp" && mv "$JSON_FILE.tmp" "$JSON_FILE"
+    fi
   else
     # Fallback: simple sed replacement (less robust)
     if [[ "$verified" == "true" ]]; then
@@ -337,6 +358,10 @@ update_json_initial_verification() {
     fi
     if [[ -n "$error" ]]; then
       sed -i "s/\"error\": \"\"/\"error\": \"$error\"/" "$JSON_FILE"
+    fi
+    if [[ -n "$log_file" ]]; then
+      # This is tricky without jq, so we'll just note it
+      echo "Warning: jq not available, log_file not added to JSON" >&2
     fi
   fi
 }
@@ -347,6 +372,7 @@ add_partition_to_json() {
   local files_str="$2"
   local verified="$3"
   local error="${4:-}"
+  local log_file="${5:-}"
   local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
   
   # Parse files
@@ -365,18 +391,35 @@ add_partition_to_json() {
   
   # Use jq if available
   if command -v jq >/dev/null 2>&1; then
-    jq --arg id "$partition_id" \
-       --argjson files "$files_json" \
-       --arg verified "$verified" \
-       --arg error "$error" \
-       --arg timestamp "$timestamp" \
-       '.partitions += [{
-         "id": ($id | tonumber),
-         "files": $files,
-         "verified": ($verified == "true"),
-         "error": $error,
-         "timestamp": $timestamp
-       }]' "$JSON_FILE" > "$JSON_FILE.tmp" && mv "$JSON_FILE.tmp" "$JSON_FILE"
+    if [[ -n "$log_file" ]]; then
+      jq --arg id "$partition_id" \
+         --argjson files "$files_json" \
+         --arg verified "$verified" \
+         --arg error "$error" \
+         --arg log_file "$log_file" \
+         --arg timestamp "$timestamp" \
+         '.partitions += [{
+           "id": ($id | tonumber),
+           "files": $files,
+           "verified": ($verified == "true"),
+           "error": $error,
+           "log_file": $log_file,
+           "timestamp": $timestamp
+         }]' "$JSON_FILE" > "$JSON_FILE.tmp" && mv "$JSON_FILE.tmp" "$JSON_FILE"
+    else
+      jq --arg id "$partition_id" \
+         --argjson files "$files_json" \
+         --arg verified "$verified" \
+         --arg error "$error" \
+         --arg timestamp "$timestamp" \
+         '.partitions += [{
+           "id": ($id | tonumber),
+           "files": $files,
+           "verified": ($verified == "true"),
+           "error": $error,
+           "timestamp": $timestamp
+         }]' "$JSON_FILE" > "$JSON_FILE.tmp" && mv "$JSON_FILE.tmp" "$JSON_FILE"
+    fi
   else
     # Fallback: append to partitions array manually (less robust)
     local partition_json="{\"id\": $partition_id, \"files\": $files_json, \"verified\": $verified, \"error\": \"$error\", \"timestamp\": \"$timestamp\"}"
@@ -416,6 +459,19 @@ update_json_coverage() {
        "$JSON_FILE" > "$JSON_FILE.tmp" && mv "$JSON_FILE.tmp" "$JSON_FILE"
   else
     echo "Warning: jq not available, coverage update skipped" >&2
+  fi
+}
+
+# Verify a partition with log file capture
+verify_partition_with_log() {
+  local partition_files="$1"
+  local log_file="$2"
+  
+  # Redirect both stdout and stderr to log file
+  if verify_partition "$partition_files" >"$log_file" 2>&1; then
+    return 0
+  else
+    return 1
   fi
 }
 
@@ -529,14 +585,9 @@ verify_partition() {
     chmod +x "$verify_script" 2>/dev/null || true
   fi
   
-  if [[ "$VERBOSE" == "true" ]]; then
-    if (cd "$temp_dir" && bash "$verify_script" >&2); then
-      exit_code=0
-    fi
-  else
-    if (cd "$temp_dir" && bash "$verify_script" >/dev/null 2>&1); then
-      exit_code=0
-    fi
+  # Always output to stdout/stderr (will be captured by caller if needed)
+  if (cd "$temp_dir" && bash "$verify_script"); then
+    exit_code=0
   fi
 
   cleanup
@@ -811,19 +862,23 @@ main() {
   
   # Step 1: Verify entire change set first
   echo "Verifying entire change set..." >&2
+  local INITIAL_VERIFICATION_LOG=""
   if ! verify_entire_changeset; then
-    update_json_initial_verification false "Entire change set does not verify"
+    update_json_initial_verification false "Entire change set does not verify" "$INITIAL_VERIFICATION_LOG"
     update_json_coverage "${changed_files[@]}"
     if [[ "$JSON_OUTPUT" == "true" ]]; then
       cat "$JSON_FILE"
     else
       echo "Error: The entire change set does not verify. Cannot split into PRs." >&2
+      if [[ -n "$INITIAL_VERIFICATION_LOG" ]]; then
+        echo "       Verification log: $INITIAL_VERIFICATION_LOG" >&2
+      fi
       echo "       Results saved to: $JSON_FILE" >&2
     fi
     exit 1
   fi
   
-  update_json_initial_verification true ""
+  update_json_initial_verification true "" "$INITIAL_VERIFICATION_LOG"
   echo "✓ Entire change set is valid" >&2
   echo "" >&2
   
@@ -850,14 +905,17 @@ main() {
       echo "Verifying partition $partition_id..." >&2
     fi
     
+    # Create log file for this partition
+    local log_file="$LOGS_DIR/partition-$partition_id-$(date -u +"%Y%m%d-%H%M%S").log"
+    
     # Verify partition (temporarily disable exit on error to allow signal handling)
     # Note: We keep set +e here so that verify_partition failures don't exit the script
     # Signals (Ctrl+C) will still be caught by the trap handler
     set +e
     local verified=false
     local error=""
-    # Run verification - if user presses Ctrl+C, the trap will catch it
-    if verify_partition "$partition" >/dev/null 2>&1; then
+    # Run verification with log capture - if user presses Ctrl+C, the trap will catch it
+    if verify_partition_with_log "$partition" "$log_file"; then
       verified=true
       valid_partitions+=("$partition")
       add_to_coverage "$partition"
@@ -874,8 +932,11 @@ main() {
     fi
     set -e
     
-    # Add to JSON
-    add_partition_to_json "$partition_id" "$partition" "$verified" "$error"
+    # Store log file path (relative to repo root) for JSON
+    local log_file_rel="${log_file#$REPO_ROOT/}"
+    
+    # Add to JSON with log file reference
+    add_partition_to_json "$partition_id" "$partition" "$verified" "$error" "$log_file_rel"
     
     # Update coverage in JSON
     update_json_coverage "${changed_files[@]}"
