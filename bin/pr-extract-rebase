@@ -1,0 +1,59 @@
+#!/bin/bash
+# pr-extract-rebase
+# Safely rebases current branch onto the base branch
+
+set -e
+
+# Get base branch
+BASE_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo "main")
+CURRENT_BRANCH=$(git branch --show-current)
+
+echo "📍 Base branch: origin/$BASE_BRANCH"
+echo "🌿 Current branch: $CURRENT_BRANCH"
+echo ""
+
+# Fetch latest
+echo "Fetching latest from origin..."
+git fetch origin
+
+# Check if rebase needed
+COMMITS_BEHIND=$(git rev-list --count HEAD..origin/$BASE_BRANCH 2>/dev/null || echo "0")
+
+if [ "$COMMITS_BEHIND" -eq 0 ]; then
+    echo "✅ Already up to date with origin/$BASE_BRANCH"
+    exit 0
+fi
+
+echo "⚠️  Branch is behind by $COMMITS_BEHIND commit(s)"
+echo ""
+
+# Check for uncommitted changes
+if ! git diff-index --quiet HEAD --; then
+    echo "❌ Error: You have uncommitted changes."
+    echo "Please commit or stash them before rebasing."
+    echo ""
+    git status --short
+    exit 1
+fi
+
+# Perform rebase
+echo "Rebasing..."
+if git rebase origin/$BASE_BRANCH; then
+    echo ""
+    echo "✅ Rebase successful!"
+    echo ""
+    echo "Next steps:"
+    echo "  - If you've already pushed this branch, you'll need to force push:"
+    echo "    git push --force-with-lease"
+else
+    echo ""
+    echo "❌ Rebase failed with conflicts."
+    echo ""
+    echo "To resolve:"
+    echo "  1. Fix conflicts in the listed files"
+    echo "  2. Stage resolved files: git add <file>"
+    echo "  3. Continue: git rebase --continue"
+    echo ""
+    echo "To abort: git rebase --abort"
+    exit 1
+fi

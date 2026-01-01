@@ -1,0 +1,52 @@
+#!/bin/bash
+# pr-extract-context
+# Gathers all context needed for PR extraction in one command
+
+set -e
+
+echo "=== PR Extraction Context ==="
+echo ""
+
+# Get base branch
+echo "📍 Base Branch:"
+BASE_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo "main")
+echo "   $BASE_BRANCH"
+echo ""
+
+# Get current branch
+echo "🌿 Current Branch:"
+CURRENT_BRANCH=$(git branch --show-current)
+echo "   $CURRENT_BRANCH"
+echo ""
+
+# Check if rebase needed
+echo "🔄 Rebase Status:"
+git fetch origin -q
+COMMITS_BEHIND=$(git rev-list --count HEAD..origin/$BASE_BRANCH 2>/dev/null || echo "0")
+if [ "$COMMITS_BEHIND" -eq 0 ]; then
+    echo "   ✓ Up to date with origin/$BASE_BRANCH"
+else
+    echo "   ⚠️  Behind by $COMMITS_BEHIND commit(s)"
+    echo "   💡 Consider rebasing first"
+fi
+echo ""
+
+# Get diff stats
+echo "📊 Diff Statistics:"
+git --no-pager diff --stat origin/$BASE_BRANCH
+echo ""
+
+# Count changed files
+CHANGED_FILES=$(git diff --name-only origin/$BASE_BRANCH | wc -l | tr -d ' ')
+echo "📁 Total files changed: $CHANGED_FILES"
+echo ""
+
+# Show file categories
+echo "📋 Changed files by type:"
+git diff --name-only origin/$BASE_BRANCH | sed 's/.*\.//' | sort | uniq -c | sort -rn
+echo ""
+
+echo "=== Ready for PR extraction ==="
+echo "Base: origin/$BASE_BRANCH"
+echo "Current: $CURRENT_BRANCH"
+echo "Rebase needed: $([ "$COMMITS_BEHIND" -gt 0 ] && echo 'YES' || echo 'NO')"
