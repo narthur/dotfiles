@@ -37,4 +37,6 @@
 !bin/
 !bin/*
 !packages.txt
+!prompts/
+!prompts/extract-pr.md
 !README.md
