@@ -1,0 +1,12 @@
+#!/bin/bash
+
+# Get the selected file from fzf
+selected_file=$(find ~/prompts -type f | fzf)
+
+# If a file was selected, copy its contents to clipboard
+if [ -n "$selected_file" ]; then
+    cat "$selected_file" | xclip -selection clipboard
+    filename=$(basename "$selected_file")
+    echo "Copied $filename to clipboard"
+fi
+
