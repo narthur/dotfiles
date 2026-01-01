@@ -77,7 +77,7 @@ This workflow uses helper scripts. Ensure these are installed and in your PATH:
 
    **Your options:**
 
-   1. **Yes, create the PR** - I'll commit with descriptive conventional commit message (include `Co-Authored-By: Warp <agent@warp.dev>`), push, and create PR using `gh pr create -fd`
+   1. **Yes, create the PR** - I'll commit with descriptive conventional commit message (include `Co-Authored-By: Warp <agent@warp.dev>`), push, and create PR using `gh pr create -fd --assignee "$(gh api user --jq .login)"` (you will be automatically assigned to the PR)
    2. **Let me review the changes first** - I'll show the current diff/staging area
    3. **Modify the changes** - Provide feedback and I'll adjust
    4. **Cancel** - Abandon this extraction
@@ -88,7 +88,10 @@ This workflow uses helper scripts. Ensure these are installed and in your PATH:
 
    - Commit with descriptive conventional commit message (include `Co-Authored-By: Warp <agent@warp.dev>`)
    - Push: `git push -u origin <branch-name>`
-   - Create PR: `gh pr create -fd`
+   - Get current GitHub user: `GITHUB_USER=$(gh api user --jq .login)`
+   - Create PR and assign to user: `gh pr create -fd --assignee "$GITHUB_USER"`
+
+   This automatically assigns the PR to the current authenticated GitHub user without hard-coding the username.
 
 ## Important Guidelines
 
@@ -102,6 +105,7 @@ This workflow uses helper scripts. Ensure these are installed and in your PATH:
 - Branch names should be descriptive and use conventional prefixes (`chore/`, `docs/`, `fix/`, `feat/`, `refactor/`, etc.)
 - Commit messages should follow conventional commits format
 - Always include the `Co-Authored-By: Warp <agent@warp.dev>` trailer
+- When creating PRs, automatically assign them to the current GitHub user by running `gh api user --jq .login` to get the username dynamically (do not hard-code usernames)
 - If files need to be created/modified (like .gitignore), show the exact commands needed
 
 ## Example Output Format
