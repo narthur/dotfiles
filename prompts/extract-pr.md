@@ -23,9 +23,12 @@ This workflow uses helper scripts. Ensure these are installed and in your PATH:
 
    **⚠️ Your branch is X commits behind origin/<base-branch>. I need to rebase your branch before extracting PRs.**
 
-   **May I run `pr-extract-rebase` to update your branch?**
+   **Your options:**
 
-   **Do not proceed with analyzing changes until the branch is up to date.**
+   1. **Yes, rebase now** - I'll run `pr-extract-rebase` to update your branch
+   2. **Skip rebase** - Continue without rebasing (not recommended)
+
+   **Do not proceed with analyzing changes until the branch is up to date or user explicitly chooses to skip.**
 
 3. **Analyze the diff** (only if branch is up to date): Run `git --no-pager diff origin/<base-branch>` to see detailed changes
 4. **Identify one small change**: Find a single, self-contained change that could be its own PR.
@@ -49,14 +52,14 @@ This workflow uses helper scripts. Ensure these are installed and in your PATH:
 
    **"I've identified a change to extract. Would you like me to create a new branch with these changes?"**
 
-   Provide options:
+   **Your options:**
 
-   - **Yes, proceed** - Create the branch
-   - **Show me the diff first** - Show only the diff for the files involved
-   - **Suggest a different change** - Find another extraction candidate
-   - **List all candidates** - Show all possible extractions
+   1. **Yes, proceed** - I'll create a new branch and apply these changes
+   2. **Show me the diff first** - I'll show only the diff for the files involved
+   3. **Suggest a different change** - I'll find another extraction candidate
+   4. **List all candidates** - I'll show all possible extractions
 
-   **Do not create the branch until the user explicitly approves.**
+   **Do not create the branch until the user explicitly approves (option 1).**
 
 7. **Create branch and apply changes** (only after user approval): Once approved, create the branch and apply the changes:
 
@@ -72,14 +75,14 @@ This workflow uses helper scripts. Ensure these are installed and in your PATH:
 
    **"I've created branch `<branch-name>` and applied the changes. Would you like me to commit, push, and create the PR?"**
 
-   Provide options:
+   **Your options:**
 
-   - **Yes, create the PR** - Commit with descriptive conventional commit message (include `Co-Authored-By: Warp <agent@warp.dev>`), push, and create PR using `gh pr create -fd`
-   - **Let me review the changes first** - Show the current diff/staging area
-   - **Modify the changes** - Allow user to provide feedback and iterate
-   - **Cancel** - Abandon this extraction
+   1. **Yes, create the PR** - I'll commit with descriptive conventional commit message (include `Co-Authored-By: Warp <agent@warp.dev>`), push, and create PR using `gh pr create -fd`
+   2. **Let me review the changes first** - I'll show the current diff/staging area
+   3. **Modify the changes** - Provide feedback and I'll adjust
+   4. **Cancel** - Abandon this extraction
 
-   **Do not commit, push, or create PR until the user explicitly approves.**
+   **Do not commit, push, or create PR until the user explicitly approves (option 1).**
 
 9. **Create the PR** (only after user approval): Once approved, commit, push, and create the PR:
 
@@ -91,6 +94,7 @@ This workflow uses helper scripts. Ensure these are installed and in your PATH:
 
 - Use the helper scripts for consistency and safety
 - If helper scripts aren't available, fall back to manual git commands
+- **Always provide numbered options (1, 2, 3, etc.) whenever asking a question or requesting permission**
 - **Always ask for permission at two checkpoints:**
   1. After identifying a change (before creating branch)
   2. After creating branch and applying changes (before committing/pushing/creating PR)
@@ -106,7 +110,12 @@ This workflow uses helper scripts. Ensure these are installed and in your PATH:
 
 ⚠️ **Your branch is X commits behind origin/<base-branch>. I need to rebase your branch before extracting PRs.**
 
-**May I run `pr-extract-rebase` to update your branch?**
+**Your options:**
+
+1. **Yes, rebase now** - I'll run `pr-extract-rebase` to update your branch
+2. **Skip rebase** - Continue without rebasing (not recommended)
+
+**What would you like to do?**
 
 ---
 
