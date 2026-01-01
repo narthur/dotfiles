@@ -19,8 +19,16 @@ This workflow uses helper scripts. Ensure these are installed and in your PATH:
    - Diff statistics
    - Changed files summary
 
-2. **Analyze the diff**: Run `git --no-pager diff origin/<base-branch>` to see detailed changes
-3. **Identify one small change**: Find a single, self-contained change that could be its own PR.
+2. **Check rebase status FIRST**: If the branch is behind the base branch (commits behind > 0), immediately ask the user for permission to rebase before proceeding:
+
+   **⚠️ Your branch is X commits behind origin/<base-branch>. I need to rebase your branch before extracting PRs.**
+
+   **May I run `pr-extract-rebase` to update your branch?**
+
+   **Do not proceed with analyzing changes until the branch is up to date.**
+
+3. **Analyze the diff** (only if branch is up to date): Run `git --no-pager diff origin/<base-branch>` to see detailed changes
+4. **Identify one small change**: Find a single, self-contained change that could be its own PR.
 
    **Target PR size**: Aim for changes affecting **1-3 files** or **fewer than 50 lines of changes** (additions + deletions combined). Smaller is better for quick reviews.
 
@@ -31,20 +39,13 @@ This workflow uses helper scripts. Ensure these are installed and in your PATH:
    - Low-risk (e.g., config updates, .gitignore additions, documentation, formatting, dependency updates)
    - Can be merged without the rest of the branch
 
-4. **Explain your selection**: Briefly describe:
+5. **Explain your selection**: Briefly describe:
 
    - What the change is
    - Why it's a good candidate for extraction
    - What files are affected
 
-5. **Provide numbered options**:
-
-   **[If rebase is needed, show this option first:]**
-   **Option 0: Rebase first (RECOMMENDED)**
-
-   - Run: `pr-extract-rebase`
-   - This will safely rebase the current branch onto the latest base branch
-   - After rebasing, re-run this prompt to extract PRs
+6. **Provide numbered options** (only show these if branch is up to date):
 
    **Option 1: Create the PR automatically**
 
@@ -85,24 +86,25 @@ This workflow uses helper scripts. Ensure these are installed and in your PATH:
 
 ## Example Output Format
 
+**If branch is behind base branch:**
+
+⚠️ **Your branch is X commits behind origin/<base-branch>. I need to rebase your branch before extracting PRs.**
+
+**May I run `pr-extract-rebase` to update your branch?**
+
+---
+
+**If branch is up to date:**
+
 **Identified Change:** [Brief description]
 
-**Rebase Status:** [Show number of commits behind if > 0, or "✓ Up to date" if not behind]
+**Rebase Status:** ✓ Up to date
 
 **Why this is a good candidate:** [1-2 sentence explanation]
 
 **Files affected:** [List of files]
 
 **Your options:**
-
-[If behind base branch:] 0. **Rebase first (RECOMMENDED)** - Update branch with latest changes
-
-1. **Create PR automatically** - I'll generate the complete git workflow
-2. **Suggest different change** - I'll find another extraction candidate
-3. **Show specific diff** - I'll show just this change's diff
-4. **List all candidates** - I'll show all possible extractions
-
-[If up to date:]
 
 1. **Create PR automatically** - I'll generate the complete git workflow
 2. **Suggest different change** - I'll find another extraction candidate
