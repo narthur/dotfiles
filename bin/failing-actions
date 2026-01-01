@@ -1,0 +1,342 @@
+#!/usr/bin/env bash
+
+# failing-actions - List all failing GitHub Actions in open and draft PRs
+# Usage:
+#   failing-actions [--json] [--all] [--repo OWNER/REPO]
+
+set -euo pipefail
+
+FORMAT="human"
+INCLUDE_PASSING=false
+REPO=""
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --json) FORMAT="json"; shift;;
+    --all) INCLUDE_PASSING=true; shift;;
+    --repo|-r) REPO="$2"; shift 2;;
+    -h|--help)
+      cat <<EOF
+Usage: $0 [options]
+
+Options:
+  --json             JSON output format
+  --all              Include passing actions (default: only failing)
+  --repo|-r REPO     Specify repository (default: current repo)
+  -h, --help         Show this help
+
+Examples:
+  $0
+  $0 --json
+  $0 --all
+  $0 --repo owner/repo
+EOF
+      exit 0
+      ;;
+    *) echo "Unknown option: $1" >&2; exit 1;;
+  esac
+done
+
+# Determine repository
+if [[ -z "$REPO" ]]; then
+  # Try to get repo from git remote
+  REMOTE_URL=$(git remote get-url origin 2>/dev/null || echo "")
+  if [[ -z "$REMOTE_URL" ]]; then
+    echo "Error: Could not determine repository. Use --repo OWNER/REPO or run from a git repository." >&2
+    exit 1
+  fi
+  
+  # Extract owner/repo from various URL formats
+  # Handles: https://github.com/owner/repo.git, git@github.com:owner/repo.git, etc.
+  REPO=$(echo "$REMOTE_URL" | sed -E \
+    -e 's|^https?://github\.com/||' \
+    -e 's|^git@github\.com:||' \
+    -e 's|\.git$||' \
+    -e 's|/$||' \
+    -e 's|^([^/]+/[^/]+).*|\1|')
+  
+  if [[ -z "$REPO" ]] || [[ ! "$REPO" =~ ^[^/]+/[^/]+$ ]]; then
+    echo "Error: Could not parse repository from remote URL: $REMOTE_URL" >&2
+    echo "Please specify repository with --repo OWNER/REPO" >&2
+    exit 1
+  fi
+fi
+
+# Build command arguments for PR list
+PR_ARGS=("--state" "open" "--repo" "$REPO")
+if [[ "$FORMAT" == "json" ]]; then
+  PR_ARGS+=("--json" "number,title,headRefName,headRefOid,isDraft,url,author")
+else
+  PR_ARGS+=("--json" "number,title,headRefName,headRefOid,isDraft,url,author")
+fi
+
+# Fetch open PRs (including drafts)
+PRS_JSON=$(gh pr list "${PR_ARGS[@]}" 2>&1)
+GH_EXIT_CODE=$?
+
+if [[ $GH_EXIT_CODE -ne 0 ]]; then
+  echo "Error: Failed to fetch PRs from $REPO" >&2
+  echo "" >&2
+  echo "Error details:" >&2
+  echo "$PRS_JSON" >&2
+  echo "" >&2
+  echo "Check your GitHub CLI authentication with: gh auth status" >&2
+  exit 1
+fi
+
+# Check if output is valid JSON (gh might return error messages as text)
+if ! echo "$PRS_JSON" | jq empty 2>/dev/null; then
+  echo "Error: GitHub CLI returned invalid JSON response:" >&2
+  echo "$PRS_JSON" >&2
+  exit 1
+fi
+
+PR_COUNT=$(echo "$PRS_JSON" | jq 'length')
+if [[ "$PR_COUNT" -eq 0 ]]; then
+  if [[ "$FORMAT" == "json" ]]; then
+    echo "[]"
+  else
+    echo "No open PRs found in $REPO"
+  fi
+  exit 0
+fi
+
+# Collect all failing actions
+FAILING_ACTIONS=()
+
+# Process each PR
+while IFS= read -r pr_json; do
+  PR_NUMBER=$(echo "$pr_json" | jq -r '.number')
+  PR_TITLE=$(echo "$pr_json" | jq -r '.title')
+  PR_BRANCH=$(echo "$pr_json" | jq -r '.headRefName')
+  PR_HEAD_SHA=$(echo "$pr_json" | jq -r '.headRefOid')
+  PR_IS_DRAFT=$(echo "$pr_json" | jq -r '.isDraft')
+  PR_URL=$(echo "$pr_json" | jq -r '.url')
+  PR_AUTHOR=$(echo "$pr_json" | jq -r '.author.login')
+  
+  # Skip if we don't have a commit SHA
+  if [[ -z "$PR_HEAD_SHA" ]] || [[ "$PR_HEAD_SHA" == "null" ]]; then
+    continue
+  fi
+  
+  # Get workflow runs for this PR's head commit
+  # Query by commit SHA to get runs specifically for the latest commit
+  RUNS_JSON=$(gh run list --repo "$REPO" --commit "$PR_HEAD_SHA" --limit 100 --json name,conclusion,status,workflowName,url 2>/dev/null || echo "[]")
+  
+  # Also get checks (for non-workflow checks like CodeRabbit, etc.)
+  CHECKS_JSON=$(gh pr checks "$PR_NUMBER" --repo "$REPO" --json name,state,workflow,link 2>/dev/null || echo "[]")
+  
+  # Process workflow runs
+  # Since we're querying by commit SHA, all runs are for the same commit
+  # We only need to filter for failures - no need to check "most recent" since
+  # all runs are for the PR's head commit
+  RUN_COUNT=$(echo "$RUNS_JSON" | jq 'length')
+  if [[ "$RUN_COUNT" -gt 0 ]]; then
+    while IFS= read -r run_json; do
+      RUN_NAME=$(echo "$run_json" | jq -r '.name // .workflowName // "unknown"')
+      RUN_CONCLUSION=$(echo "$run_json" | jq -r '.conclusion // "none"')
+      RUN_STATUS=$(echo "$run_json" | jq -r '.status // "unknown"')
+      RUN_WORKFLOW=$(echo "$run_json" | jq -r '.workflowName // ""')
+      RUN_URL=$(echo "$run_json" | jq -r '.url // ""')
+      
+      # Filter: only include failing actions, or all if --all flag is set
+      # Conclusion values: success, failure, cancelled, skipped, action_required, etc.
+      # Since we're querying by commit, we only show failures for the current commit state
+      if [[ "$INCLUDE_PASSING" == true ]] || [[ "$RUN_CONCLUSION" == "failure" ]] || [[ "$RUN_CONCLUSION" == "cancelled" ]] || [[ "$RUN_CONCLUSION" == "action_required" ]] || [[ "$RUN_STATUS" == "completed" && "$RUN_CONCLUSION" != "success" && "$RUN_CONCLUSION" != "skipped" && "$RUN_CONCLUSION" != "null" ]]; then
+        # Create a combined JSON object for this failing action
+        ACTION_JSON=$(jq -n \
+          --arg pr_number "$PR_NUMBER" \
+          --arg pr_title "$PR_TITLE" \
+          --arg pr_branch "$PR_BRANCH" \
+          --arg pr_is_draft "$PR_IS_DRAFT" \
+          --arg pr_url "$PR_URL" \
+          --arg pr_author "$PR_AUTHOR" \
+          --arg run_name "$RUN_NAME" \
+          --arg run_conclusion "$RUN_CONCLUSION" \
+          --arg run_status "$RUN_STATUS" \
+          --arg run_workflow "$RUN_WORKFLOW" \
+          --arg run_url "$RUN_URL" \
+          '{
+            pr: {
+              number: ($pr_number | tonumber),
+              title: $pr_title,
+              branch: $pr_branch,
+              isDraft: ($pr_is_draft == "true"),
+              url: $pr_url,
+              author: $pr_author
+            },
+            action: {
+              name: $run_name,
+              conclusion: $run_conclusion,
+              status: $run_status,
+              workflow: $run_workflow,
+              url: $run_url
+            }
+          }')
+        
+        FAILING_ACTIONS+=("$ACTION_JSON")
+      fi
+    done < <(echo "$RUNS_JSON" | jq -c '.[]')
+  fi
+  
+  # Process checks (non-workflow checks)
+  CHECK_COUNT=$(echo "$CHECKS_JSON" | jq 'length')
+  if [[ "$CHECK_COUNT" -gt 0 ]]; then
+    while IFS= read -r check_json; do
+      CHECK_NAME=$(echo "$check_json" | jq -r '.name // "unknown"')
+      CHECK_STATE=$(echo "$check_json" | jq -r '.state // "UNKNOWN"')
+      CHECK_WORKFLOW=$(echo "$check_json" | jq -r '.workflow // ""')
+      CHECK_URL=$(echo "$check_json" | jq -r '.link // ""')
+      
+      # Filter: only include failing actions, or all if --all flag is set
+      # State values: SUCCESS, FAILURE, PENDING, CANCELLED, etc.
+      if [[ "$INCLUDE_PASSING" == true ]] || [[ "$CHECK_STATE" == "FAILURE" ]] || [[ "$CHECK_STATE" == "CANCELLED" ]] || [[ "$CHECK_STATE" == "ERROR" ]]; then
+        # Create a combined JSON object for this failing action
+        ACTION_JSON=$(jq -n \
+          --arg pr_number "$PR_NUMBER" \
+          --arg pr_title "$PR_TITLE" \
+          --arg pr_branch "$PR_BRANCH" \
+          --arg pr_is_draft "$PR_IS_DRAFT" \
+          --arg pr_url "$PR_URL" \
+          --arg pr_author "$PR_AUTHOR" \
+          --arg check_name "$CHECK_NAME" \
+          --arg check_state "$CHECK_STATE" \
+          --arg check_workflow "$CHECK_WORKFLOW" \
+          --arg check_url "$CHECK_URL" \
+          '{
+            pr: {
+              number: ($pr_number | tonumber),
+              title: $pr_title,
+              branch: $pr_branch,
+              isDraft: ($pr_is_draft == "true"),
+              url: $pr_url,
+              author: $pr_author
+            },
+            action: {
+              name: $check_name,
+              state: $check_state,
+              workflow: $check_workflow,
+              url: $check_url
+            }
+          }')
+        
+        FAILING_ACTIONS+=("$ACTION_JSON")
+      fi
+    done < <(echo "$CHECKS_JSON" | jq -c '.[]')
+  fi
+done < <(echo "$PRS_JSON" | jq -c '.[]')
+
+# Output results
+if [[ "$FORMAT" == "json" ]]; then
+  # Output as JSON array
+  if [[ ${#FAILING_ACTIONS[@]} -eq 0 ]]; then
+    echo "[]"
+  else
+    printf '%s\n' "${FAILING_ACTIONS[@]}" | jq -s '.'
+  fi
+else
+  # Human-readable format
+  TOTAL_FAILING=${#FAILING_ACTIONS[@]}
+  
+  echo "Failing Actions in Open and Draft PRs"
+  echo "Repository: $REPO"
+  echo "Total failing actions: $TOTAL_FAILING"
+  echo ""
+  
+  if [[ "$TOTAL_FAILING" -eq 0 ]]; then
+    echo "✓ No failing actions found in open or draft PRs!"
+    exit 0
+  fi
+  
+  # Group by PR
+  declare -A PR_ACTIONS
+  for action_json in "${FAILING_ACTIONS[@]}"; do
+    PR_NUM=$(echo "$action_json" | jq -r '.pr.number')
+    if [[ -z "${PR_ACTIONS[$PR_NUM]:-}" ]]; then
+      PR_ACTIONS[$PR_NUM]=""
+    fi
+    PR_ACTIONS[$PR_NUM]="${PR_ACTIONS[$PR_NUM]}$(echo "$action_json" | jq -c '.')"$'\n'
+  done
+  
+  # Display grouped by PR
+  for pr_num in $(printf '%s\n' "${!PR_ACTIONS[@]}" | sort -n); do
+    # Get PR info from first action
+    FIRST_ACTION=$(echo "${PR_ACTIONS[$pr_num]}" | head -n1)
+    PR_TITLE=$(echo "$FIRST_ACTION" | jq -r '.pr.title')
+    PR_BRANCH=$(echo "$FIRST_ACTION" | jq -r '.pr.branch')
+    PR_IS_DRAFT=$(echo "$FIRST_ACTION" | jq -r '.pr.isDraft')
+    PR_URL=$(echo "$FIRST_ACTION" | jq -r '.pr.url')
+    PR_AUTHOR=$(echo "$FIRST_ACTION" | jq -r '.pr.author')
+    
+    DRAFT_LABEL=""
+    if [[ "$PR_IS_DRAFT" == "true" ]]; then
+      DRAFT_LABEL=$'\033[90m[draft]\033[0m '
+    fi
+    
+    echo -e "\033[1mPR #$pr_num\033[0m $DRAFT_LABEL\033[36m$PR_TITLE\033[0m"
+    echo "  Branch: $PR_BRANCH | Author: $PR_AUTHOR"
+    echo "  URL: $PR_URL"
+    echo ""
+    
+    # List failing actions for this PR
+    ACTION_COUNT=0
+    while IFS= read -r action_json; do
+      [[ -z "$action_json" ]] && continue
+      ACTION_COUNT=$((ACTION_COUNT + 1))
+      
+      # Extract PR info from action JSON
+      ACTION_PR_NUM=$(echo "$action_json" | jq -r '.pr.number')
+      ACTION_PR_TITLE=$(echo "$action_json" | jq -r '.pr.title')
+      ACTION_PR_URL=$(echo "$action_json" | jq -r '.pr.url')
+      
+      ACTION_NAME=$(echo "$action_json" | jq -r '.action.name')
+      # Handle both conclusion (from runs) and state (from checks)
+      ACTION_STATE=$(echo "$action_json" | jq -r '.action.conclusion // .action.state // "UNKNOWN"')
+      ACTION_WORKFLOW=$(echo "$action_json" | jq -r '.action.workflow // ""')
+      ACTION_URL=$(echo "$action_json" | jq -r '.action.url // ""')
+      
+      # Color code state/conclusion
+      case "$ACTION_STATE" in
+        failure|FAILURE)
+          COLOR=$'\033[31m'  # Red
+          SYMBOL="✗"
+          ;;
+        cancelled|CANCELLED)
+          COLOR=$'\033[33m'  # Yellow
+          SYMBOL="⊘"
+          ;;
+        action_required|ACTION_REQUIRED)
+          COLOR=$'\033[33m'  # Yellow
+          SYMBOL="⚠"
+          ;;
+        ERROR|error)
+          COLOR=$'\033[31m'  # Red
+          SYMBOL="✗"
+          ;;
+        *)
+          COLOR=$'\033[90m'  # Gray
+          SYMBOL="?"
+          ;;
+      esac
+      RESET=$'\033[0m'
+      
+      echo -e "  $SYMBOL ${COLOR}$ACTION_NAME${RESET}"
+      echo "     PR: #$ACTION_PR_NUM - $ACTION_PR_TITLE"
+      echo "     PR URL: $ACTION_PR_URL"
+      if [[ "$ACTION_WORKFLOW" != "unknown" ]] && [[ "$ACTION_WORKFLOW" != "$ACTION_NAME" ]] && [[ -n "$ACTION_WORKFLOW" ]]; then
+        echo "     Workflow: $ACTION_WORKFLOW"
+      fi
+      if [[ -n "$ACTION_URL" ]] && [[ "$ACTION_URL" != "null" ]]; then
+        echo "     Action URL: $ACTION_URL"
+      fi
+      echo ""
+    done < <(echo "${PR_ACTIONS[$pr_num]}")
+    
+    echo "  ──────────────────────────────────────"
+    echo ""
+  done
+  
+  echo "Summary: $TOTAL_FAILING failing action(s) across ${#PR_ACTIONS[@]} PR(s)"
+fi
+
