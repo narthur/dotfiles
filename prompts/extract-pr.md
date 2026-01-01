@@ -45,40 +45,56 @@ This workflow uses helper scripts. Ensure these are installed and in your PATH:
    - Why it's a good candidate for extraction
    - What files are affected
 
-6. **Provide numbered options** (only show these if branch is up to date):
+6. **CHECKPOINT 1 - Ask permission to proceed**: After explaining the identified change, ask the user if they want to proceed with creating a branch for this change:
 
-   **Option 1: Create the PR automatically**
+   **"I've identified a change to extract. Would you like me to create a new branch with these changes?"**
 
-   - Run git commands to:
-     - Create new branch from `origin/<base-branch>` (use appropriate prefix: `chore/`, `docs/`, `fix/`, etc.)
-     - Apply the identified changes (use appropriate method):
-       - For **whole file changes**: `git checkout - -- <file>`
-       - For **partial file changes**: Provide specific instructions to manually edit or use `git add -p`
-       - For **new files**: Show exact commands to create/modify the file
-     - Commit with descriptive conventional commit message (include `Co-Authored-By: Warp <agent@warp.dev>`)
-     - Push and create PR: `git push -u origin <branch-name> && gh pr create -fd`
-   - Generate and show me the complete git commands to:
-     - Create a new branch from `origin/<base-branch>` (use appropriate prefix: `chore/`, `docs/`, `fix/`, etc.)
-     - Apply only the identified changes
-     - Commit with a descriptive message (include `Co-Authored-By: Warp <agent@warp.dev>`)
-     - Push and create a PR using `gh pr create -fd`
+   Provide options:
 
-   **Option 2: Suggest a different change**
+   - **Yes, proceed** - Create the branch
+   - **Show me the diff first** - Show only the diff for the files involved
+   - **Suggest a different change** - Find another extraction candidate
+   - **List all candidates** - Show all possible extractions
 
-   - Find another small, standalone change from the diff
+   **Do not create the branch until the user explicitly approves.**
 
-   **Option 3: Show me the specific diff**
+7. **Create branch and apply changes** (only after user approval): Once approved, create the branch and apply the changes:
 
-   - Show only the diff for the files involved in the identified change
+   - Create new branch from `origin/<base-branch>` (use appropriate prefix: `chore/`, `docs/`, `fix/`, etc.)
+   - Apply the identified changes using appropriate method:
+     - For **whole file changes**: `git checkout - -- <file>`
+     - For **partial file changes**: Use `git add -p` or provide specific edit instructions
+     - For **new files**: Create/modify the file with exact content
+   - Show the user what branch was created and what changes were applied
+   - **Do NOT commit, push, or create PR yet**
 
-   **Option 4: List all potential extractions**
+8. **CHECKPOINT 2 - Ask permission to create PR**: After creating the branch and applying changes, ask the user if they want to proceed with committing, pushing, and creating the PR:
 
-   - Provide a numbered list of all small changes that could become separate PRs
+   **"I've created branch `<branch-name>` and applied the changes. Would you like me to commit, push, and create the PR?"**
+
+   Provide options:
+
+   - **Yes, create the PR** - Commit with descriptive conventional commit message (include `Co-Authored-By: Warp <agent@warp.dev>`), push, and create PR using `gh pr create -fd`
+   - **Let me review the changes first** - Show the current diff/staging area
+   - **Modify the changes** - Allow user to provide feedback and iterate
+   - **Cancel** - Abandon this extraction
+
+   **Do not commit, push, or create PR until the user explicitly approves.**
+
+9. **Create the PR** (only after user approval): Once approved, commit, push, and create the PR:
+
+   - Commit with descriptive conventional commit message (include `Co-Authored-By: Warp <agent@warp.dev>`)
+   - Push: `git push -u origin <branch-name>`
+   - Create PR: `gh pr create -fd`
 
 ## Important Guidelines
 
 - Use the helper scripts for consistency and safety
 - If helper scripts aren't available, fall back to manual git commands
+- **Always ask for permission at two checkpoints:**
+  1. After identifying a change (before creating branch)
+  2. After creating branch and applying changes (before committing/pushing/creating PR)
+- This allows the user to provide feedback and iterate between change identification and PR creation
 - Branch names should be descriptive and use conventional prefixes (`chore/`, `docs/`, `fix/`, `feat/`, `refactor/`, etc.)
 - Commit messages should follow conventional commits format
 - Always include the `Co-Authored-By: Warp <agent@warp.dev>` trailer
@@ -94,7 +110,7 @@ This workflow uses helper scripts. Ensure these are installed and in your PATH:
 
 ---
 
-**If branch is up to date:**
+**If branch is up to date - Phase 1 (Change Identification):**
 
 **Identified Change:** [Brief description]
 
@@ -104,11 +120,32 @@ This workflow uses helper scripts. Ensure these are installed and in your PATH:
 
 **Files affected:** [List of files]
 
+**I've identified a change to extract. Would you like me to create a new branch with these changes?**
+
 **Your options:**
 
-1. **Create PR automatically** - I'll generate the complete git workflow
-2. **Suggest different change** - I'll find another extraction candidate
-3. **Show specific diff** - I'll show just this change's diff
+1. **Yes, proceed** - I'll create a new branch and apply these changes
+2. **Show me the diff first** - I'll show just this change's diff
+3. **Suggest different change** - I'll find another extraction candidate
 4. **List all candidates** - I'll show all possible extractions
+
+**What would you like to do?**
+
+---
+
+**Phase 2 (After Branch Creation):**
+
+**Branch created:** `<branch-name>` from `origin/<base-branch>`
+
+**Changes applied:** [Brief summary of what was applied]
+
+**I've created branch `<branch-name>` and applied the changes. Would you like me to commit, push, and create the PR?**
+
+**Your options:**
+
+1. **Yes, create the PR** - I'll commit, push, and create the PR
+2. **Let me review the changes first** - I'll show the current diff/staging area
+3. **Modify the changes** - Provide feedback and I'll adjust
+4. **Cancel** - Abandon this extraction
 
 **What would you like to do?**
