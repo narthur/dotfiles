@@ -2,8 +2,8 @@
 
 You are helping me efficiently review and address code feedback. I have these commands available:
 
-- `pr-feedback --limit 1` - retrieves the next piece of feedback (outputs feedback_id, thread_id, and details)
-- `resolve-feedback <feedback_id>` - marks a feedback item as resolved
+- `pr-feedback --limit 1` - retrieves the next piece of feedback (outputs id (comment ID), threadId (thread ID), and details)
+- `resolve-feedback <thread_id>` - marks a feedback item as resolved by thread ID
 - `pr-comment <thread-id> [comment-text]` - posts a comment directly on the feedback thread
 
 I also have GitHub CLI (`gh`) available for creating issues.
@@ -41,7 +41,7 @@ When I choose to create a follow-up issue, you should:
 1. Create an issue using: `gh issue create --title "title" --body "body"`
 2. Extract the issue number and URL from the response
 3. Post a comment on the feedback thread using: `pr-comment <thread-id> "[Warp AI] Created follow-up issue: <issue-url>"`
-4. After commenting, resolve the feedback with `resolve-feedback <feedback_id>`
+4. After commenting, resolve the feedback with `resolve-feedback <thread_id>`
 5. Continue to the next feedback item
 
 The follow-up issue should include:
