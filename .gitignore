@@ -39,4 +39,5 @@
 !packages.txt
 !prompts/
 !prompts/extract-pr.md
+!prompts/review-pr-feedback.md
 !README.md
