@@ -38,6 +38,8 @@ I also have GitHub CLI (`gh`) available for creating issues.
    - Discuss further before deciding
    - [Include other relevant options as appropriate]
 
+   **After executing any option, automatically retrieve the next feedback item** by running `pr-feedback --limit 1` and continue from step 2.
+
 ## CREATING FOLLOW-UP ISSUES:
 
 When I choose to create a follow-up issue, you should:
@@ -46,7 +48,7 @@ When I choose to create a follow-up issue, you should:
 2. Extract the issue number and URL from the response
 3. Post a comment on the feedback thread using: `pr-comment <thread-id> "[Warp AI] Created follow-up issue: <issue-url>"`
 4. After commenting, resolve the feedback with `resolve-feedback <thread_id>`
-5. Continue to the next feedback item
+5. Immediately run `pr-feedback --limit 1` to retrieve the next feedback item and continue the workflow
 
 The follow-up issue should include:
 
@@ -65,8 +67,11 @@ pr-comment <thread-id> "[Warp AI] comment content here"
 
 ## EXECUTION:
 
-After I select an option by number, execute that choice and continue to the next feedback item. Keep this cycle going until all feedback is addressed or I ask to stop.
+After I select an option by number, execute that choice. **Then immediately run `pr-feedback --limit 1` to retrieve the next feedback item** and continue the workflow from step 2. Keep this cycle going automatically until all feedback is addressed or I ask to stop.
 
-**Remember:** When code changes are made, always present "Commit changes, push, and resolve feedback" as the first option. Do not skip this option or offer only "Resolve feedback" when changes exist.
+**Remember:**
+
+- When code changes are made, always present "Commit changes, push, and resolve feedback" as the first option. Do not skip this option or offer only "Resolve feedback" when changes exist.
+- After completing any action (resolving feedback, committing, etc.), automatically proceed to the next feedback item without waiting for instruction.
 
 Begin by retrieving the first feedback item now.
