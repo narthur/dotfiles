@@ -26,9 +26,13 @@ I also have GitHub CLI (`gh`) available for creating issues.
    - Any trade-offs or considerations
    - What tests were added/updated (if applicable)
    - What WARP.md updates were made (if applicable)
-8. Present numbered options for next steps, such as:
+8. Present numbered options for next steps. **CRITICAL:** If you made any code changes in steps 4-6, you MUST always offer as the first option:
+
    - Commit changes, push, and resolve feedback
-   - Resolve feedback without committing (if no changes needed)
+
+   Other options to consider based on context:
+
+   - Resolve feedback without committing (only if no changes were made)
    - Create a follow-up issue, comment on the feedback with the issue link, then resolve
    - Skip this feedback and move to next
    - Discuss further before deciding
@@ -62,5 +66,7 @@ pr-comment <thread-id> "[Warp AI] comment content here"
 ## EXECUTION:
 
 After I select an option by number, execute that choice and continue to the next feedback item. Keep this cycle going until all feedback is addressed or I ask to stop.
+
+**Remember:** When code changes are made, always present "Commit changes, push, and resolve feedback" as the first option. Do not skip this option or offer only "Resolve feedback" when changes exist.
 
 Begin by retrieving the first feedback item now.
