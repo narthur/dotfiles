@@ -10,6 +10,11 @@ command=echo "✅ $(~/bin/gh-commits-today)"
 interval=300
 separator_block_width=30
 
+[gh-prs]
+command=echo "🔀 $(~/bin/gh-prs-today)"
+interval=300
+separator_block_width=30
+
 [buzz]
 command=echo "🐝 $(buzz next)"
 interval=30

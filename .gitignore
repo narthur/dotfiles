@@ -1,6 +1,10 @@
 *
 !.bashrc
 !.Brewfile
+!.claude/
+!.claude/skills/
+!.claude/skills/split-pr/
+!.claude/skills/split-pr/SKILL.md
 !.config/
 !.config/gh/
 !.config/gh/config.yml

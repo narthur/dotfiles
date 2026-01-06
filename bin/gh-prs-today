@@ -1,0 +1,17 @@
+#!/bin/bash
+
+# Get today's date in ISO 8601 format
+today=$(date -u +"%Y-%m-%dT00:00:00Z")
+
+# Query GitHub GraphQL API for PRs created today
+gh api graphql -f query="
+  query {
+    viewer {
+      pullRequests(first: 100, orderBy: {field: CREATED_AT, direction: DESC}) {
+        nodes {
+          createdAt
+        }
+      }
+    }
+  }
+" --jq "[.data.viewer.pullRequests.nodes[] | select(.createdAt >= \"$today\")] | length" 2>/dev/null || echo "0"
