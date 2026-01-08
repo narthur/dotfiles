@@ -19,6 +19,7 @@ aliases:
     next: search issues --assignee @me --state open --sort updated --order desc
     stale: issue list --search "sort:updated-asc -label:snooze"
     watch-prs: '!watch -n 10 gh pr list'
+    delegate: issue edit $@ --add-assignee @copilot
 # The path to a unix socket through which to send HTTP connections. If blank, HTTP traffic will be handled by net/http.DefaultTransport.
 http_unix_socket:
 # What web browser gh should use when opening URLs. If blank, will refer to environment.
