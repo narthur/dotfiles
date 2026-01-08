@@ -1,0 +1,22 @@
+#!/bin/bash
+
+# GitHub CLI issue create script
+# Usage: gh-ic Issue title without quotes
+
+# Check if title argument is provided
+if [ $# -eq 0 ]; then
+    echo "Usage: gh-ic Issue title without quotes"
+    exit 1
+fi
+
+# Get the issue title from all arguments
+title="$*"
+
+# Create the issue with empty body and capture the URL
+issue_url=$(gh issue create -b "" -t "$title")
+
+# Extract issue number from URL (format: https://github.com/owner/repo/issues/123)
+issue_number=$(echo "$issue_url" | grep -o '[0-9]*$')
+
+# Add a comment asking CodeRabbit AI to analyze and enhance the issue
+gh issue comment "$issue_number" --body "@coderabbitai Please analyze this issue and update the description with implementation details, suggested approach, and any relevant technical considerations."
