@@ -13,6 +13,12 @@ pager:
 # Aliases allow you to create nicknames for gh commands
 aliases:
     co: pr checkout
+    ic: '!gh-ic "$@"'
+    involved: search issues --involves @me --state open
+    mine: search prs --author @me
+    next: search issues --assignee @me --state open --sort updated --order desc
+    stale: search issues --involves @me --state open --sort updated --order asc --limit 3
+    watch-prs: '!watch -n 10 gh pr list'
 # The path to a unix socket through which to send HTTP connections. If blank, HTTP traffic will be handled by net/http.DefaultTransport.
 http_unix_socket:
 # What web browser gh should use when opening URLs. If blank, will refer to environment.
