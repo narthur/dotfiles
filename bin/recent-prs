@@ -15,6 +15,7 @@ FORMAT="human"
 LIMIT=0
 OWNER=""
 DEBUG=false
+GROUP_BY_AUTHOR=false
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -25,6 +26,7 @@ while [[ $# -gt 0 ]]; do
     --human) FORMAT="human"; shift;;
     --limit|-l) LIMIT="$2"; shift 2;;
     --owner|-o) OWNER="$2"; shift 2;;
+    --group-by-author|-g) GROUP_BY_AUTHOR=true; shift;;
     --debug) DEBUG=true; shift;;
     -h|--help)
       cat <<EOF
@@ -37,6 +39,7 @@ Options:
   --human            Human-readable format (default)
   --limit|-l N       Limit number of results
   --owner|-o USER    Filter by owner/organization
+  --group-by-author|-g  Group output by author
   --debug            Show debug information (query, etc.)
   -h, --help         Show this help
 
@@ -174,7 +177,12 @@ format_review() {
 
 # Output based on format
 if [[ "$FORMAT" == "json" ]]; then
-  echo "$PRS_JSON" | jq '.'
+  if [[ "$GROUP_BY_AUTHOR" == true ]]; then
+    # Group by author in JSON format
+    echo "$PRS_JSON" | jq 'group_by(.author.login) | map({author: .[0].author.login, prs: .})'
+  else
+    echo "$PRS_JSON" | jq '.'
+  fi
 else
   # Human-readable table format
   COUNT=$(echo "$PRS_JSON" | jq 'length')
@@ -214,54 +222,125 @@ else
   UPDATED_WIDTH=10 # Updated column
   AUTHOR_WIDTH=20  # Author column
   
-  # Calculate title width (remaining space after fixed columns and spacing)
-  # Account for: number + space + state + space + updated + space + author + space + title
+  # Calculate title width based on whether we're grouping by author
   SPACING=4  # 4 spaces between columns
-  TITLE_WIDTH=$((TERM_WIDTH - NUM_WIDTH - STATE_WIDTH - UPDATED_WIDTH - AUTHOR_WIDTH - SPACING))
+  if [[ "$GROUP_BY_AUTHOR" == true ]]; then
+    # When grouped, no author column, so more space for title
+    TITLE_WIDTH=$((TERM_WIDTH - NUM_WIDTH - STATE_WIDTH - UPDATED_WIDTH - SPACING))
+  else
+    # Normal layout with author column
+    TITLE_WIDTH=$((TERM_WIDTH - NUM_WIDTH - STATE_WIDTH - UPDATED_WIDTH - AUTHOR_WIDTH - SPACING))
+  fi
   # Ensure minimum title width
   if [[ $TITLE_WIDTH -lt 20 ]]; then
     TITLE_WIDTH=20
   fi
   
-  # Print header
-  printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${AUTHOR_WIDTH}s %-${TITLE_WIDTH}s\n" \
-    "Number" "State" "Updated" "Author" "Title"
-  
-  # Print separator line
-  printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${AUTHOR_WIDTH}s %-${TITLE_WIDTH}s\n" \
-    "$(printf '%*s' $NUM_WIDTH '' | tr ' ' '-')" \
-    "$(printf '%*s' $STATE_WIDTH '' | tr ' ' '-')" \
-    "$(printf '%*s' $UPDATED_WIDTH '' | tr ' ' '-')" \
-    "$(printf '%*s' $AUTHOR_WIDTH '' | tr ' ' '-')" \
-    "$(printf '%*s' $TITLE_WIDTH '' | tr ' ' '-')"
-  
-  # Print PRs
-  echo "$PRS_JSON" | jq -r '.[] | 
-    "\(.number)|\(.state)|\(if .headRepository.name and .headRepository.owner.login then "\(.headRepository.owner.login)/\(.headRepository.name)" elif .headRepositoryOwner.login and .headRepository.name then "\(.headRepositoryOwner.login)/\(.headRepository.name)" else "unknown/unknown" end)|\(.updatedAt)|\(.author.login)|\(.isDraft)|\(.reviewDecision // "none")|\(.title)"' | \
-  while IFS='|' read -r number state repo updated author draft review title; do
-    relative=$(relative_time "$updated")
-    state_fmt=$(format_state "$state" "$draft")
-    review_fmt=$(format_review "$review")
+  # Function to print a PR row
+  print_pr_row() {
+    local number="$1"
+    local state="$2"
+    local updated="$3"
+    local author="$4"
+    local draft="$5"
+    local review="$6"
+    local title="$7"
+    local show_author="$8"  # Whether to show author column
+    
+    local relative=$(relative_time "$updated")
+    local state_fmt=$(format_state "$state" "$draft")
+    local review_fmt=$(format_review "$review")
     
     # Truncate long titles to fit terminal width
-    title_short="${title:0:$((TITLE_WIDTH - 3))}"
+    local title_short="${title:0:$((TITLE_WIDTH - 3))}"
     [[ ${#title} -gt $((TITLE_WIDTH - 3)) ]] && title_short="${title_short}..."
     
-    # Truncate author name if needed (max 10 chars to match column width)
-    author_short="$author"
-    if [[ ${#author} -gt $AUTHOR_WIDTH ]]; then
-      author_short="${author:0:$((AUTHOR_WIDTH - 2))}.."
+    if [[ "$show_author" == true ]]; then
+      # Truncate author name if needed
+      local author_short="$author"
+      if [[ ${#author} -gt $AUTHOR_WIDTH ]]; then
+        author_short="${author:0:$((AUTHOR_WIDTH - 2))}.."
+      fi
+      
+      printf "%-${NUM_WIDTH}s %s %-${UPDATED_WIDTH}s %-${AUTHOR_WIDTH}s %-${TITLE_WIDTH}s\n" \
+        "#$number" "$state_fmt" "$relative" "$author_short" "$title_short"
+      
+      # Show review status on second line if present
+      if [[ -n "$review_fmt" ]]; then
+        printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${AUTHOR_WIDTH}s %-${TITLE_WIDTH}s\n" \
+          "" "" "" "" "  └─ $review_fmt"
+      fi
+    else
+      # No author column when grouped
+      printf "%-${NUM_WIDTH}s %s %-${UPDATED_WIDTH}s %-${TITLE_WIDTH}s\n" \
+        "#$number" "$state_fmt" "$relative" "$title_short"
+      
+      # Show review status on second line if present
+      if [[ -n "$review_fmt" ]]; then
+        printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${TITLE_WIDTH}s\n" \
+          "" "" "" "  └─ $review_fmt"
+      fi
     fi
+  }
+  
+  if [[ "$GROUP_BY_AUTHOR" == true ]]; then
+    # Group by author
+    # Get unique authors sorted
+    AUTHORS=$(echo "$PRS_JSON" | jq -r '[.[] | .author.login] | unique | sort | .[]')
     
-    printf "%-${NUM_WIDTH}s %s %-${UPDATED_WIDTH}s %-${AUTHOR_WIDTH}s %-${TITLE_WIDTH}s\n" \
-      "#$number" "$state_fmt" "$relative" "$author_short" "$title_short"
+    # Print header (without Author column when grouped)
+    printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${TITLE_WIDTH}s\n" \
+      "Number" "State" "Updated" "Title"
     
-    # Show review status on second line if present
-    if [[ -n "$review_fmt" ]]; then
-      printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${AUTHOR_WIDTH}s %-${TITLE_WIDTH}s\n" \
-        "" "" "" "" "  └─ $review_fmt"
-    fi
-  done
+    # Print separator line
+    printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${TITLE_WIDTH}s\n" \
+      "$(printf '%*s' $NUM_WIDTH '' | tr ' ' '-')" \
+      "$(printf '%*s' $STATE_WIDTH '' | tr ' ' '-')" \
+      "$(printf '%*s' $UPDATED_WIDTH '' | tr ' ' '-')" \
+      "$(printf '%*s' $TITLE_WIDTH '' | tr ' ' '-')"
+    
+    # Print PRs grouped by author
+    FIRST_AUTHOR=true
+    while IFS= read -r author; do
+      if [[ "$FIRST_AUTHOR" == false ]]; then
+        echo ""  # Blank line between author groups
+      fi
+      FIRST_AUTHOR=false
+      
+      # Get PRs for this author
+      AUTHOR_PRS=$(echo "$PRS_JSON" | jq --arg author "$author" '[.[] | select(.author.login == $author)]')
+      AUTHOR_COUNT=$(echo "$AUTHOR_PRS" | jq 'length')
+      
+      # Print author header
+      echo -e "\033[1m$author\033[0m ($AUTHOR_COUNT PR$( [[ $AUTHOR_COUNT -ne 1 ]] && echo s))"
+      
+      # Print PRs for this author
+      echo "$AUTHOR_PRS" | jq -r '.[] | 
+        "\(.number)|\(.state)|\(if .headRepository.name and .headRepository.owner.login then "\(.headRepository.owner.login)/\(.headRepository.name)" elif .headRepositoryOwner.login and .headRepository.name then "\(.headRepositoryOwner.login)/\(.headRepository.name)" else "unknown/unknown" end)|\(.updatedAt)|\(.author.login)|\(.isDraft)|\(.reviewDecision // "none")|\(.title)"' | \
+      while IFS='|' read -r number state repo updated author_name draft review title; do
+        print_pr_row "$number" "$state" "$updated" "$author_name" "$draft" "$review" "$title" false
+      done
+    done <<< "$AUTHORS"
+  else
+    # Print header
+    printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${AUTHOR_WIDTH}s %-${TITLE_WIDTH}s\n" \
+      "Number" "State" "Updated" "Author" "Title"
+    
+    # Print separator line
+    printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${AUTHOR_WIDTH}s %-${TITLE_WIDTH}s\n" \
+      "$(printf '%*s' $NUM_WIDTH '' | tr ' ' '-')" \
+      "$(printf '%*s' $STATE_WIDTH '' | tr ' ' '-')" \
+      "$(printf '%*s' $UPDATED_WIDTH '' | tr ' ' '-')" \
+      "$(printf '%*s' $AUTHOR_WIDTH '' | tr ' ' '-')" \
+      "$(printf '%*s' $TITLE_WIDTH '' | tr ' ' '-')"
+    
+    # Print PRs
+    echo "$PRS_JSON" | jq -r '.[] | 
+      "\(.number)|\(.state)|\(if .headRepository.name and .headRepository.owner.login then "\(.headRepository.owner.login)/\(.headRepository.name)" elif .headRepositoryOwner.login and .headRepository.name then "\(.headRepositoryOwner.login)/\(.headRepository.name)" else "unknown/unknown" end)|\(.updatedAt)|\(.author.login)|\(.isDraft)|\(.reviewDecision // "none")|\(.title)"' | \
+    while IFS='|' read -r number state repo updated author draft review title; do
+      print_pr_row "$number" "$state" "$updated" "$author" "$draft" "$review" "$title" true
+    done
+  fi
   
   echo ""
   echo -e "Legend: \033[32mopen\033[0m \033[31mclosed\033[0m \033[34mmerged\033[0m \033[90mdraft\033[0m"
