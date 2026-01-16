@@ -20,6 +20,11 @@ command=echo "🐝 $(buzz next)"
 interval=30
 separator_block_width=30
 
+[bluetooth-battery]
+command=~/.config/i3blocks/blocklets/bluetooth-battery
+interval=30
+separator_block_width=30
+
 [volume]
 command=echo "🔊 $(amixer get Master | grep -oP '\[\d+%\]' | head -1 | tr -d '[]')"
 interval=1

@@ -1,0 +1,29 @@
+#!/bin/bash
+
+# Bluetooth Battery Status for i3blocks
+# Displays battery level for Wyze Headphones
+
+# Load MAC address from .env
+if [ -f "$HOME/.env" ]; then
+    source "$HOME/.env"
+fi
+
+DEVICE_MAC="${BLUETOOTH_HEADPHONES_MAC:-}"
+
+# Try upower first (more reliable if available)
+UPOWER_PATH="/org/freedesktop/UPower/devices/headphones_dev_2C_AA_8E_C1_47_62"
+battery=$(upower -i "$UPOWER_PATH" 2>/dev/null | grep -i percentage | awk '{print $2}' | tr -d '%')
+
+# Fallback to bluetoothctl if upower fails
+if [ -z "$battery" ]; then
+    battery=$(bluetoothctl info "$DEVICE_MAC" 2>/dev/null | grep "Battery Percentage" | awk '{print $NF}' | sed 's/[()]//')
+fi
+
+# Check if device is connected
+if [ -z "$battery" ]; then
+    echo ""
+    exit 0
+fi
+
+# Display with icon
+echo "🎧 ${battery}%"
