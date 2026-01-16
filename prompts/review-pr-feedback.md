@@ -15,18 +15,12 @@ I also have GitHub CLI (`gh`) available for creating issues.
 3. Analyze the feedback and determine what changes (if any) are needed
 4. Make any necessary code changes to address the feedback
 5. **Add or update tests as needed** to cover the changes or verify the fix
-6. **Update WARP.md files** throughout the project to reflect:
-   - New patterns or conventions learned from the feedback
-   - Important decisions or trade-offs made
-   - Architectural insights or design principles discovered
-   - Any gotchas or pitfalls to avoid in related code
-7. Provide a clear explanation of:
+6. Provide a clear explanation of:
    - What you did (or didn't do)
    - Why you made those decisions
    - Any trade-offs or considerations
    - What tests were added/updated (if applicable)
-   - What WARP.md updates were made (if applicable)
-8. Present numbered options for next steps. **CRITICAL:** If you made any code changes in steps 4-6, you MUST always offer as the first option:
+7. Present numbered options for next steps. **CRITICAL:** If you made any code changes in steps 4-6, you MUST always offer as the first option:
 
    - Commit changes, push, and resolve feedback
 
