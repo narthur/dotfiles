@@ -12,7 +12,13 @@ DEVICE_MAC="${BLUETOOTH_HEADPHONES_MAC:-}"
 
 # Try upower first (more reliable if available)
 UPOWER_PATH="/org/freedesktop/UPower/devices/headphones_dev_2C_AA_8E_C1_47_62"
-battery=$(upower -i "$UPOWER_PATH" 2>/dev/null | grep -i percentage | awk '{print $2}' | tr -d '%')
+upower_output=$(upower -i "$UPOWER_PATH" 2>/dev/null)
+battery=$(echo "$upower_output" | grep -i percentage | awk '{print $2}' | tr -d '%')
+
+# Check if upower says the percentage should be ignored (device disconnected)
+if echo "$upower_output" | grep -q "should be ignored"; then
+    battery=""
+fi
 
 # Fallback to bluetoothctl if upower fails
 if [ -z "$battery" ]; then
