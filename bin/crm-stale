@@ -1,0 +1,28 @@
+#!/bin/bash
+
+# Open the least-recently updated CRM markdown file in Obsidian
+
+# Source environment variables
+source ~/.env
+
+# Get vault name from vault path
+VAULT_NAME=$(basename "$OBSIDIAN_VAULT")
+
+# Find the least-recently updated markdown file
+# Use find with -printf to get modification time and filename, sort by time, take oldest
+stale_file=$(find "$CRM_DIR" -type f -name "*.md" -printf '%T@ %p\n' | sort -n | head -n 1 | cut -d' ' -f2-)
+
+# Check if a file was found
+if [ -z "$stale_file" ]; then
+    echo "No markdown files found in CRM directory"
+    exit 1
+fi
+
+# Get relative path from vault root
+relative_path="${stale_file#$OBSIDIAN_VAULT/}"
+
+# URL encode the path (basic encoding for spaces and special chars)
+encoded_path=$(echo "$relative_path" | sed 's/ /%20/g' | sed 's/#/%23/g' | sed 's/&/%26/g')
+
+# Open using obsidian:// URI scheme
+xdg-open "obsidian://open?vault=$VAULT_NAME&file=$encoded_path" 2>/dev/null || obsidian "obsidian://open?vault=$VAULT_NAME&file=$encoded_path"
