@@ -1,0 +1,154 @@
+#!/bin/bash
+
+# Update the Last Contact date for a CRM contact to today's date
+
+# Source environment variables
+source ~/.env
+
+# Get current date in YYYY-MM-DD format
+today=$(date +%Y-%m-%d)
+
+# Get current date in seconds since epoch
+now=$(date +%s)
+
+# Process all CRM markdown files and calculate due dates (same logic as crm-open)
+results=$(find "$CRM_DIR" -type f -name "*.md" | while read -r file; do
+    # Extract Last Contact and Frequency from frontmatter
+    last_contact=$(grep "^Last Contact:" "$file" | head -1 | sed 's/Last Contact: //' | tr -d ' ')
+    frequency=$(grep "^Frequency:" "$file" | head -1 | sed 's/Frequency: //' | tr -d ' ')
+    
+    # Get basename without extension
+    basename_no_ext=$(basename "$file" .md)
+    
+    # Calculate due date if we have both Last Contact and Frequency
+    if [ -n "$last_contact" ] && [ -n "$frequency" ]; then
+        # Convert Last Contact to seconds since epoch
+        last_contact_epoch=$(date -d "$last_contact" +%s 2>/dev/null)
+        if [ $? -eq 0 ]; then
+            # Calculate Due date (Last Contact + Frequency days)
+            due_epoch=$((last_contact_epoch + frequency * 86400))
+            # Calculate Remaining (Due - now)
+            remaining=$((due_epoch - now))
+        else
+            remaining=""
+            due_epoch=""
+        fi
+    else
+        remaining=""
+        due_epoch=""
+    fi
+    
+    # Format: remaining_seconds|due_epoch|basename|fullpath
+    # Use tab delimiter for fzf
+    # Use a very large number for remaining if not available (so they sort last)
+    if [ -z "$remaining" ]; then
+        remaining=9999999999
+        due_epoch=0
+    fi
+    echo -e "$remaining\t$due_epoch\t$basename_no_ext\t$file"
+done)
+
+# Sort by remaining (ascending - most due first), then by due date (ascending), then by name
+sorted_results=$(echo "$results" | sort -t$'\t' -k1,1n -k2,2n -k3,3)
+
+# Format output for display
+formatted=$(echo "$sorted_results" | while IFS=$'\t' read -r remaining due_epoch basename fullpath; do
+    # Ensure basename is set (fallback to extracting from fullpath if needed)
+    if [ -z "$basename" ] && [ -n "$fullpath" ]; then
+        basename=$(basename "$fullpath" .md)
+    fi
+    
+    if [ "$remaining" = "9999999999" ] || [ "$due_epoch" = "0" ]; then
+        # No due date info available
+        # Format with fixed-width columns: Contact Name (30) Days (12) Date (10)
+        printf "%-30s %12s %10s\t%s\n" "$basename" "N/A" "N/A" "$fullpath"
+    else
+        # Convert remaining seconds to days (rounded)
+        remaining_days=$((remaining / 86400))
+        # Format days as string with sign
+        if [ $remaining_days -ge 0 ]; then
+            days_str="+$remaining_days days"
+        else
+            days_str="$remaining_days days"
+        fi
+        # Format due date
+        due_date=$(date -d "@$due_epoch" +%Y-%m-%d 2>/dev/null || echo "N/A")
+        # Format display with fixed-width columns: Contact Name (30) Days (12) Date (10)
+        printf "%-30s %12s %10s\t%s\n" "$basename" "$days_str" "$due_date" "$fullpath"
+    fi
+done)
+
+# If a text argument is provided
+if [ $# -gt 0 ]; then
+    query="$1"
+    
+    # Filter files matching the query (search in contact name and due info)
+    matching_files=$(echo "$formatted" | grep -i "$query")
+    
+    # Count matching files (handle empty case)
+    if [ -z "$matching_files" ]; then
+        match_count=0
+    else
+        match_count=$(echo "$matching_files" | wc -l)
+    fi
+    
+    # If exactly one match, show contact name and ask for confirmation
+    if [ "$match_count" -eq 1 ]; then
+        selected_line=$(echo "$matching_files" | head -n 1)
+        selected_file=$(echo "$selected_line" | cut -d$'\t' -f2)
+        contact_name=$(basename "$selected_file" .md)
+        
+        echo "Contact: $contact_name"
+        read -p "Update Last Contact date to $today? (y/N): " confirm
+        if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+            echo "Cancelled."
+            exit 0
+        fi
+    else
+        # Otherwise, use fzf with the query pre-filled
+        selected_line=$(echo "$formatted" | fzf --delimiter=$'\t' --with-nth=1 --query "$query")
+        selected_file=$(echo "$selected_line" | cut -d$'\t' -f2)
+    fi
+else
+    # No argument provided, use fzf normally
+    selected_line=$(echo "$formatted" | fzf --delimiter=$'\t' --with-nth=1)
+    selected_file=$(echo "$selected_line" | cut -d$'\t' -f2)
+fi
+
+# If a file was selected, update it
+if [ -n "$selected_file" ]; then
+    # Get contact name for display
+    contact_name=$(basename "$selected_file" .md)
+    
+    # Check if Last Contact line exists
+    if grep -q "^Last Contact:" "$selected_file"; then
+        # Update existing Last Contact line
+        # Use a temporary file for safety
+        temp_file=$(mktemp)
+        sed "s/^Last Contact:.*/Last Contact: $today/" "$selected_file" > "$temp_file"
+        mv "$temp_file" "$selected_file"
+    else
+        # Add Last Contact line after the frontmatter opening
+        # Use a temporary file for safety
+        temp_file=$(mktemp)
+        # Check if file starts with ---
+        if head -1 "$selected_file" | grep -q "^---"; then
+            # Insert Last Contact after the first --- line
+            awk -v date="$today" 'NR==1{print; print "Last Contact: " date; next}1' "$selected_file" > "$temp_file"
+        else
+            # Add frontmatter if it doesn't exist
+            {
+                echo "---"
+                echo "Last Contact: $today"
+                echo "---"
+                cat "$selected_file"
+            } > "$temp_file"
+        fi
+        mv "$temp_file" "$selected_file"
+    fi
+    
+    echo "Updated $contact_name - Last Contact set to $today"
+else
+    echo "No contact selected."
+    exit 1
+fi
