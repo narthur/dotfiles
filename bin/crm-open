@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # Open a CRM markdown file in Obsidian using fzf
+# Shows contacts sorted by due date (most due first)
 
 # Source environment variables
 source ~/.env
@@ -8,20 +9,82 @@ source ~/.env
 # Get vault name from vault path
 VAULT_NAME=$(basename "$OBSIDIAN_VAULT")
 
-# Find all markdown files in the CRM directory and format as "basename\tfullpath"
-# Remove .md extension from display name
-# Use tab as delimiter (invisible in display)
-markdown_files=$(find "$CRM_DIR" -type f -name "*.md" | sort | while read -r file; do
+# Get current date in seconds since epoch
+now=$(date +%s)
+
+# Process all CRM markdown files and calculate due dates
+results=$(find "$CRM_DIR" -type f -name "*.md" | while read -r file; do
+    # Extract Last Contact and Frequency from frontmatter
+    last_contact=$(grep "^Last Contact:" "$file" | head -1 | sed 's/Last Contact: //' | tr -d ' ')
+    frequency=$(grep "^Frequency:" "$file" | head -1 | sed 's/Frequency: //' | tr -d ' ')
+    
+    # Get basename without extension
     basename_no_ext=$(basename "$file" .md)
-    echo -e "$basename_no_ext\t$file"
+    
+    # Calculate due date if we have both Last Contact and Frequency
+    if [ -n "$last_contact" ] && [ -n "$frequency" ]; then
+        # Convert Last Contact to seconds since epoch
+        last_contact_epoch=$(date -d "$last_contact" +%s 2>/dev/null)
+        if [ $? -eq 0 ]; then
+            # Calculate Due date (Last Contact + Frequency days)
+            due_epoch=$((last_contact_epoch + frequency * 86400))
+            # Calculate Remaining (Due - now)
+            remaining=$((due_epoch - now))
+        else
+            remaining=""
+            due_epoch=""
+        fi
+    else
+        remaining=""
+        due_epoch=""
+    fi
+    
+    # Format: remaining_seconds|due_epoch|basename|fullpath
+    # Use tab delimiter for fzf
+    # Use a very large number for remaining if not available (so they sort last)
+    if [ -z "$remaining" ]; then
+        remaining=9999999999
+        due_epoch=0
+    fi
+    echo -e "$remaining\t$due_epoch\t$basename_no_ext\t$file"
+done)
+
+# Sort by remaining (ascending - most due first), then by due date (ascending), then by name
+sorted_results=$(echo "$results" | sort -t$'\t' -k1,1n -k2,2n -k3,3)
+
+# Format output for display
+formatted=$(echo "$sorted_results" | while IFS=$'\t' read -r remaining due_epoch basename fullpath; do
+    # Ensure basename is set (fallback to extracting from fullpath if needed)
+    if [ -z "$basename" ] && [ -n "$fullpath" ]; then
+        basename=$(basename "$fullpath" .md)
+    fi
+    
+    if [ "$remaining" = "9999999999" ] || [ "$due_epoch" = "0" ]; then
+        # No due date info available
+        # Format with fixed-width columns: Contact Name (30) Days (12) Date (10)
+        printf "%-30s %12s %10s\t%s\n" "$basename" "N/A" "N/A" "$fullpath"
+    else
+        # Convert remaining seconds to days (rounded)
+        remaining_days=$((remaining / 86400))
+        # Format days as string with sign
+        if [ $remaining_days -ge 0 ]; then
+            days_str="+$remaining_days days"
+        else
+            days_str="$remaining_days days"
+        fi
+        # Format due date
+        due_date=$(date -d "@$due_epoch" +%Y-%m-%d 2>/dev/null || echo "N/A")
+        # Format display with fixed-width columns: Contact Name (30) Days (12) Date (10)
+        printf "%-30s %12s %10s\t%s\n" "$basename" "$days_str" "$due_date" "$fullpath"
+    fi
 done)
 
 # If a text argument is provided
 if [ $# -gt 0 ]; then
     query="$1"
     
-    # Filter files matching the query (search in both basename and path)
-    matching_files=$(echo "$markdown_files" | grep -i "$query")
+    # Filter files matching the query (search in contact name and due info)
+    matching_files=$(echo "$formatted" | grep -i "$query")
     
     # Count matching files (handle empty case)
     if [ -z "$matching_files" ]; then
@@ -42,12 +105,12 @@ if [ $# -gt 0 ]; then
         exit 0
     fi
     
-    # Otherwise, use fzf with the query pre-filled, showing only basename
-    selected_line=$(echo "$markdown_files" | fzf --delimiter=$'\t' --with-nth=1 --query "$query")
+    # Otherwise, use fzf with the query pre-filled
+    selected_line=$(echo "$formatted" | fzf --delimiter=$'\t' --with-nth=1 --query "$query")
     selected_file=$(echo "$selected_line" | cut -d$'\t' -f2)
 else
-    # No argument provided, use fzf normally, showing only basename
-    selected_line=$(echo "$markdown_files" | fzf --delimiter=$'\t' --with-nth=1)
+    # No argument provided, use fzf normally
+    selected_line=$(echo "$formatted" | fzf --delimiter=$'\t' --with-nth=1)
     selected_file=$(echo "$selected_line" | cut -d$'\t' -f2)
 fi
 
