@@ -1,0 +1,27 @@
+#!/bin/bash
+
+# Sync CRM activity to Beeminder goals
+# Counts modified CRM docs and contacts touched today
+
+# Source environment variables
+source ~/.env
+
+# Get current date in YYYY-MM-DD format (used as datapoint id)
+today=$(date +%Y-%m-%d)
+
+# Count CRM docs modified today
+# Find files modified since start of today (midnight)
+modified_count=$(find "$CRM_DIR" -type f -name "*.md" -newermt "$today 00:00:00" | wc -l)
+
+# Count contacts with Last Contact date of today
+touched_count=$(find "$CRM_DIR" -type f -name "*.md" -exec grep -l "^Last Contact: $today" {} \; | wc -l)
+
+# Add datapoint to rolofresh goal
+echo "Syncing rolofresh: $modified_count modified CRM docs for $today"
+buzz add --requestid "$today" rolofresh "$modified_count" "CRM docs modified on $today"
+
+# Add datapoint to rolotouch goal
+echo "Syncing rolotouch: $touched_count contacts touched on $today"
+buzz add --requestid "$today" rolotouch "$touched_count" "Contacts touched on $today"
+
+echo "Sync complete."

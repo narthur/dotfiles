@@ -6,3 +6,4 @@ PATH=/usr/local/bin:/usr/bin:/bin:/home/narthur/bin:/home/narthur/.local/bin:/ho
 */10 * * * * cron-run sync-work-time /home/narthur/bin/sync-work-time
 0 * * * * cron-run dashlane-sync dcli sync
 0 3 * * 0 cron-run backup-urls /home/narthur/bin/backup-urls
+55 * * * * cron-run crm-sync-bm /home/narthur/bin/crm-sync-bm
