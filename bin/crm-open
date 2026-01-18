@@ -1,0 +1,62 @@
+#!/bin/bash
+
+# Open a CRM markdown file in Obsidian using fzf
+
+# Source environment variables
+source ~/.env
+
+# Get vault name from vault path
+VAULT_NAME=$(basename "$OBSIDIAN_VAULT")
+
+# Find all markdown files in the CRM directory and format as "basename\tfullpath"
+# Remove .md extension from display name
+# Use tab as delimiter (invisible in display)
+markdown_files=$(find "$CRM_DIR" -type f -name "*.md" | sort | while read -r file; do
+    basename_no_ext=$(basename "$file" .md)
+    echo -e "$basename_no_ext\t$file"
+done)
+
+# If a text argument is provided
+if [ $# -gt 0 ]; then
+    query="$1"
+    
+    # Filter files matching the query (search in both basename and path)
+    matching_files=$(echo "$markdown_files" | grep -i "$query")
+    
+    # Count matching files (handle empty case)
+    if [ -z "$matching_files" ]; then
+        match_count=0
+    else
+        match_count=$(echo "$matching_files" | wc -l)
+    fi
+    
+    # If exactly one match, open it directly
+    if [ "$match_count" -eq 1 ]; then
+        selected_file=$(echo "$matching_files" | head -n 1 | cut -d$'\t' -f2)
+        # Get relative path from vault root
+        relative_path="${selected_file#$OBSIDIAN_VAULT/}"
+        # URL encode the path (basic encoding for spaces and special chars)
+        encoded_path=$(echo "$relative_path" | sed 's/ /%20/g' | sed 's/#/%23/g' | sed 's/&/%26/g')
+        # Open using obsidian:// URI scheme
+        xdg-open "obsidian://open?vault=$VAULT_NAME&file=$encoded_path" 2>/dev/null || obsidian "obsidian://open?vault=$VAULT_NAME&file=$encoded_path"
+        exit 0
+    fi
+    
+    # Otherwise, use fzf with the query pre-filled, showing only basename
+    selected_line=$(echo "$markdown_files" | fzf --delimiter=$'\t' --with-nth=1 --query "$query")
+    selected_file=$(echo "$selected_line" | cut -d$'\t' -f2)
+else
+    # No argument provided, use fzf normally, showing only basename
+    selected_line=$(echo "$markdown_files" | fzf --delimiter=$'\t' --with-nth=1)
+    selected_file=$(echo "$selected_line" | cut -d$'\t' -f2)
+fi
+
+# If a file was selected, open it in Obsidian
+if [ -n "$selected_file" ]; then
+    # Get relative path from vault root
+    relative_path="${selected_file#$OBSIDIAN_VAULT/}"
+    # URL encode the path (basic encoding for spaces and special chars)
+    encoded_path=$(echo "$relative_path" | sed 's/ /%20/g' | sed 's/#/%23/g' | sed 's/&/%26/g')
+    # Open using obsidian:// URI scheme
+    xdg-open "obsidian://open?vault=$VAULT_NAME&file=$encoded_path" 2>/dev/null || obsidian "obsidian://open?vault=$VAULT_NAME&file=$encoded_path"
+fi
