@@ -1,0 +1,445 @@
+#!/usr/bin/env bash
+
+# user-org-report - Generate a report of issues and PRs for a user within an organization
+# Usage:
+#   bash user-org-report USERNAME ORG [--days N] [--state STATE] [--json] [--human] [--limit N]
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+DAYS=30
+STATE="all"
+FORMAT="human"
+LIMIT=0
+DEBUG=false
+
+# Parse arguments
+USERNAME=""
+ORG=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --days|-d) DAYS="$2"; shift 2;;
+    --state|-s) STATE="$2"; shift 2;;
+    --json) FORMAT="json"; shift;;
+    --human) FORMAT="human"; shift;;
+    --limit|-l) LIMIT="$2"; shift 2;;
+    --debug) DEBUG=true; shift;;
+    -h|--help)
+      cat <<EOF
+Usage: $0 USERNAME ORG [options]
+
+Arguments:
+  USERNAME              GitHub username to search for
+  ORG                   Organization name to search within
+
+Options:
+  --days|-d N           Number of days to look back (default: 30)
+  --state STATE         State: all, open, closed, merged (default: all)
+                        For PRs: all, open, closed, merged
+                        For issues: all, open, closed
+  --json                JSON output format
+  --human               Human-readable format (default)
+  --limit|-l N          Limit number of results per type (PRs and issues separately)
+  --debug               Show debug information (queries, etc.)
+  -h, --help            Show this help
+
+Examples:
+  $0 narthur myorg --days 14 --state open
+  $0 narthur myorg --json --limit 10
+  $0 narthur myorg --days 7
+EOF
+      exit 0
+      ;;
+    *)
+      if [[ -z "$USERNAME" ]]; then
+        USERNAME="$1"
+      elif [[ -z "$ORG" ]]; then
+        ORG="$1"
+      else
+        echo "Error: Unknown option or too many arguments: $1" >&2
+        exit 1
+      fi
+      shift
+      ;;
+  esac
+done
+
+# Validate required arguments
+if [[ -z "$USERNAME" ]] || [[ -z "$ORG" ]]; then
+  echo "Error: USERNAME and ORG are required" >&2
+  echo "Usage: $0 USERNAME ORG [options]" >&2
+  echo "Run $0 --help for more information" >&2
+  exit 1
+fi
+
+# Check for required dependencies
+if ! command -v gh >/dev/null 2>&1; then
+  echo "Error: GitHub CLI (gh) is not installed. Please install it first." >&2
+  exit 1
+fi
+
+if ! command -v jq >/dev/null 2>&1; then
+  echo "Error: jq is not installed. Please install it first." >&2
+  exit 1
+fi
+
+# Build search query
+SINCE=$(date -u -d "$DAYS days ago" +%Y-%m-%d)
+# Use involves: to find all PRs/issues the user is involved in
+SEARCH_QUERY="updated:>=$SINCE org:$ORG involves:$USERNAME sort:updated-desc"
+
+# Function to calculate relative time
+relative_time() {
+  local timestamp="$1"
+  local now=$(date +%s)
+  local then=$(date -d "$timestamp" +%s 2>/dev/null || echo "$now")
+  local diff=$((now - then))
+  
+  if [[ $diff -lt 3600 ]]; then
+    echo "$((diff / 60))m ago"
+  elif [[ $diff -lt 86400 ]]; then
+    echo "$((diff / 3600))h ago"
+  elif [[ $diff -lt 604800 ]]; then
+    echo "$((diff / 86400))d ago"
+  else
+    echo "$((diff / 604800))w ago"
+  fi
+}
+
+# Function to format state with ANSI colors
+format_state() {
+  local state="$1"
+  local is_draft="$2"
+  local state_str=""
+  local color_reset=$'\033[0m'
+  local visible_len=0
+  
+  case "$state" in
+    OPEN)
+      if [[ "$is_draft" == "true" ]]; then
+        local color=$'\033[90m'  # Gray
+        state_str="${color}draft${color_reset}"
+        visible_len=5
+      else
+        local color=$'\033[32m'  # Green
+        state_str="${color}open${color_reset}"
+        visible_len=4
+      fi
+      ;;
+    CLOSED)
+      local color=$'\033[31m'  # Red
+      state_str="${color}closed${color_reset}"
+      visible_len=6
+      ;;
+    MERGED)
+      local color=$'\033[34m'  # Blue
+      state_str="${color}merged${color_reset}"
+      visible_len=6
+      ;;
+    *)
+      state_str="$state"
+      visible_len=${#state}
+      ;;
+  esac
+  local padding=$((8 - visible_len))
+  if [[ $padding -gt 0 ]]; then
+    printf "%s%*s" "$state_str" "$padding" ""
+  else
+    printf "%s" "$state_str"
+  fi
+}
+
+# Function to format review decision
+format_review() {
+  local decision="$1"
+  case "$decision" in
+    APPROVED) echo "✓ approved" ;;
+    CHANGES_REQUESTED) echo "⚠ changes" ;;
+    REVIEW_REQUIRED) echo "⏳ review" ;;
+    *) echo "" ;;
+  esac
+}
+
+# Fetch PRs using GitHub search API for better qualifier support
+if [[ "$DEBUG" == true ]]; then
+  echo "Debug: Fetching PRs for user $USERNAME in org $ORG" >&2
+  echo "Debug: Search query: $SEARCH_QUERY" >&2
+  echo "Debug: State: $STATE" >&2
+fi
+
+# Use gh api search for PRs to support full search qualifiers
+PR_SEARCH_QUERY="is:pr $SEARCH_QUERY"
+if [[ "$STATE" != "all" ]]; then
+  if [[ "$STATE" == "merged" ]]; then
+    PR_SEARCH_QUERY="$PR_SEARCH_QUERY is:merged"
+  elif [[ "$STATE" == "closed" ]]; then
+    PR_SEARCH_QUERY="$PR_SEARCH_QUERY is:closed"
+  elif [[ "$STATE" == "open" ]]; then
+    PR_SEARCH_QUERY="$PR_SEARCH_QUERY is:open"
+  fi
+fi
+
+# Fetch PRs using search API
+PR_SEARCH_RESULT=$(gh api --paginate "search/issues?q=$(echo "$PR_SEARCH_QUERY" | jq -sRr @uri)&per_page=100" 2>&1) || {
+  echo "Error: Failed to search for PRs. Check your GitHub CLI authentication and permissions." >&2
+  if [[ "$DEBUG" == true ]]; then
+    echo "Debug: Search query was: $PR_SEARCH_QUERY" >&2
+    echo "Debug: Raw error output:" >&2
+    echo "$PR_SEARCH_RESULT" >&2
+  fi
+  exit 1
+}
+
+# Extract PR data from search results and transform to match expected format
+# Note: Search API returns items in .items array
+# involves: already filters by user, so we only need to check org
+# Repository info is in repository_url, need to parse it
+PRS_JSON=$(echo "$PR_SEARCH_RESULT" | jq --arg org "$ORG" --arg user "$USERNAME" '
+  if type == "object" and has("items") then
+    .items
+  elif type == "array" then
+    .
+  else
+    []
+  end |
+  map(
+    . as $item |
+    ($item.repository_url | split("/") | {owner: .[-2], name: .[-1]}) as $repo |
+    $item | select($repo.owner | ascii_downcase == ($org | ascii_downcase)) |
+    {
+      number: .number,
+      title: .title,
+      author: {login: .user.login},
+      updatedAt: .updated_at,
+      state: (if .pull_request.merged_at then "MERGED" elif .state == "open" then "OPEN" else "CLOSED" end),
+      headRepository: {owner: {login: $repo.owner}, name: $repo.name},
+      headRepositoryOwner: {login: $repo.owner},
+      url: .html_url,
+      labels: (.labels // [] | map({name: .name})),
+      isDraft: .draft,
+      reviewDecision: null,
+      repository: {owner: {login: $repo.owner}, name: $repo.name}
+    }
+  )
+')
+
+# If we need more details (like isDraft, reviewDecision), fetch them
+# But for now, let's try with what we have from search
+if [[ "$LIMIT" -gt 0 ]]; then
+  PRS_JSON=$(echo "$PRS_JSON" | jq --argjson limit "$LIMIT" '.[0:$limit]')
+fi
+
+# Fetch issues using GitHub search API
+if [[ "$DEBUG" == true ]]; then
+  echo "Debug: Fetching issues for user $USERNAME in org $ORG" >&2
+fi
+
+# For issues, we need to handle state differently (no "merged" state)
+ISSUE_STATE="$STATE"
+if [[ "$ISSUE_STATE" == "merged" ]]; then
+  ISSUE_STATE="all"
+fi
+
+# Use gh api search for issues
+ISSUE_SEARCH_QUERY="is:issue $SEARCH_QUERY"
+if [[ "$ISSUE_STATE" != "all" ]]; then
+  if [[ "$ISSUE_STATE" == "closed" ]]; then
+    ISSUE_SEARCH_QUERY="$ISSUE_SEARCH_QUERY is:closed"
+  elif [[ "$ISSUE_STATE" == "open" ]]; then
+    ISSUE_SEARCH_QUERY="$ISSUE_SEARCH_QUERY is:open"
+  fi
+fi
+
+# Fetch issues using search API
+ISSUE_SEARCH_RESULT=$(gh api --paginate "search/issues?q=$(echo "$ISSUE_SEARCH_QUERY" | jq -sRr @uri)&per_page=100" 2>&1) || {
+  echo "Error: Failed to search for issues. Check your GitHub CLI authentication and permissions." >&2
+  if [[ "$DEBUG" == true ]]; then
+    echo "Debug: Search query was: $ISSUE_SEARCH_QUERY" >&2
+    echo "Debug: Raw error output:" >&2
+    echo "$ISSUE_SEARCH_RESULT" >&2
+  fi
+  exit 1
+}
+
+# Extract issue data from search results and transform to match expected format
+# involves: already filters by user, so we only need to check org
+# Repository info is in repository_url, need to parse it
+ISSUES_JSON=$(echo "$ISSUE_SEARCH_RESULT" | jq --arg org "$ORG" --arg user "$USERNAME" '
+  if type == "object" and has("items") then
+    .items
+  elif type == "array" then
+    .
+  else
+    []
+  end |
+  map(
+    . as $item |
+    ($item.repository_url | split("/") | {owner: .[-2], name: .[-1]}) as $repo |
+    $item | select($repo.owner | ascii_downcase == ($org | ascii_downcase)) |
+    {
+      number: .number,
+      title: .title,
+      author: {login: .user.login},
+      updatedAt: .updated_at,
+      state: (.state | ascii_upcase),
+      url: .html_url,
+      labels: (.labels // [] | map({name: .name})),
+      assignees: [],
+      comments: .comments,
+      repository: {owner: {login: $repo.owner}, name: $repo.name}
+    }
+  )
+')
+
+# Apply limit if specified
+if [[ "$LIMIT" -gt 0 ]]; then
+  ISSUES_JSON=$(echo "$ISSUES_JSON" | jq --argjson limit "$LIMIT" '.[0:$limit]')
+fi
+
+# Output based on format
+if [[ "$FORMAT" == "json" ]]; then
+  echo "$PRS_JSON" | jq --argjson issues "$ISSUES_JSON" '{
+    user: "'"$USERNAME"'",
+    organization: "'"$ORG"'",
+    days: '"$DAYS"',
+    state: "'"$STATE"'",
+    pull_requests: .,
+    issues: $issues,
+    summary: {
+      pr_count: length,
+      issue_count: ($issues | length)
+    }
+  }'
+else
+  # Human-readable format
+  PR_COUNT=$(echo "$PRS_JSON" | jq 'length')
+  ISSUE_COUNT=$(echo "$ISSUES_JSON" | jq 'length')
+  TOTAL=$((PR_COUNT + ISSUE_COUNT))
+  
+  echo "GitHub Activity Report"
+  echo "User: $USERNAME | Organization: $ORG"
+  echo "Period: Last $DAYS days (since $SINCE)"
+  echo "State: $STATE"
+  echo "Found: $PR_COUNT PRs, $ISSUE_COUNT issues (Total: $TOTAL)"
+  echo ""
+  
+  if [[ $TOTAL -eq 0 ]]; then
+    echo "No activity found matching the criteria."
+    echo ""
+    echo "Search criteria:"
+    echo "  - User: $USERNAME"
+    echo "  - Organization: $ORG"
+    echo "  - Updated in last $DAYS days (since $SINCE)"
+    echo "  - State: $STATE"
+    echo ""
+    echo "Try:"
+    echo "  - Increasing days: $0 $USERNAME $ORG --days $((DAYS * 2))"
+    echo "  - Checking different state: $0 $USERNAME $ORG --state open"
+    if [[ "$DEBUG" != true ]]; then
+      echo "  - Debug mode: $0 $USERNAME $ORG --debug"
+    fi
+    exit 0
+  fi
+  
+  # Get terminal width
+  TERM_WIDTH=${COLUMNS:-$(tput cols 2>/dev/null || echo 80)}
+  
+  # Fixed column widths
+  NUM_WIDTH=8
+  STATE_WIDTH=8
+  UPDATED_WIDTH=10
+  REPO_WIDTH=25
+  SPACING=4
+  
+  # Calculate title width
+  TITLE_WIDTH=$((TERM_WIDTH - NUM_WIDTH - STATE_WIDTH - UPDATED_WIDTH - REPO_WIDTH - SPACING))
+  if [[ $TITLE_WIDTH -lt 20 ]]; then
+    TITLE_WIDTH=20
+  fi
+  
+  # Print Pull Requests section
+  if [[ $PR_COUNT -gt 0 ]]; then
+    echo -e "\033[1m=== Pull Requests ($PR_COUNT)\033[0m"
+    echo ""
+    
+    printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${REPO_WIDTH}s %-${TITLE_WIDTH}s\n" \
+      "Number" "State" "Updated" "Repository" "Title"
+    
+    printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${REPO_WIDTH}s %-${TITLE_WIDTH}s\n" \
+      "$(printf '%*s' $NUM_WIDTH '' | tr ' ' '-')" \
+      "$(printf '%*s' $STATE_WIDTH '' | tr ' ' '-')" \
+      "$(printf '%*s' $UPDATED_WIDTH '' | tr ' ' '-')" \
+      "$(printf '%*s' $REPO_WIDTH '' | tr ' ' '-')" \
+      "$(printf '%*s' $TITLE_WIDTH '' | tr ' ' '-')"
+    
+    echo "$PRS_JSON" | jq -r '.[] | 
+      "\(.number)|\(.state)|\(.updatedAt)|\(.repository.name)|\(.isDraft)|\(.reviewDecision // "none")|\(.title)"' | \
+    while IFS='|' read -r number state updated repo draft review title; do
+      relative=$(relative_time "$updated")
+      state_fmt=$(format_state "$state" "$draft")
+      
+      # Truncate repo name if needed
+      repo_short="$repo"
+      if [[ ${#repo} -gt $REPO_WIDTH ]]; then
+        repo_short="${repo:0:$((REPO_WIDTH - 2))}.."
+      fi
+      
+      # Truncate title
+      title_short="${title:0:$((TITLE_WIDTH - 3))}"
+      [[ ${#title} -gt $((TITLE_WIDTH - 3)) ]] && title_short="${title_short}..."
+      
+      printf "%-${NUM_WIDTH}s %s %-${UPDATED_WIDTH}s %-${REPO_WIDTH}s %-${TITLE_WIDTH}s\n" \
+        "#$number" "$state_fmt" "$relative" "$repo_short" "$title_short"
+      
+      # Show review status on second line if present
+      review_fmt=$(format_review "$review")
+      if [[ -n "$review_fmt" ]]; then
+        printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${REPO_WIDTH}s %-${TITLE_WIDTH}s\n" \
+          "" "" "" "" "  └─ $review_fmt"
+      fi
+    done
+    echo ""
+  fi
+  
+  # Print Issues section
+  if [[ $ISSUE_COUNT -gt 0 ]]; then
+    echo -e "\033[1m=== Issues ($ISSUE_COUNT)\033[0m"
+    echo ""
+    
+    printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${REPO_WIDTH}s %-${TITLE_WIDTH}s\n" \
+      "Number" "State" "Updated" "Repository" "Title"
+    
+    printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${REPO_WIDTH}s %-${TITLE_WIDTH}s\n" \
+      "$(printf '%*s' $NUM_WIDTH '' | tr ' ' '-')" \
+      "$(printf '%*s' $STATE_WIDTH '' | tr ' ' '-')" \
+      "$(printf '%*s' $UPDATED_WIDTH '' | tr ' ' '-')" \
+      "$(printf '%*s' $REPO_WIDTH '' | tr ' ' '-')" \
+      "$(printf '%*s' $TITLE_WIDTH '' | tr ' ' '-')"
+    
+    echo "$ISSUES_JSON" | jq -r '.[] | 
+      "\(.number)|\(.state)|\(.updatedAt)|\(.repository.name)|\(.title)"' | \
+    while IFS='|' read -r number state updated repo title; do
+      relative=$(relative_time "$updated")
+      state_fmt=$(format_state "$state" "false")
+      
+      # Truncate repo name if needed
+      repo_short="$repo"
+      if [[ ${#repo} -gt $REPO_WIDTH ]]; then
+        repo_short="${repo:0:$((REPO_WIDTH - 2))}.."
+      fi
+      
+      # Truncate title
+      title_short="${title:0:$((TITLE_WIDTH - 3))}"
+      [[ ${#title} -gt $((TITLE_WIDTH - 3)) ]] && title_short="${title_short}..."
+      
+      printf "%-${NUM_WIDTH}s %s %-${UPDATED_WIDTH}s %-${REPO_WIDTH}s %-${TITLE_WIDTH}s\n" \
+        "#$number" "$state_fmt" "$relative" "$repo_short" "$title_short"
+    done
+    echo ""
+  fi
+  
+  echo -e "Legend: \033[32mopen\033[0m \033[31mclosed\033[0m \033[34mmerged\033[0m \033[90mdraft\033[0m"
+  echo "        ✓=approved ⚠=changes requested ⏳=review required"
+fi
