@@ -325,6 +325,11 @@ else
   echo "Found: $PR_COUNT PRs, $ISSUE_COUNT issues (Total: $TOTAL)"
   echo ""
   
+  # Show breakdown by repository
+  echo "By Repository:"
+  echo "$PRS_JSON" "$ISSUES_JSON" | jq -s 'add | group_by(.repository.name) | map({repo: .[0].repository.name, prs: (map(select(has("isDraft"))) | length), issues: (map(select(has("isDraft") | not)) | length), total: length}) | sort_by(-.total) | .[] | "  \(.repo): \(.prs) PRs, \(.issues) issues"' -r
+  echo ""
+  
   if [[ $TOTAL -eq 0 ]]; then
     echo "No activity found matching the criteria."
     echo ""
