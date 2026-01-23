@@ -388,99 +388,106 @@ else
   # Get terminal width
   TERM_WIDTH=${COLUMNS:-$(tput cols 2>/dev/null || echo 80)}
   
-  # Fixed column widths
+  # Fixed column widths (no repo column since we group by repo)
   NUM_WIDTH=8
   STATE_WIDTH=8
   UPDATED_WIDTH=10
-  REPO_WIDTH=25
-  SPACING=4
+  SPACING=3
   
   # Calculate title width
-  TITLE_WIDTH=$((TERM_WIDTH - NUM_WIDTH - STATE_WIDTH - UPDATED_WIDTH - REPO_WIDTH - SPACING))
+  TITLE_WIDTH=$((TERM_WIDTH - NUM_WIDTH - STATE_WIDTH - UPDATED_WIDTH - SPACING))
   if [[ $TITLE_WIDTH -lt 20 ]]; then
     TITLE_WIDTH=20
   fi
   
-  # Print Pull Requests section
-  if [[ $PR_COUNT -gt 0 ]]; then
-    echo -e "\033[1m=== Pull Requests ($PR_COUNT)\033[0m"
+  # Loop through each repository and display its PRs and issues
+  echo "$REPOS" | while IFS= read -r repo; do
+    REPO_NAME=$(echo "$repo" | jq -r '.name')
+    
+    # Filter PRs and issues for this repo
+    REPO_PRS=$(echo "$PRS_JSON" | jq --arg repo "$REPO_NAME" '[.[] | select(.repository.name == $repo)]')
+    REPO_ISSUES=$(echo "$ISSUES_JSON" | jq --arg repo "$REPO_NAME" '[.[] | select(.repository.name == $repo)]')
+    
+    REPO_PR_COUNT=$(echo "$REPO_PRS" | jq 'length')
+    REPO_ISSUE_COUNT=$(echo "$REPO_ISSUES" | jq 'length')
+    REPO_TOTAL=$((REPO_PR_COUNT + REPO_ISSUE_COUNT))
+    
+    # Skip repos with no activity
+    if [[ $REPO_TOTAL -eq 0 ]]; then
+      continue
+    fi
+    
+    # Print repository header (cyan/bold)
+    echo -e "\033[1;36m=== $REPO_NAME ($REPO_PR_COUNT PRs, $REPO_ISSUE_COUNT issues)\033[0m"
     echo ""
     
-    printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${REPO_WIDTH}s %-${TITLE_WIDTH}s\n" \
-      "Number" "State" "Updated" "Repository" "Title"
+    # Print Pull Requests for this repo
+    if [[ $REPO_PR_COUNT -gt 0 ]]; then
+      echo -e "\033[1mPull Requests:\033[0m"
+      echo ""
+      
+      printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${TITLE_WIDTH}s\n" \
+        "Number" "State" "Updated" "Title"
+      
+      printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${TITLE_WIDTH}s\n" \
+        "$(printf '%*s' $NUM_WIDTH '' | tr ' ' '-')" \
+        "$(printf '%*s' $STATE_WIDTH '' | tr ' ' '-')" \
+        "$(printf '%*s' $UPDATED_WIDTH '' | tr ' ' '-')" \
+        "$(printf '%*s' $TITLE_WIDTH '' | tr ' ' '-')"
+      
+      echo "$REPO_PRS" | jq -r '.[] | 
+        "\(.number)|\(.state)|\(.updatedAt)|\(.isDraft)|\(.reviewDecision // "none")|\(.title)"' | \
+      while IFS='|' read -r number state updated draft review title; do
+        relative=$(relative_time "$updated")
+        state_fmt=$(format_state "$state" "$draft")
+        
+        # Truncate title
+        title_short="${title:0:$((TITLE_WIDTH - 3))}"
+        [[ ${#title} -gt $((TITLE_WIDTH - 3)) ]] && title_short="${title_short}..."
+        
+        printf "%-${NUM_WIDTH}s %s %-${UPDATED_WIDTH}s %-${TITLE_WIDTH}s\n" \
+          "#$number" "$state_fmt" "$relative" "$title_short"
+        
+        # Show review status on second line if present
+        review_fmt=$(format_review "$review")
+        if [[ -n "$review_fmt" ]]; then
+          printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${TITLE_WIDTH}s\n" \
+            "" "" "" "  └─ $review_fmt"
+        fi
+      done
+      echo ""
+    fi
     
-    printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${REPO_WIDTH}s %-${TITLE_WIDTH}s\n" \
-      "$(printf '%*s' $NUM_WIDTH '' | tr ' ' '-')" \
-      "$(printf '%*s' $STATE_WIDTH '' | tr ' ' '-')" \
-      "$(printf '%*s' $UPDATED_WIDTH '' | tr ' ' '-')" \
-      "$(printf '%*s' $REPO_WIDTH '' | tr ' ' '-')" \
-      "$(printf '%*s' $TITLE_WIDTH '' | tr ' ' '-')"
-    
-    echo "$PRS_JSON" | jq -r '.[] | 
-      "\(.number)|\(.state)|\(.updatedAt)|\(.repository.name)|\(.isDraft)|\(.reviewDecision // "none")|\(.title)"' | \
-    while IFS='|' read -r number state updated repo draft review title; do
-      relative=$(relative_time "$updated")
-      state_fmt=$(format_state "$state" "$draft")
+    # Print Issues for this repo
+    if [[ $REPO_ISSUE_COUNT -gt 0 ]]; then
+      echo -e "\033[1mIssues:\033[0m"
+      echo ""
       
-      # Truncate repo name if needed
-      repo_short="$repo"
-      if [[ ${#repo} -gt $REPO_WIDTH ]]; then
-        repo_short="${repo:0:$((REPO_WIDTH - 2))}.."
-      fi
+      printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${TITLE_WIDTH}s\n" \
+        "Number" "State" "Updated" "Title"
       
-      # Truncate title
-      title_short="${title:0:$((TITLE_WIDTH - 3))}"
-      [[ ${#title} -gt $((TITLE_WIDTH - 3)) ]] && title_short="${title_short}..."
+      printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${TITLE_WIDTH}s\n" \
+        "$(printf '%*s' $NUM_WIDTH '' | tr ' ' '-')" \
+        "$(printf '%*s' $STATE_WIDTH '' | tr ' ' '-')" \
+        "$(printf '%*s' $UPDATED_WIDTH '' | tr ' ' '-')" \
+        "$(printf '%*s' $TITLE_WIDTH '' | tr ' ' '-')"
       
-      printf "%-${NUM_WIDTH}s %s %-${UPDATED_WIDTH}s %-${REPO_WIDTH}s %-${TITLE_WIDTH}s\n" \
-        "#$number" "$state_fmt" "$relative" "$repo_short" "$title_short"
-      
-      # Show review status on second line if present
-      review_fmt=$(format_review "$review")
-      if [[ -n "$review_fmt" ]]; then
-        printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${REPO_WIDTH}s %-${TITLE_WIDTH}s\n" \
-          "" "" "" "" "  └─ $review_fmt"
-      fi
-    done
-    echo ""
-  fi
-  
-  # Print Issues section
-  if [[ $ISSUE_COUNT -gt 0 ]]; then
-    echo -e "\033[1m=== Issues ($ISSUE_COUNT)\033[0m"
-    echo ""
-    
-    printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${REPO_WIDTH}s %-${TITLE_WIDTH}s\n" \
-      "Number" "State" "Updated" "Repository" "Title"
-    
-    printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${REPO_WIDTH}s %-${TITLE_WIDTH}s\n" \
-      "$(printf '%*s' $NUM_WIDTH '' | tr ' ' '-')" \
-      "$(printf '%*s' $STATE_WIDTH '' | tr ' ' '-')" \
-      "$(printf '%*s' $UPDATED_WIDTH '' | tr ' ' '-')" \
-      "$(printf '%*s' $REPO_WIDTH '' | tr ' ' '-')" \
-      "$(printf '%*s' $TITLE_WIDTH '' | tr ' ' '-')"
-    
-    echo "$ISSUES_JSON" | jq -r '.[] | 
-      "\(.number)|\(.state)|\(.updatedAt)|\(.repository.name)|\(.title)"' | \
-    while IFS='|' read -r number state updated repo title; do
-      relative=$(relative_time "$updated")
-      state_fmt=$(format_state "$state" "false")
-      
-      # Truncate repo name if needed
-      repo_short="$repo"
-      if [[ ${#repo} -gt $REPO_WIDTH ]]; then
-        repo_short="${repo:0:$((REPO_WIDTH - 2))}.."
-      fi
-      
-      # Truncate title
-      title_short="${title:0:$((TITLE_WIDTH - 3))}"
-      [[ ${#title} -gt $((TITLE_WIDTH - 3)) ]] && title_short="${title_short}..."
-      
-      printf "%-${NUM_WIDTH}s %s %-${UPDATED_WIDTH}s %-${REPO_WIDTH}s %-${TITLE_WIDTH}s\n" \
-        "#$number" "$state_fmt" "$relative" "$repo_short" "$title_short"
-    done
-    echo ""
-  fi
+      echo "$REPO_ISSUES" | jq -r '.[] | 
+        "\(.number)|\(.state)|\(.updatedAt)|\(.title)"' | \
+      while IFS='|' read -r number state updated title; do
+        relative=$(relative_time "$updated")
+        state_fmt=$(format_state "$state" "false")
+        
+        # Truncate title
+        title_short="${title:0:$((TITLE_WIDTH - 3))}"
+        [[ ${#title} -gt $((TITLE_WIDTH - 3)) ]] && title_short="${title_short}..."
+        
+        printf "%-${NUM_WIDTH}s %s %-${UPDATED_WIDTH}s %-${TITLE_WIDTH}s\n" \
+          "#$number" "$state_fmt" "$relative" "$title_short"
+      done
+      echo ""
+    fi
+  done
   
   echo -e "Legend: \033[32mopen\033[0m \033[31mclosed\033[0m \033[34mmerged\033[0m \033[90mdraft\033[0m"
   echo "        ✓=approved ⚠=changes requested ⏳=review required"
