@@ -327,7 +327,24 @@ else
   
   # Show breakdown by repository
   echo "By Repository:"
-  echo "$PRS_JSON" "$ISSUES_JSON" | jq -s 'add | group_by(.repository.name) | map({repo: .[0].repository.name, prs: (map(select(has("isDraft"))) | length), issues: (map(select(has("isDraft") | not)) | length), total: length}) | sort_by(-.total) | .[] | "  \(.repo): \(.prs) PRs, \(.issues) issues"' -r
+  
+  # Get unique repos from PRs and issues
+  REPOS=$(echo "$PRS_JSON" "$ISSUES_JSON" | jq -s 'add | map(.repository) | unique_by(.name) | .[]' -c)
+  
+  # For each repo, count PRs, issues, and commits
+  echo "$REPOS" | while IFS= read -r repo; do
+    REPO_OWNER=$(echo "$repo" | jq -r '.owner.login')
+    REPO_NAME=$(echo "$repo" | jq -r '.name')
+    
+    PR_COUNT=$(echo "$PRS_JSON" | jq --arg repo "$REPO_NAME" '[.[] | select(.repository.name == $repo)] | length')
+    ISSUE_COUNT=$(echo "$ISSUES_JSON" | jq --arg repo "$REPO_NAME" '[.[] | select(.repository.name == $repo)] | length')
+    
+    # Fetch commit count for this repo in the time period
+    COMMIT_SEARCH_QUERY="repo:$REPO_OWNER/$REPO_NAME author:$USERNAME committer-date:>=$SINCE"
+    COMMIT_COUNT=$(gh api "search/commits?q=$(echo "$COMMIT_SEARCH_QUERY" | jq -sRr @uri)&per_page=1" 2>/dev/null | jq -r '.total_count // 0')
+    
+    echo "  $REPO_NAME: $PR_COUNT PRs, $ISSUE_COUNT issues, $COMMIT_COUNT commits"
+  done
   echo ""
   
   if [[ $TOTAL -eq 0 ]]; then
