@@ -143,6 +143,6 @@ else
 fi
 
 # Show tools documentation
-print_pr_tools_help
+# print_pr_tools_help
 
 

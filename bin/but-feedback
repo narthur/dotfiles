@@ -384,5 +384,5 @@ else
   done
   
   # Show tools documentation
-  print_pr_tools_help
+  # print_pr_tools_help
 fi
