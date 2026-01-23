@@ -136,5 +136,13 @@ else
     log_success "claude already installed"
 fi
 
+log_section "Ollama"
+if ! command -v ollama &> /dev/null; then
+    log "ollama not found, installing..."
+    run "install ollama" curl -fsSL https://ollama.com/install.sh | bash
+else
+    log_success "ollama already installed"
+fi
+
 log_section "Complete"
 log_success "All packages installed successfully!"

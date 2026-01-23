@@ -9,7 +9,6 @@
 !.config/gh/
 !.config/gh/config.yml
 !.config/gtk-3.0/
-!.config/gtk-3.0/bookmarks
 !.config/gtk-3.0/settings.ini
 !.config/htop/
 !.config/htop/htoprc
@@ -40,6 +39,8 @@
 !.local/share/applications/logout.desktop
 !.local/share/applications/obsidian.desktop
 !.tool-versions
+!.vscode/
+!.vscode/settings.json
 !bin/
 !bin/*
 !packages.txt

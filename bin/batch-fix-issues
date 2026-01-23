@@ -1,0 +1,172 @@
+#!/bin/bash
+# batch-fix-issues - Automatically fix GitHub issues using OpenCode and git worktrees
+#
+# Usage: batch-fix-issues [REPO_DIR] [MAX_ISSUES] [MAX_ITERATIONS]
+#
+# Arguments:
+#   REPO_DIR        - Path to git repository (default: current directory)
+#   MAX_ISSUES      - Maximum number of issues to process (default: 10)
+#   MAX_ITERATIONS  - Maximum retry attempts per issue (default: 3)
+#
+# Requirements:
+#   - Repository must have .opencode/setup.sh and .opencode/validate.sh
+#   - OpenCode must be installed and configured
+#   - GitHub CLI (gh) must be installed and authenticated
+
+set -euo pipefail
+
+REPO_DIR="${1:-.}"
+MAX_ISSUES="${2:-10}"
+MAX_ITERATIONS="${3:-3}"
+
+cd "$REPO_DIR"
+
+SETUP_SCRIPT="${REPO_DIR}/.opencode/setup.sh"
+VALIDATE_SCRIPT="${REPO_DIR}/.opencode/validate.sh"
+
+# Check prerequisites
+if [[ ! -f "$SETUP_SCRIPT" ]] || [[ ! -f "$VALIDATE_SCRIPT" ]]; then
+    echo "Error: Missing .opencode/setup.sh or .opencode/validate.sh"
+    echo ""
+    echo "Please create these scripts in your repository:"
+    echo "  .opencode/setup.sh    - Install dependencies and build"
+    echo "  .opencode/validate.sh - Run tests, lint, typecheck"
+    exit 1
+fi
+
+if ! command -v opencode &> /dev/null; then
+    echo "Error: opencode is not installed"
+    exit 1
+fi
+
+if ! command -v gh &> /dev/null; then
+    echo "Error: GitHub CLI (gh) is not installed"
+    exit 1
+fi
+
+# Get list of open issues
+echo "Fetching open issues..."
+issue_numbers=$(gh issue list --limit "$MAX_ISSUES" --json number -q '.[].number')
+
+if [[ -z "$issue_numbers" ]]; then
+    echo "No open issues found"
+    exit 0
+fi
+
+# Start OpenCode server
+echo "Starting OpenCode server..."
+opencode serve --port 4096 &
+SERVER_PID=$!
+sleep 5
+
+# Ensure server cleanup on exit
+trap "kill $SERVER_PID 2>/dev/null || true" EXIT
+
+for issue_num in $issue_numbers; do
+    echo ""
+    echo "================================"
+    echo "Processing issue #$issue_num"
+    echo "================================"
+    
+    worktree_dir="../worktree-issue-$issue_num"
+    
+    # Create worktree
+    if ! git worktree add "$worktree_dir" -b "fix/issue-$issue_num" 2>/dev/null; then
+        echo "Worktree already exists, skipping issue #$issue_num"
+        continue
+    fi
+    
+    cd "$worktree_dir"
+    
+    # Run setup
+    echo "Running setup..."
+    if ! bash "$SETUP_SCRIPT" 2>&1 | tee setup.log; then
+        echo "Setup failed for issue #$issue_num (see setup.log)"
+        cd "$REPO_DIR"
+        continue
+    fi
+    
+    # Get issue details
+    echo "Fetching issue details..."
+    issue_text=$(gh issue view "$issue_num" --json title,body -q '"Issue #" + (.number|tostring) + ": " + .title + "\n\n" + .body')
+    
+    # Initial attempt
+    echo "Generating initial fix..."
+    opencode run \
+        --attach http://localhost:4096 \
+        --model ollama/qwen3-coder:30b-16k \
+        --title "Fix issue #$issue_num" \
+        --continue \
+        "Analyze this repository and create a fix for the following issue. Make the necessary code changes and commit them with a conventional commit message.
+
+$issue_text"
+    
+    # Validation loop with retries
+    iteration=1
+    validation_passed=false
+    
+    while [ $iteration -le $MAX_ITERATIONS ]; do
+        echo ""
+        echo "Validating fix (attempt $iteration/$MAX_ITERATIONS)..."
+        
+        if validation_output=$(bash "$VALIDATE_SCRIPT" 2>&1); then
+            echo "✓ Issue #$issue_num: PASSED validation on attempt $iteration"
+            validation_passed=true
+            break
+        else
+            echo "✗ Validation failed (attempt $iteration/$MAX_ITERATIONS)"
+            
+            if [ $iteration -eq $MAX_ITERATIONS ]; then
+                echo "Max iterations reached. Giving up on issue #$issue_num"
+                echo "Validation output saved to validation.log"
+                echo "$validation_output" > validation.log
+                break
+            fi
+            
+            # Feed error back to model
+            echo "Sending validation errors back to model..."
+            opencode run \
+                --attach http://localhost:4096 \
+                --model ollama/qwen3-coder:30b-16k \
+                --continue \
+                "The validation failed with the following output. Please fix the issues and commit the changes:
+
+\`\`\`
+$validation_output
+\`\`\`"
+            
+            iteration=$((iteration + 1))
+        fi
+    done
+    
+    # Summary
+    if $validation_passed; then
+        echo ""
+        echo "✓ Issue #$issue_num completed successfully"
+        echo "  Branch: fix/issue-$issue_num"
+        echo "  Location: $worktree_dir"
+        echo "  Next steps:"
+        echo "    cd $worktree_dir"
+        echo "    git push -u origin fix/issue-$issue_num"
+        echo "    gh pr create --fill"
+    else
+        echo ""
+        echo "✗ Issue #$issue_num failed validation"
+        echo "  Location: $worktree_dir"
+        echo "  Review logs: setup.log, validation.log"
+    fi
+    
+    cd "$REPO_DIR"
+done
+
+echo ""
+echo "================================"
+echo "Batch processing complete!"
+echo "================================"
+echo ""
+echo "Review all worktrees with: git worktree list"
+echo ""
+echo "To create PRs for successful fixes:"
+echo "  for dir in ../worktree-issue-*; do"
+echo "    (cd \$dir && git push -u origin HEAD && gh pr create --fill)"
+echo "  done"

@@ -17,3 +17,7 @@ flatpak
 chromium
 qt6ct
 gnome-screenshot
+nvtop
+pandoc
+texlive-xetex
+xournalpp
