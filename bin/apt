@@ -1,0 +1,56 @@
+#!/bin/bash
+# Wrapper script for apt that logs explicitly installed packages
+
+LOGFILE="$HOME/packages.txt"
+packages=()
+is_install=false
+
+# Parse arguments to detect install command and extract package names
+for arg in "$@"; do
+    if [[ "$arg" == "install" || "$arg" == "reinstall" ]]; then
+        is_install=true
+        continue
+    fi
+    
+    # Skip flags and options
+    if [[ "$arg" == -* ]]; then
+        continue
+    fi
+    
+    # If we're in install mode and this isn't a flag, it's a package
+    if [[ "$is_install" == true ]]; then
+        packages+=("$arg")
+    fi
+done
+
+# Run the actual apt command
+/usr/bin/apt "$@"
+exit_code=$?
+
+# If install succeeded and we have packages, log them
+# Only log if we're the original user (not when running via sudo)
+if [[ $exit_code -eq 0 && ${#packages[@]} -gt 0 ]]; then
+    # Determine the actual user (handle sudo case)
+    ACTUAL_USER="${SUDO_USER:-$USER}"
+    ACTUAL_HOME=$(getent passwd "$ACTUAL_USER" | cut -d: -f6)
+    ACTUAL_LOGFILE="$ACTUAL_HOME/packages.txt"
+    
+    touch "$ACTUAL_LOGFILE"
+    for pkg in "${packages[@]}"; do
+        # Remove version specifiers (e.g., package=version)
+        pkg="${pkg%%=*}"
+        # Add if not already present
+        if ! grep -qxF "$pkg" "$ACTUAL_LOGFILE"; then
+            echo "$pkg" >> "$ACTUAL_LOGFILE"
+        fi
+    done
+    # Sort and deduplicate
+    sort -u "$ACTUAL_LOGFILE" -o "$ACTUAL_LOGFILE"
+    
+    # Fix ownership if running via sudo
+    if [[ -n "$SUDO_USER" ]]; then
+        chown "$SUDO_USER:$SUDO_USER" "$ACTUAL_LOGFILE"
+    fi
+fi
+
+exit $exit_code
