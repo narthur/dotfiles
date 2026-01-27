@@ -21,6 +21,7 @@ aliases:
     watch-prs: '!watch -n 10 gh pr list'
     delegate: issue edit $@ --add-assignee @copilot
     open-stale: '!gh issue view $(gh issue list --search "sort:updated-asc -label:snooze" --limit 1 --json number --jq ".[0].number") --web'
+    pp: issue list -R borntogrow/seedtime --label "paul priority" --state open
 # The path to a unix socket through which to send HTTP connections. If blank, HTTP traffic will be handled by net/http.DefaultTransport.
 http_unix_socket:
 # What web browser gh should use when opening URLs. If blank, will refer to environment.

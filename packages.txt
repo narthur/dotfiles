@@ -19,6 +19,7 @@ postfix
 python3-venv
 qt6ct
 rofi
+shfmt
 taskwarrior
 texlive-xetex
 xournalpp
