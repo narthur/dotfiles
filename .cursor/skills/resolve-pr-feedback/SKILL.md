@@ -13,8 +13,12 @@ Check the current git branch to determine which feedback command to use:
 git branch --show-current
 ```
 
-- If branch is `gitbutler/workspace` → use `but-feedback`
-- Otherwise → use `pr-feedback`
+- If branch is `gitbutler/workspace` → use `but-feedback` and GitButler commands
+- Otherwise → use `pr-feedback` and standard git commands
+
+### GitButler Virtual Branches
+
+When in a GitButler workspace, multiple virtual branches can be applied to the working tree simultaneously. Use `but status` to see all virtual branches. The branch associated with the PR will typically have a name matching the PR's source branch. The `but-feedback` command output includes the branch name to help identify the correct virtual branch for committing.
 
 ## Workflow
 
@@ -64,7 +68,12 @@ Adjust options based on context (e.g., offer "Create follow-up issue" when the f
 **Option 1 - Fix, resolve, and commit:**
 1. Implement the code fix
 2. Run `resolve-feedback <thread-id>`
-3. Stage and commit changes using conventional commit format (see below)
+3. Stage and commit changes using conventional commit format (see below):
+   - **GitButler workspace**: 
+     1. Run `but status` to see virtual branches and identify the one associated with the PR
+     2. Stage changed files to the branch: `but rub <file> <branch-name>`
+     3. Commit to the branch: `but commit <branch-name> -m "..."`
+   - **Standard git workflow**: Use `git add` and `git commit -m "..."`
 4. Return to Step 1 for next feedback item
 
 **Option 4 - Create follow-up issue:**
@@ -113,3 +122,13 @@ The scope should reflect the area of code changed (e.g., module name, feature ar
 | `resolve-feedback <thread-id>` | Mark a feedback thread as resolved |
 | `gh issue create --title "..." --body "..."` | Create a follow-up GitHub issue |
 | `pr-comment "<message>"` | Add a comment to the current PR |
+
+### Git Operations by Workspace Type
+
+| Operation | GitButler Workspace | Standard Git |
+|-----------|---------------------|--------------|
+| Check status/branches | `but status` | `git status` |
+| Stage file to branch | `but rub <file> <branch>` | `git add <file>` |
+| Commit to branch | `but commit <branch> -m "..."` | `git commit -m "..."` |
+
+**Important**: Always use the appropriate commands based on the detected workspace type. GitButler allows multiple virtual branches to be applied to the working tree simultaneously. Use `but status` to see all virtual branches and identify the one associated with the PR whose feedback is being resolved. Then use `but rub` to stage files and `but commit <branch>` to commit to that specific virtual branch. Using `git commit` directly in a GitButler workspace will bypass virtual branch management.
