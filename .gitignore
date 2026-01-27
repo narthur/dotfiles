@@ -25,6 +25,9 @@
 !.config/rofimoji.rc
 !.cursor/
 !.cursor/mcp.json
+!.cursor/skills/
+!.cursor/skills/resolve-pr-feedback/
+!.cursor/skills/resolve-pr-feedback/SKILL.md
 !.gitconfig
 !.gitignore
 !.gitignore_global
