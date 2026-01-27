@@ -1,0 +1,29 @@
+---
+description: Use test-driven development when the project has testing set up
+alwaysApply: true
+---
+
+# Test-Driven Development
+
+When a project has testing infrastructure (test files, test config, or test dependencies), use TDD:
+
+1. **Write a failing test first** that demonstrates the expected behavior
+2. **Run the test** to confirm it fails for the right reason
+3. **Implement the fix** with minimal code to make the test pass
+4. **Run tests again** to verify the fix works
+
+## When to Apply
+
+- Bug fixes: Write a test that reproduces the bug before fixing
+- New features: Write tests for expected behavior before implementation
+- Refactoring: Ensure existing tests pass, add tests for edge cases
+
+## Example Workflow
+
+```bash
+# 1. Create failing test
+# 2. Run: pnpm test path/to/test.spec.ts  (confirm failure)
+# 3. Implement fix
+# 4. Run: pnpm test path/to/test.spec.ts  (confirm pass)
+# 5. Run: pnpm test  (confirm no regressions)
+```
