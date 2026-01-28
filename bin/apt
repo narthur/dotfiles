@@ -19,6 +19,10 @@ for arg in "$@"; do
     
     # If we're in install mode and this isn't a flag, it's a package
     if [[ "$is_install" == true ]]; then
+        # Skip local .deb files (paths containing / or ending in .deb)
+        if [[ "$arg" == */* || "$arg" == *.deb ]]; then
+            continue
+        fi
         packages+=("$arg")
     fi
 done
