@@ -15,6 +15,7 @@ nvitop
 nvtop
 pandoc
 pipx
+podman-docker
 postfix
 python3-venv
 qt6ct
