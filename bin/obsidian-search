@@ -1,0 +1,99 @@
+#!/bin/bash
+# Search Obsidian vault using Omnisearch plugin API
+
+OMNISEARCH_PORT="${OMNISEARCH_PORT:-51361}"
+OMNISEARCH_URL="http://localhost:${OMNISEARCH_PORT}/search"
+
+# Search query from arguments
+query="$*"
+
+if [ -z "$query" ]; then
+    echo "Usage: $0 <search query>"
+    echo ""
+    echo "Search your Obsidian vault using the Omnisearch plugin."
+    echo ""
+    echo "Make sure:"
+    echo "  1. Obsidian is running"
+    echo "  2. Omnisearch plugin is installed and enabled"
+    echo "  3. Omnisearch HTTP server is enabled (Settings > Omnisearch > HTTP Server)"
+    echo ""
+    echo "You can set a custom port with: OMNISEARCH_PORT=12345 $0 <query>"
+    exit 1
+fi
+
+# Query Omnisearch API
+response=$(curl -s "${OMNISEARCH_URL}?q=$(printf '%s' "$query" | jq -sRr @uri)")
+
+# Check if curl succeeded and server is reachable
+if [ $? -ne 0 ] || [ -z "$response" ]; then
+    echo "Error: Could not connect to Omnisearch server at ${OMNISEARCH_URL}"
+    echo ""
+    echo "Make sure:"
+    echo "  1. Obsidian is running"
+    echo "  2. Omnisearch plugin is installed and enabled"
+    echo "  3. Omnisearch HTTP server is enabled (Settings > Omnisearch > HTTP Server)"
+    echo "  4. The server port is ${OMNISEARCH_PORT} (or set OMNISEARCH_PORT)"
+    exit 1
+fi
+
+# Check if response is valid JSON and not an error
+if ! echo "$response" | jq empty 2>/dev/null; then
+    echo "Error: Invalid response from Omnisearch server"
+    echo "Response: $response"
+    exit 1
+fi
+
+# Check if we got any results
+result_count=$(echo "$response" | jq 'length')
+if [ "$result_count" -eq 0 ]; then
+    echo "No results found for: $query"
+    exit 0
+fi
+
+# Format results for fzf with better visual structure and colors
+# Clean HTML tags, truncate long excerpts, format nicely
+
+# Extract data with jq, then add colors with awk using octal escape sequences
+formatted_results=$(echo "$response" | jq -r '
+  to_entries | .[] | 
+  (.value.excerpt // "No preview" | 
+   gsub("<[^>]*>"; "") |  # Remove HTML tags
+   gsub("\\s+"; " ") |     # Normalize whitespace
+   if length > 80 then .[0:77] + "..." else . end) as $excerpt |
+  # Format: index|basename|path|excerpt|vault (no colors yet)
+  "\(.key)|\(.value.basename)|\(.value.path)|\($excerpt)|\(.value.vault)"
+' | awk -F'|' 'BEGIN {
+    cyan = "\033[1;36m"
+    gray_dim = "\033[2;90m"
+    gray = "\033[0;90m"
+    reset = "\033[0m"
+  }
+  {
+    # Build colored display line: "filename (path) — excerpt"
+    # Format: index|display_line|basename|path|excerpt|vault
+    printf "%s|%s%s%s %s(%s)%s %s—%s %s|%s|%s|%s|%s\n", 
+      $1, cyan, $2, reset, gray_dim, $3, reset, gray, reset, $4, $2, $3, $4, $5
+  }')
+
+# Let user select a result
+# Display: basename (path) — excerpt preview
+selected=$(echo "$formatted_results" | fzf --ansi \
+    --delimiter '|' \
+    --with-nth 2 \
+    --preview 'echo -e "\033[1;34mFile:\033[0m {3}\n\033[1;34mPath:\033[0m {4}\n\033[1;34mVault:\033[0m {6}\n\n\033[1;34mPreview:\033[0m\n{5}"' \
+    --preview-window=down:8:wrap \
+    --header "Found $result_count result(s) for: $query" \
+    --bind 'ctrl-/:toggle-preview' \
+    --layout=reverse)
+
+if [ -z "$selected" ]; then
+    exit 0
+fi
+
+# Extract vault and path from selected result (format: "index|display_line|basename|path|excerpt|vault")
+vault=$(echo "$selected" | cut -d'|' -f6)
+path=$(echo "$selected" | cut -d'|' -f4)
+
+# Open in Obsidian using obsidian:// URL scheme
+obsidian_url="obsidian://open?vault=$(printf '%s' "$vault" | jq -sRr @uri)&file=$(printf '%s' "$path" | jq -sRr @uri)"
+xdg-open "$obsidian_url" 2>/dev/null || open "$obsidian_url" 2>/dev/null || echo "Please open: $obsidian_url"
