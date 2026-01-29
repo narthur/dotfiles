@@ -79,7 +79,7 @@ Adjust options based on context (e.g., offer "Create follow-up issue" when the f
 **Option 4 - Create follow-up issue:**
 1. Create issue: `gh issue create --title "<title>" --body "<description>"`
 2. Capture the issue number from output
-3. Comment on PR: `pr-comment "Created follow-up issue #<number> to address this feedback"`
+3. Reply to thread: `pr-comment <thread-id> "Created follow-up issue #<number> to address this feedback"`
 4. Resolve the thread: `resolve-feedback <thread-id>`
 5. Return to Step 1 for next feedback item
 
@@ -121,7 +121,8 @@ The scope should reflect the area of code changed (e.g., module name, feature ar
 | `pr-feedback [--limit N] [--all]` | Retrieve standard PR feedback |
 | `resolve-feedback <thread-id>` | Mark a feedback thread as resolved |
 | `gh issue create --title "..." --body "..."` | Create a follow-up GitHub issue |
-| `pr-comment "<message>"` | Add a comment to the current PR |
+| `pr-comment <thread-id> <comment-text>` | Reply to a specific PR review thread |
+| `pr-comment <thread-id>` | Reply to a thread (prompts for comment in $EDITOR) |
 
 ### Git Operations by Workspace Type
 
