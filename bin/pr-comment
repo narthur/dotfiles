@@ -67,30 +67,8 @@ EOF
   fi
 fi
 
-# Get current PR number
-PR_INFO=$(gh pr view --json number 2>&1) || {
-  echo "Error: No pull request found for current branch." >&2
-  echo "Make sure you're on a branch with an associated PR." >&2
-  exit 1
-}
-
-PR_NUMBER=$(echo "$PR_INFO" | jq -r '.number')
-
-if [[ "$PR_NUMBER" == "null" ]] || [[ -z "$PR_NUMBER" ]]; then
-  echo "Error: Could not determine PR number." >&2
-  exit 1
-fi
-
-# Get repository owner and name
-REPO_INFO=$(gh repo view --json owner,name 2>&1) || {
-  echo "Error: Could not determine repository information." >&2
-  exit 1
-}
-
-OWNER=$(echo "$REPO_INFO" | jq -r '.owner.login')
-REPO=$(echo "$REPO_INFO" | jq -r '.name')
-
 # Post comment using GraphQL mutation
+# Note: The mutation only needs thread ID and body - no PR/repo info required
 MUTATION='mutation($threadId: ID!, $body: String!) {
   addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: $threadId, body: $body}) {
     comment {
