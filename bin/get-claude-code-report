@@ -166,14 +166,31 @@ case "${1:-summary}" in
         done
         ;;
     
-    *)
-        echo "Usage: $0 [summary|all|repo <path>|list]"
+    help|--help|-h)
+        echo "get-claude-code-report - Display Claude Code token usage statistics"
+        echo ""
+        echo "Usage: get-claude-code-report [COMMAND] [ARGS]"
         echo ""
         echo "Commands:"
-        echo "  summary     Show token usage per repository (default)"
-        echo "  all         Show combined token usage across all repositories"
-        echo "  repo <path> Show token usage for specific repository"
-        echo "  list        List all repositories with logged data"
+        echo "  summary (default)    Show per-repository usage grouped by client"
+        echo "  all                  Show combined totals across all repositories"
+        echo "  repo <path>          Show usage for a specific repository"
+        echo "  list                 List all tracked repositories"
+        echo ""
+        echo "Token rates used for effective billable calculation:"
+        echo "  Input tokens:         1.0x"
+        echo "  Output tokens:        3.0x"
+        echo "  Cache creation:       1.25x"
+        echo "  Cache read:           0.1x (90% discount)"
+        echo ""
+        echo "Data location: $log_dir"
+        echo "Client mapping: $HOME/.claude/client-mapping.json"
+        exit 0
+        ;;
+    
+    *)
+        echo "Error: Unknown command '$1'"
+        echo "Run 'get-claude-code-report help' for usage information."
         exit 1
         ;;
 esac
