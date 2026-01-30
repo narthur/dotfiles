@@ -14,5 +14,6 @@
 [core]
 	excludesfile = /home/narthur/.gitignore_global
 	editor = nano
+	hooksPath = /home/narthur/.git-hooks
 [pull]
 	rebase = true
