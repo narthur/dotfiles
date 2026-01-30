@@ -1,0 +1,35 @@
+---
+description: Use GitButler's but CLI for branching and committing when the user or repo uses GitButler
+alwaysApply: true
+---
+
+# GitButler (but CLI)
+
+**`but`** is GitButler's CLI for managing virtual/stacked branches. Use it instead of raw `git` when:
+
+- The user asks to use "but" or "GitButler"
+- Organizing changes into multiple branches (e.g. splitting lint fixes into separate branches)
+- The workspace shows GitButler branches (e.g. `gitbutler/workspace`)
+
+## Key commands
+
+- **Status:** `but status` — see unstaged changes and which branch each is staged to. Use `but status -v` for more detail.
+- **Create branch:** `but branch new <name>` — e.g. `but branch new fix/lint-config`
+- **Stage to branch:** `but stage <file-or-hunk> <branch>` — stage a file or hunk ID to a branch. Examples:
+  - `but stage path/to/file.ts fix/lint-config`
+  - `but stage g1 fix/lint-empty-blocks` (hunk IDs from `but diff`)
+- **Commit:** `but commit -o -m "message" <branch>` — commit only what's staged to that branch (`-o` = staged only). Use conventional commit messages.
+- **Diff:** `but diff` — show uncommitted changes with hunk IDs for precise staging.
+
+## Workflow for splitting changes into branches
+
+1. Run `but status` to see modified files.
+2. Create branches with `but branch new <name>`.
+3. Stage files (or hunks) to the right branch with `but stage <file> <branch>`.
+4. Commit each branch: `but commit -o -m "type(scope): description" <branch>`.
+
+## Notes
+
+- Branches are stacked on the common base; "Applied Branches" in `but branch list` are the current stack.
+- Use `but push <branch>` to push, `but pr` for pull requests.
+- If the user says "git" or only "branch/commit" without mentioning but, use normal `git` unless the repo is clearly using GitButler.

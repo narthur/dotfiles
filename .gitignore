@@ -27,6 +27,7 @@
 !.cursor/mcp.json
 !.cursor/rules/
 !.cursor/rules/conventional-commits.mdc
+!.cursor/rules/gitbutler.mdc
 !.cursor/rules/test-driven-development.mdc
 !.cursor/skills/
 !.cursor/skills/resolve-pr-feedback/
