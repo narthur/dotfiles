@@ -65,39 +65,49 @@ timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 repo_slug=$(echo "$repo_path" | sed 's|/|_|g' | sed 's|^_||')
 repo_log="$log_dir/${repo_slug}.jsonl"
 
-# Create log entry
-log_entry=$(jq -n \
-    --arg timestamp "$timestamp" \
-    --arg session_id "$session_id" \
-    --arg repo_path "$repo_path" \
-    --arg client "$client" \
-    --arg reason "$reason" \
-    --arg model "$model" \
-    --argjson input_tokens "$input_tokens" \
-    --argjson output_tokens "$output_tokens" \
-    --argjson cache_creation "$cache_creation_tokens" \
-    --argjson cache_read "$cache_read_tokens" \
-    --argjson total "$total_tokens" \
-    '{
-        timestamp: $timestamp,
-        session_id: $session_id,
-        repo_path: $repo_path,
-        client: $client,
-        reason: $reason,
-        model: $model,
-        tokens: {
-            input: $input_tokens,
-            output: $output_tokens,
-            cache_creation: $cache_creation,
-            cache_read: $cache_read,
-            total: $total
-        }
-    }')
-
-# Append to log file
-echo "$log_entry" >> "$repo_log"
-
-# Also append to global log
-echo "$log_entry" >> "$log_dir/all-repos.jsonl"
+# Create one log entry per model used in the session
+echo "$usage_by_model" | jq -c '.[]' | while read -r model_usage; do
+    model=$(echo "$model_usage" | jq -r '.model')
+    input_tokens=$(echo "$model_usage" | jq -r '.tokens.input')
+    output_tokens=$(echo "$model_usage" | jq -r '.tokens.output')
+    cache_creation_tokens=$(echo "$model_usage" | jq -r '.tokens.cache_creation')
+    cache_read_tokens=$(echo "$model_usage" | jq -r '.tokens.cache_read')
+    total_tokens=$((input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens))
+    
+    # Create log entry
+    log_entry=$(jq -n \
+        --arg timestamp "$timestamp" \
+        --arg session_id "$session_id" \
+        --arg repo_path "$repo_path" \
+        --arg client "$client" \
+        --arg reason "$reason" \
+        --arg model "$model" \
+        --argjson input_tokens "$input_tokens" \
+        --argjson output_tokens "$output_tokens" \
+        --argjson cache_creation "$cache_creation_tokens" \
+        --argjson cache_read "$cache_read_tokens" \
+        --argjson total "$total_tokens" \
+        '{
+            timestamp: $timestamp,
+            session_id: $session_id,
+            repo_path: $repo_path,
+            client: $client,
+            reason: $reason,
+            model: $model,
+            tokens: {
+                input: $input_tokens,
+                output: $output_tokens,
+                cache_creation: $cache_creation,
+                cache_read: $cache_read,
+                total: $total
+            }
+        }')
+    
+    # Append to log file
+    echo "$log_entry" >> "$repo_log"
+    
+    # Also append to global log
+    echo "$log_entry" >> "$log_dir/all-repos.jsonl"
+done
 
 exit 0

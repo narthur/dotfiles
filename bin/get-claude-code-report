@@ -139,6 +139,97 @@ case "${1:-summary}" in
         show_stats "$log_dir/all-repos.jsonl"
         ;;
     
+    client)
+        if [ -z "$2" ]; then
+            echo "Usage: $0 client <name>"
+            exit 1
+        fi
+        
+        client_name=$(echo "$2" | tr '[:upper:]' '[:lower:]')
+        
+        if [ ! -f "$log_dir/all-repos.jsonl" ]; then
+            echo "No token usage data found yet."
+            exit 1
+        fi
+        
+        # Check if client exists
+        if ! jq -r '.client // "unknown"' "$log_dir/all-repos.jsonl" | tr '[:upper:]' '[:lower:]' | grep -qx "$client_name"; then
+            echo "No data found for client: $2"
+            echo ""
+            echo "Available clients:"
+            jq -r '.client // "unknown"' "$log_dir/all-repos.jsonl" | tr '[:upper:]' '[:lower:]' | sort -u | sed 's/^/  /'
+            exit 1
+        fi
+        
+        echo "═══════════════════════════════════════════════════"
+        echo "Client: $client_name"
+        echo "═══════════════════════════════════════════════════"
+        echo ""
+        
+        # Show all repos for this client
+        for file in "$log_dir"/*.jsonl; do
+            if [ "$(basename "$file")" != "all-repos.jsonl" ]; then
+                repo_client=$(jq -r '.[0].client // "unknown"' <(jq -s '.' "$file") | tr '[:upper:]' '[:lower:]')
+                if [ "$repo_client" = "$client_name" ]; then
+                    show_stats "$file"
+                fi
+            fi
+        done
+        
+        # Show breakdown by model for this client
+        echo "═══════════════════════════════════════════════════"
+        echo "Usage by Model for client: $client_name"
+        echo "═══════════════════════════════════════════════════"
+        echo ""
+        
+        jq -s 'map(.client |= (. // "unknown" | ascii_downcase)) | map(select(.client == "'$client_name'")) | group_by(.model) | map({model: .[0].model, sessions: length, tokens: {input: (map(.tokens.input) | add), output: (map(.tokens.output) | add), cache_creation: (map(.tokens.cache_creation) | add), cache_read: (map(.tokens.cache_read) | add), total: (map(.tokens.total) | add)}})' "$log_dir/all-repos.jsonl" 2>/dev/null | jq -c '.[]' | while read -r line; do
+            model_name=$(echo "$line" | jq -r '.model')
+            sessions=$(echo "$line" | jq -r '.sessions')
+            total=$(echo "$line" | jq -r '.tokens.total')
+            input=$(echo "$line" | jq -r '.tokens.input')
+            output=$(echo "$line" | jq -r '.tokens.output')
+            cache_creation=$(echo "$line" | jq -r '.tokens.cache_creation')
+            cache_read=$(echo "$line" | jq -r '.tokens.cache_read')
+            effective=$(echo "$input + ($output * 3) + ($cache_creation * 1.25) + ($cache_read * 0.1)" | bc)
+            
+            echo "Model: $model_name"
+            echo "  Sessions: $sessions"
+            echo "  Total tokens: $total"
+            echo "  - Input: $input"
+            echo "  - Output: $output"
+            echo "  - Cache creation: $cache_creation"
+            echo "  - Cache read: $cache_read"
+            printf "  Effective billable: %.0f\n" "$effective"
+            echo ""
+        done
+        
+        # Show client totals
+        echo "═══════════════════════════════════════════════════"
+        echo "Total for client: $client_name"
+        echo "═══════════════════════════════════════════════════"
+        echo ""
+        
+        jq -s 'map(.client |= (. // "unknown" | ascii_downcase)) | map(select(.client == "'$client_name'")) | {sessions: length, tokens: {input: (map(.tokens.input) | add), output: (map(.tokens.output) | add), cache_creation: (map(.tokens.cache_creation) | add), cache_read: (map(.tokens.cache_read) | add), total: (map(.tokens.total) | add)}}' "$log_dir/all-repos.jsonl" | jq -r 'to_entries | map("\(.key): \(.value)") | .[]' | while IFS=': ' read -r key value; do
+            if [ "$key" = "sessions" ]; then
+                echo "Sessions: $value"
+            elif [ "$key" = "tokens" ]; then
+                input=$(echo "$value" | jq -r '.input')
+                output=$(echo "$value" | jq -r '.output')
+                cache_creation=$(echo "$value" | jq -r '.cache_creation')
+                cache_read=$(echo "$value" | jq -r '.cache_read')
+                total=$(echo "$value" | jq -r '.total')
+                effective=$(echo "$input + ($output * 3) + ($cache_creation * 1.25) + ($cache_read * 0.1)" | bc)
+                
+                echo "Total tokens: $total"
+                echo "  - Input: $input"
+                echo "  - Output: $output"
+                echo "  - Cache creation: $cache_creation"
+                echo "  - Cache read: $cache_read"
+                printf "Effective billable tokens: %.0f\n" "$effective"
+            fi
+        done
+        ;;
+    
     repo)
         if [ -z "$2" ]; then
             echo "Usage: $0 repo <path>"
@@ -174,6 +265,7 @@ case "${1:-summary}" in
         echo "Commands:"
         echo "  summary (default)    Show per-repository usage grouped by client"
         echo "  all                  Show combined totals across all repositories"
+        echo "  client <name>        Show usage for a specific client"
         echo "  repo <path>          Show usage for a specific repository"
         echo "  list                 List all tracked repositories"
         echo ""
