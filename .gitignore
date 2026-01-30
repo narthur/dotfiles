@@ -2,6 +2,9 @@
 !.bashrc
 !.Brewfile
 !.claude/
+!.claude/hooks/
+!.claude/hooks/track-tokens.sh
+!.claude/settings.json
 !.claude/skills/
 !.claude/skills/split-pr/
 !.claude/skills/split-pr/SKILL.md

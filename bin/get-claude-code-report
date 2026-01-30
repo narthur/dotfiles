@@ -1,0 +1,179 @@
+#!/bin/bash
+# View Claude Code token usage statistics
+
+log_dir="$HOME/.claude/token-usage"
+
+# Check if log directory exists
+if [ ! -d "$log_dir" ]; then
+    echo "No token usage data found yet."
+    exit 0
+fi
+
+# Function to display stats for a file
+show_stats() {
+    local file="$1"
+    local basename=$(basename "$file" .jsonl)
+    
+    if [ ! -f "$file" ] || [ ! -s "$file" ]; then
+        return
+    fi
+    
+    # Calculate totals
+    local total_input=$(jq -s 'map(.tokens.input) | add' "$file")
+    local total_output=$(jq -s 'map(.tokens.output) | add' "$file")
+    local total_cache_creation=$(jq -s 'map(.tokens.cache_creation) | add' "$file")
+    local total_cache_read=$(jq -s 'map(.tokens.cache_read) | add' "$file")
+    local total_all=$(jq -s 'map(.tokens.total) | add' "$file")
+    local session_count=$(jq -s 'length' "$file")
+    
+    # Get repo path from first entry
+    local repo_path=$(jq -r '.[0].repo_path' <(jq -s '.' "$file"))
+    
+    # Calculate effective billable tokens
+    # Input: 1x, Output: 3x, Cache creation: 1.25x, Cache read: 0.1x
+    local effective_billable=$(echo "$total_input + ($total_output * 3) + ($total_cache_creation * 1.25) + ($total_cache_read * 0.1)" | bc)
+    
+    echo "Repository: $repo_path"
+    echo "Sessions: $session_count"
+    echo "Total tokens: $total_all"
+    echo "  - Input: $total_input"
+    echo "  - Output: $total_output"
+    echo "  - Cache creation: $total_cache_creation"
+    echo "  - Cache read: $total_cache_read"
+    printf "Effective billable tokens: %.0f (at typical rates: input=1x, output=3x, cache_creation=1.25x, cache_read=0.1x)\n" "$effective_billable"
+    echo ""
+}
+
+# Parse arguments
+case "${1:-summary}" in
+    summary)
+        echo "=== Claude Code Token Usage Summary ==="
+        echo ""
+        
+        # Show repositories grouped by client
+        if [ -f "$log_dir/all-repos.jsonl" ] && [ -s "$log_dir/all-repos.jsonl" ]; then
+            # Get unique clients (normalized to lowercase)
+            clients=$(jq -r '.client // "unknown"' "$log_dir/all-repos.jsonl" | tr '[:upper:]' '[:lower:]' | sort -u)
+            
+            while IFS= read -r client_name; do
+                echo "════════════════════════════════════════════════"
+                echo "Client: $client_name"
+                echo "════════════════════════════════════════════════"
+                echo ""
+                
+                # Show repos for this client
+                for file in "$log_dir"/*.jsonl; do
+                    if [ "$(basename "$file")" != "all-repos.jsonl" ]; then
+                        # Check if this repo belongs to this client
+                        repo_client=$(jq -r '.[0].client // "unknown"' <(jq -s '.' "$file") | tr '[:upper:]' '[:lower:]')
+                        if [ "$repo_client" = "$client_name" ]; then
+                            show_stats "$file"
+                        fi
+                    fi
+                done
+            done <<< "$clients"
+        else
+            for file in "$log_dir"/*.jsonl; do
+                if [ "$(basename "$file")" != "all-repos.jsonl" ]; then
+                    show_stats "$file"
+                fi
+            done
+        fi
+        
+        # Show breakdown by model
+        echo "=== Usage by Model ==="
+        echo ""
+        if [ -f "$log_dir/all-repos.jsonl" ] && [ -s "$log_dir/all-repos.jsonl" ]; then
+            jq -s 'group_by(.model) | map({model: .[0].model, sessions: length, tokens: {input: (map(.tokens.input) | add), output: (map(.tokens.output) | add), cache_creation: (map(.tokens.cache_creation) | add), cache_read: (map(.tokens.cache_read) | add), total: (map(.tokens.total) | add)}})' "$log_dir/all-repos.jsonl" 2>/dev/null | jq -c '.[]' | while read -r line; do
+                model_name=$(echo "$line" | jq -r '.model')
+                sessions=$(echo "$line" | jq -r '.sessions')
+                total=$(echo "$line" | jq -r '.tokens.total')
+                input=$(echo "$line" | jq -r '.tokens.input')
+                output=$(echo "$line" | jq -r '.tokens.output')
+                cache_creation=$(echo "$line" | jq -r '.tokens.cache_creation')
+                cache_read=$(echo "$line" | jq -r '.tokens.cache_read')
+                effective=$(echo "$input + ($output * 3) + ($cache_creation * 1.25) + ($cache_read * 0.1)" | bc)
+                
+                echo "Model: $model_name"
+                echo "  Sessions: $sessions"
+                echo "  Total tokens: $total"
+                echo "  - Input: $input"
+                echo "  - Output: $output"
+                echo "  - Cache creation: $cache_creation"
+                echo "  - Cache read: $cache_read"
+                printf "  Effective billable: %.0f\n" "$effective"
+                echo ""
+            done
+        fi
+        
+        # Show breakdown by client
+        echo "=== Usage by Client ==="
+        echo ""
+        if [ -f "$log_dir/all-repos.jsonl" ] && [ -s "$log_dir/all-repos.jsonl" ]; then
+            jq -s 'map(.client |= (. // "unknown" | ascii_downcase)) | group_by(.client) | map({client: .[0].client, sessions: length, tokens: {input: (map(.tokens.input) | add), output: (map(.tokens.output) | add), cache_creation: (map(.tokens.cache_creation) | add), cache_read: (map(.tokens.cache_read) | add), total: (map(.tokens.total) | add)}})' "$log_dir/all-repos.jsonl" 2>/dev/null | jq -c '.[]' | while read -r line; do
+                client_name=$(echo "$line" | jq -r '.client')
+                sessions=$(echo "$line" | jq -r '.sessions')
+                total=$(echo "$line" | jq -r '.tokens.total')
+                input=$(echo "$line" | jq -r '.tokens.input')
+                output=$(echo "$line" | jq -r '.tokens.output')
+                cache_creation=$(echo "$line" | jq -r '.tokens.cache_creation')
+                cache_read=$(echo "$line" | jq -r '.tokens.cache_read')
+                effective=$(echo "$input + ($output * 3) + ($cache_creation * 1.25) + ($cache_read * 0.1)" | bc)
+                
+                echo "Client: $client_name"
+                echo "  Sessions: $sessions"
+                echo "  Total tokens: $total"
+                echo "  - Input: $input"
+                echo "  - Output: $output"
+                echo "  - Cache creation: $cache_creation"
+                echo "  - Cache read: $cache_read"
+                printf "  Effective billable: %.0f\n" "$effective"
+                echo ""
+            done
+        fi
+        ;;
+    
+    all)
+        echo "=== All Repositories Combined ==="
+        echo ""
+        show_stats "$log_dir/all-repos.jsonl"
+        ;;
+    
+    repo)
+        if [ -z "$2" ]; then
+            echo "Usage: $0 repo <path>"
+            exit 1
+        fi
+        repo_slug=$(echo "$2" | sed 's|/|_|g' | sed 's|^_||')
+        repo_file="$log_dir/${repo_slug}.jsonl"
+        
+        if [ ! -f "$repo_file" ]; then
+            echo "No data found for repository: $2"
+            exit 1
+        fi
+        
+        show_stats "$repo_file"
+        ;;
+    
+    list)
+        echo "=== Available Repository Logs ==="
+        echo ""
+        for file in "$log_dir"/*.jsonl; do
+            if [ "$(basename "$file")" != "all-repos.jsonl" ]; then
+                repo_path=$(jq -r '.[0].repo_path' <(jq -s '.' "$file"))
+                echo "$repo_path"
+            fi
+        done
+        ;;
+    
+    *)
+        echo "Usage: $0 [summary|all|repo <path>|list]"
+        echo ""
+        echo "Commands:"
+        echo "  summary     Show token usage per repository (default)"
+        echo "  all         Show combined token usage across all repositories"
+        echo "  repo <path> Show token usage for specific repository"
+        echo "  list        List all repositories with logged data"
+        exit 1
+        ;;
+esac
