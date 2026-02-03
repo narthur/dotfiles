@@ -1,0 +1,7 @@
+#!/bin/bash
+
+curl -fsSL https://cli.coderabbit.ai/install.sh | sh
+coderabbit auth login
+
+echo "Optionally, install the Claude Code plugin:"
+echo "https://docs.coderabbit.ai/cli/claude-code-integration"

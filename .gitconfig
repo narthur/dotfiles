@@ -17,3 +17,5 @@
 	hooksPath = /home/narthur/.git-hooks
 [pull]
 	rebase = true
+[coderabbit]
+	machineId = cli/dba8a0bf170b4357bb2e4a1886b49777
