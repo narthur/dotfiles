@@ -1,0 +1,120 @@
+#!/bin/bash
+
+# Scan documents to PDF
+# Usage: scan [filename]
+#        scan --append
+# If no filename provided, uses timestamp
+# --append: Append to the most recent scan
+
+set -e
+
+# Load environment variables
+if [ -f "$HOME/.env" ]; then
+    source "$HOME/.env"
+fi
+
+if [ -z "$BROTHER_SCAN_DIR" ]; then
+    echo "Error: BROTHER_SCAN_DIR environment variable is not set"
+    echo "Please set it in ~/.env"
+    exit 1
+fi
+
+SCAN_DIR="$BROTHER_SCAN_DIR"
+APPEND_MODE=false
+
+# Check for --append flag
+if [ "$1" = "--append" ]; then
+    APPEND_MODE=true
+    # Find the most recent PDF in scan directory
+    LAST_SCAN=$(ls -t "$SCAN_DIR"/*.pdf 2>/dev/null | head -n1)
+    if [ -z "$LAST_SCAN" ]; then
+        echo "Error: No previous scans found to append to"
+        exit 1
+    fi
+    OUTPUT_PATH="$LAST_SCAN"
+    echo "Appending to: $OUTPUT_PATH"
+else
+    # Generate filename
+    if [ -z "$1" ]; then
+        FILENAME="scan_$(date +%Y%m%d_%H%M%S).pdf"
+    else
+        FILENAME="$1"
+        # Add .pdf extension if not present
+        if [[ ! "$FILENAME" =~ \.pdf$ ]]; then
+            FILENAME="${FILENAME}.pdf"
+        fi
+    fi
+    OUTPUT_PATH="${SCAN_DIR}/${FILENAME}"
+fi
+
+echo "Scanning to: $OUTPUT_PATH"
+
+# Create temporary files
+TEMP_TIFF=$(mktemp --suffix=.tiff)
+TEMP_PDF=$(mktemp --suffix=.pdf)
+
+# Cleanup on exit
+trap "rm -f '$TEMP_TIFF'*.tiff '$TEMP_PDF'" EXIT
+
+# Scan to TIFF
+echo "Scanning..."
+scanimage --resolution 300 --source 'Automatic Document Feeder(left aligned,Duplex)' --AutoDocumentSize=yes --AutoDeskew=yes --format=tiff --batch="$TEMP_TIFF-%d.tiff"
+
+# Convert to PDF
+echo "Converting to PDF..."
+
+# Auto-detect if grayscale and convert if needed, and remove blank pages
+KEPT_PAGES=()
+for tiff in "$TEMP_TIFF"*.tiff; do
+    # Check if page is blank by calculating mean pixel intensity
+    # Blank pages will have very high mean (close to white) or very low variance
+    MEAN=$(convert "$tiff" -colorspace Gray -format "%[fx:mean]" info:)
+    STDDEV=$(convert "$tiff" -colorspace Gray -format "%[fx:standard_deviation]" info:)
+    
+    # If mean > 0.98 (very white) and stddev < 0.02 (very uniform), it's likely blank
+    IS_BLANK=$(echo "$MEAN > 0.98 && $STDDEV < 0.02" | bc -l)
+    
+    if [ "$IS_BLANK" -eq 1 ]; then
+        echo "Skipping blank page: $(basename "$tiff")"
+        continue
+    fi
+    
+    # Get color statistics - if standard deviation of color channels is very low, it's grayscale
+    COLOR_SCORE=$(convert "$tiff" -colorspace HSL -channel S -separate +channel -format "%[fx:mean]" info:)
+    # If saturation is low (< 0.20), convert to grayscale to save space
+    if (( $(echo "$COLOR_SCORE < 0.20" | bc -l) )); then
+        echo "  $(basename "$tiff"): Converting to grayscale (saturation: $COLOR_SCORE)"
+        convert "$tiff" -colorspace Gray "$tiff"
+    else
+        echo "  $(basename "$tiff"): Keeping in color (saturation: $COLOR_SCORE)"
+    fi
+    
+    KEPT_PAGES+=("$tiff")
+done
+
+# Check if any pages were kept
+if [ ${#KEPT_PAGES[@]} -eq 0 ]; then
+    echo "Error: All pages were blank!"
+    exit 1
+fi
+
+convert "${KEPT_PAGES[@]}" "$TEMP_PDF"
+
+# Add OCR to make it searchable
+echo "Adding OCR..."
+if [ "$APPEND_MODE" = true ]; then
+    # Create temp file for OCR'd new scan
+    TEMP_OCR=$(mktemp --suffix=.pdf)
+    ocrmypdf --skip-text "$TEMP_PDF" "$TEMP_OCR"
+    
+    # Merge with existing PDF
+    echo "Merging with existing PDF..."
+    TEMP_MERGED=$(mktemp --suffix=.pdf)
+    pdfunite "$OUTPUT_PATH" "$TEMP_OCR" "$TEMP_MERGED"
+    mv "$TEMP_MERGED" "$OUTPUT_PATH"
+    rm -f "$TEMP_OCR"
+else
+    ocrmypdf --skip-text "$TEMP_PDF" "$OUTPUT_PATH"
+fi
+
+echo "✓ Scan saved: $OUTPUT_PATH"
