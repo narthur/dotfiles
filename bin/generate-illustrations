@@ -100,7 +100,7 @@ article_text=$(sed '/^END$/q' | sed '$d')
 llm keys list
 llm models list | grep $model
 
-script_dir="${Z_EXPERIMENTS_DIR:-/mnt/backup/ProgrammingProjects/z-experiments}"
+script_dir="${Z_EXPERIMENTS_DIR}"
 images_dir="$script_dir/images"
 output_dir="$HOME/Pictures/Illustrations"
 
