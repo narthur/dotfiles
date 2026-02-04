@@ -1,0 +1,460 @@
+#!/usr/bin/env bash
+
+# pr-review-session - Manage PR review sessions (track reviewed, next, list, view, end)
+# Usage: pr-review-session list | next | view [N] [--web] | end | status
+
+set -euo pipefail
+
+SESSION_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/pr-review-session"
+SESSION_FILE="$SESSION_DIR/session.json"
+
+usage() {
+  cat <<EOF
+Usage: $0 <command> [options]
+
+Commands:
+  list              List open PRs not yet reviewed this session
+  next              Mark current PR as reviewed and show the next unreviewed PR (wraps to first when at end)
+  view [N] [--web]  Show PR details. N = PR number (default: PR for current branch). --web opens in browser
+  end               End the current session (clear state for this repo)
+  status            Show session state: repo, reviewed count, current PR
+
+Session is per-repo (current directory). Run from a git repo with gh configured.
+EOF
+}
+
+# Get repo identifier owner/name (fails if not in a gh repo)
+get_repo() {
+  local info
+  info=$(gh repo view --json owner,name 2>&1) || {
+    echo "Error: Not in a GitHub repo or gh not authenticated. Run from a repo and use: gh auth login" >&2
+    exit 1
+  }
+  local owner name
+  owner=$(echo "$info" | jq -r '.owner.login')
+  name=$(echo "$info" | jq -r '.name')
+  if [[ "$owner" == "null" ]] || [[ "$name" == "null" ]] || [[ -z "$owner" ]] || [[ -z "$name" ]]; then
+    echo "Error: Could not determine repository owner/name." >&2
+    exit 1
+  fi
+  echo "${owner}/${name}"
+}
+
+# Read session for repo. Outputs JSON object with reviewed (array) and current (number or null).
+read_session() {
+  local repo="$1"
+  if [[ ! -f "$SESSION_FILE" ]]; then
+    echo '{"reviewed":[],"current":null}'
+    return
+  fi
+  local data
+  data=$(jq -r --arg repo "$repo" '.[$repo] // {"reviewed":[],"current":null}' "$SESSION_FILE" 2>/dev/null) || echo '{"reviewed":[],"current":null}'
+  echo "$data"
+}
+
+# Write session for repo. Merges with existing file.
+write_session() {
+  local repo="$1"
+  local reviewed_json="$2"  # JSON array
+  local current_val="$3"    # number or empty for null
+  mkdir -p "$SESSION_DIR"
+  local current_jq="null"
+  [[ -n "$current_val" ]] && current_jq="$current_val"
+  local new_data
+  new_data=$(jq -n --argjson reviewed "$reviewed_json" --argjson current "$current_jq" '{reviewed: $reviewed, current: $current}')
+  if [[ -f "$SESSION_FILE" ]]; then
+    jq --arg repo "$repo" --argjson data "$new_data" '.[$repo] = $data' "$SESSION_FILE" > "${SESSION_FILE}.tmp" && mv "${SESSION_FILE}.tmp" "$SESSION_FILE"
+  else
+    jq -n --arg repo "$repo" --argjson data "$new_data" '.[$repo] = $data' > "$SESSION_FILE"
+  fi
+}
+
+# Output list of open PR numbers, sorted by number (one per line).
+get_open_pr_numbers_sorted() {
+  local repo="$1"
+  gh pr list --state open --repo "$repo" --json number -q '.[].number' | sort -n
+}
+
+# Get unreviewed PR numbers for repo (open PRs minus reviewed), sorted by number.
+get_unreviewed_numbers() {
+  local repo="$1"
+  local reviewed_json="$2"
+  local open_nums
+  open_nums=$(get_open_pr_numbers_sorted "$repo")
+  if [[ -z "$open_nums" ]]; then
+    return
+  fi
+  local reviewed
+  reviewed=$(echo "$reviewed_json" | jq -r '.reviewed[]?' 2>/dev/null || true)
+  for n in $open_nums; do
+    if echo "$reviewed" | grep -qFx "$n" 2>/dev/null; then
+      continue
+    fi
+    echo "$n"
+  done
+}
+
+# Fetch unresolved review thread count for a PR (GraphQL).
+unresolved_feedback_count() {
+  local owner="$1"
+  local repo_name="$2"
+  local pr_num="$3"
+  local query='query($owner: String!, $repo: String!, $prNumber: Int!) {
+    repository(owner: $owner, name: $repo) {
+      pullRequest(number: $prNumber) {
+        reviewThreads(first: 100) { nodes { isResolved } }
+      }
+    }
+  }'
+  local res
+  res=$(gh api graphql -f query="$query" -f owner="$owner" -f repo="$repo_name" -F prNumber="$pr_num" 2>/dev/null) || echo '{"data":null}'
+  echo "$res" | jq '[.data.repository.pullRequest.reviewThreads.nodes[]? | select(.isResolved == false)] | length'
+}
+
+# Relative time for timestamp
+relative_time() {
+  local timestamp="$1"
+  local now=$(date +%s)
+  local then=$(date -d "$timestamp" +%s 2>/dev/null || echo "$now")
+  local diff=$((now - then))
+  if [[ $diff -lt 3600 ]]; then
+    echo "$((diff / 60))m ago"
+  elif [[ $diff -lt 86400 ]]; then
+    echo "$((diff / 3600))h ago"
+  elif [[ $diff -lt 604800 ]]; then
+    echo "$((diff / 86400))d ago"
+  else
+    echo "$((diff / 604800))w ago"
+  fi
+}
+
+# Human-readable status from reviewDecision + isDraft
+format_pr_status() {
+  local is_draft="$1"
+  local decision="$2"
+  if [[ "$is_draft" == "true" ]]; then
+    echo "Draft"
+    return
+  fi
+  case "$decision" in
+    APPROVED) echo "Approved" ;;
+    CHANGES_REQUESTED) echo "Changes requested" ;;
+    REVIEW_REQUIRED) echo "Ready for review" ;;
+    *) echo "Ready for review" ;;
+  esac
+}
+
+# Mergeable summary
+format_mergeable() {
+  local mergeable="$1"
+  local merge_state="$2"
+  if [[ "$mergeable" == "CONFLICTING" ]]; then
+    echo "No - has conflicts"
+    return
+  fi
+  if [[ "$mergeable" == "UNKNOWN" ]]; then
+    echo "Unknown (computing...)"
+    return
+  fi
+  if [[ "$merge_state" == "BEHIND" ]]; then
+    echo "No - branch behind base"
+    return
+  fi
+  echo "Yes"
+}
+
+# Print PR summary block (from plan: number, title, branch, author, status, URL, size, mergeable, CI, reviews, unresolved).
+print_pr_summary() {
+  local repo="$1"
+  local pr_num="$2"
+  local use_web="${3:-}"
+  local owner="${repo%%/*}"
+  local repo_name="${repo#*/}"
+
+  local json
+  json=$(gh pr view "$pr_num" --repo "$repo" --json number,title,headRefName,author,url,additions,deletions,changedFiles,mergeable,mergeStateStatus,reviewDecision,isDraft,latestReviews,statusCheckRollup 2>&1) || {
+    echo "Error: Could not load PR #$pr_num." >&2
+    return 1
+  }
+
+  local number title headRefName url additions deletions changedFiles mergeable mergeStateStatus reviewDecision isDraft
+  number=$(echo "$json" | jq -r '.number')
+  title=$(echo "$json" | jq -r '.title')
+  headRefName=$(echo "$json" | jq -r '.headRefName')
+  url=$(echo "$json" | jq -r '.url')
+  additions=$(echo "$json" | jq -r '.additions // 0')
+  deletions=$(echo "$json" | jq -r '.deletions // 0')
+  changedFiles=$(echo "$json" | jq -r '.changedFiles // 0')
+  mergeable=$(echo "$json" | jq -r '.mergeable // "UNKNOWN"')
+  mergeStateStatus=$(echo "$json" | jq -r '.mergeStateStatus // ""')
+  reviewDecision=$(echo "$json" | jq -r '.reviewDecision // "REVIEW_REQUIRED"')
+  isDraft=$(echo "$json" | jq -r '.isDraft // false')
+
+  local author_login
+  author_login=$(echo "$json" | jq -r '.author.login // "?"')
+  local status_str
+  status_str=$(format_pr_status "$isDraft" "$reviewDecision")
+  local merge_str
+  merge_str=$(format_mergeable "$mergeable" "$mergeStateStatus")
+
+  # Unresolved feedback count (optional, can fail on some repos)
+  local unresolved=0
+  unresolved=$(unresolved_feedback_count "$owner" "$repo_name" "$pr_num" 2>/dev/null) || true
+
+  echo ""
+  echo "  PR #${number}: ${title}"
+  echo ""
+  echo "  | Field     | Value                                            |"
+  echo "  |-----------|--------------------------------------------------|"
+  printf "  | %-9s | %-48s |\n" "Branch" "$headRefName"
+  printf "  | %-9s | %-48s |\n" "Author" "@${author_login}"
+  printf "  | %-9s | %-48s |\n" "Status" "$status_str"
+  printf "  | %-9s | %-48s |\n" "URL" "$url"
+  printf "  | %-9s | %-48s |\n" "Size" "+${additions} / -${deletions} (${changedFiles} files)"
+  printf "  | %-9s | %-48s |\n" "Mergeable" "$merge_str"
+  echo ""
+  echo "  CI Status:"
+  local ci_summary
+  ci_summary=$(echo "$json" | jq -r '
+    .statusCheckRollup // [] |
+    if length == 0 then "none"
+    else
+      (map(select(.status == "IN_PROGRESS" or .status == "PENDING")) | length) as $pending |
+      (map(select(.status == "COMPLETED" and (.conclusion == "SUCCESS" or .conclusion == ""))) | length) as $pass |
+      (map(select(.status == "COMPLETED" and .conclusion != "" and .conclusion != "SUCCESS")) | length) as $fail |
+      if $fail > 0 then "fail:\($fail)"
+      elif $pending > 0 then "pending:\($pending):\($pass)"
+      else "pass"
+      end
+    end
+  ' 2>/dev/null) || ci_summary="none"
+  case "$ci_summary" in
+    none) echo "  • No checks" ;;
+    pass) echo "  • ✓ All checks passing" ;;
+    pending:*)
+      local pend="${ci_summary#pending:}"
+      local p="${pend%%:*}"
+      local pas="${pend#*:}"
+      echo "  • ⏳ $p pending, $pas passing"
+      ;;
+    fail:*)
+      echo "  • ✗ ${ci_summary#fail:} check(s) failing"
+      ;;
+    *) echo "  • (checks unknown)" ;;
+  esac
+  echo ""
+  echo "  Reviews:"
+  local review_summary
+  review_summary=$(echo "$json" | jq -r '
+    [.latestReviews[]? | select(.state != "COMMENTED" or .body != "")] |
+    group_by(.author.login) |
+    map({
+      login: .[0].author.login,
+      state: (map(.state) | if any(. == "APPROVED") then "APPROVED" elif any(. == "CHANGES_REQUESTED") then "CHANGES_REQUESTED" else "COMMENTED" end),
+      count: length
+    }) |
+    .[] |
+    "• " + (if .state == "APPROVED" then "✓" elif .state == "CHANGES_REQUESTED" then "⚠" else "○" end) + " @" + .login + ": " + .state + (if .count > 1 then (" (" + (.count|tostring) + "x)") else "" end)
+  ' 2>/dev/null) || true
+  if [[ -z "$review_summary" ]]; then
+    echo "  • None"
+  else
+    echo "$review_summary" | sed 's/^/  /'
+  fi
+  if [[ "$unresolved" -gt 0 ]]; then
+    echo "  • Feedback: $unresolved unresolved comment(s)"
+  fi
+  echo ""
+
+  # Then run gh pr view so user sees full body
+  if [[ -n "$use_web" ]]; then
+    gh pr view "$pr_num" --repo "$repo" --web
+  else
+    gh pr view "$pr_num" --repo "$repo"
+  fi
+}
+
+cmd_list() {
+  local repo="$1"
+  local session
+  session=$(read_session "$repo")
+  local reviewed_json
+  reviewed_json=$(echo "$session" | jq -c '.reviewed')
+  local unreviewed
+  unreviewed=$(get_unreviewed_numbers "$repo" "$session")
+  local prs_json
+  prs_json=$(gh pr list --state open --repo "$repo" --json number,title,updatedAt,author,isDraft,reviewDecision 2>&1) || {
+    echo "Error: Failed to fetch PRs." >&2
+    exit 1
+  }
+  local unreviewed_json
+  unreviewed_json=$(echo "$unreviewed" | jq -R -s '[split("\n")[] | select(length > 0) | tonumber]')
+  if [[ "$unreviewed_json" == "[]" ]]; then
+    echo "No unreviewed PRs in this session."
+    return
+  fi
+  local filtered
+  filtered=$(echo "$prs_json" | jq -r --argjson nums "$unreviewed_json" '
+    [.[] | select(.number | IN($nums[]))] | sort_by(.number) |
+    .[] | "\(.number)|\(.title)|\(.updatedAt)|\(.author.login)|\(.isDraft)|\(.reviewDecision // "none")"
+  ')
+  if [[ -z "$filtered" ]]; then
+    echo "No unreviewed PRs in this session."
+    return
+  fi
+  echo "Unreviewed PRs (session for $repo)"
+  echo ""
+  printf "%-10s %-12s %-20s %s\n" "Number" "Updated" "Author" "Title"
+  printf "%-10s %-12s %-20s %s\n" "------" "------" "------" "-----"
+  while IFS='|' read -r num title updated author draft decision; do
+    local rel
+    rel=$(relative_time "$updated")
+    local title_short="${title:0:50}"
+    [[ ${#title} -gt 50 ]] && title_short="${title_short}..."
+    printf "%-10s %-12s %-20s %s\n" "#$num" "$rel" "$author" "$title_short"
+  done <<< "$filtered"
+}
+
+cmd_view() {
+  local repo="$1"
+  shift
+  local pr_num=""
+  local use_web=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --web) use_web="1"; shift ;;
+      [0-9]*) pr_num="$1"; shift ;;
+      *) echo "Unknown option: $1" >&2; exit 1 ;;
+    esac
+  done
+  if [[ -z "$pr_num" ]]; then
+    local info
+    info=$(gh pr view --json number 2>&1) || {
+      echo "Error: No PR for current branch. Specify a PR number: $0 view <number>" >&2
+      exit 1
+    }
+    pr_num=$(echo "$info" | jq -r '.number')
+  fi
+  # Show PR (update session only after we successfully load it)
+  if ! print_pr_summary "$repo" "$pr_num" "$use_web"; then
+    exit 1
+  fi
+  local session
+  session=$(read_session "$repo")
+  local reviewed_json
+  reviewed_json=$(echo "$session" | jq -c '.reviewed')
+  write_session "$repo" "$reviewed_json" "$pr_num"
+}
+
+cmd_next() {
+  local repo="$1"
+  local session
+  session=$(read_session "$repo")
+  local reviewed_json
+  reviewed_json=$(echo "$session" | jq -c '.reviewed')
+  local current
+  current=$(echo "$session" | jq -r '.current // empty')
+  # Add current to reviewed if set
+  if [[ -n "$current" ]]; then
+    reviewed_json=$(echo "$reviewed_json" | jq -c --argjson n "$current" '. + [$n] | unique')
+  fi
+  local unreviewed
+  unreviewed=$(get_unreviewed_numbers "$repo" "{\"reviewed\":$reviewed_json,\"current\":null}")
+  local unreviewed_arr
+  unreviewed_arr=($(echo "$unreviewed"))
+  if [[ ${#unreviewed_arr[@]} -eq 0 ]]; then
+    echo "No unreviewed PRs."
+    # Keep current unchanged (plan: "does not change current")
+    write_session "$repo" "$reviewed_json" "$current"
+    return
+  fi
+  # Pick next in order: first after current, or wrap to first
+  local next_num=""
+  if [[ -n "$current" ]]; then
+    local found=""
+    for n in "${unreviewed_arr[@]}"; do
+      if [[ "$n" -gt "$current" ]]; then
+        next_num="$n"
+        found=1
+        break
+      fi
+    done
+    [[ -z "$found" ]] && next_num="${unreviewed_arr[0]}"
+  else
+    next_num="${unreviewed_arr[0]}"
+  fi
+  write_session "$repo" "$reviewed_json" "$next_num"
+  print_pr_summary "$repo" "$next_num" ""
+}
+
+cmd_end() {
+  local repo="$1"
+  if [[ ! -f "$SESSION_FILE" ]]; then
+    echo "No session for this repo."
+    return
+  fi
+  if ! jq -e --arg repo "$repo" '.[$repo]' "$SESSION_FILE" >/dev/null 2>&1; then
+    echo "No session for this repo."
+    return
+  fi
+  jq --arg repo "$repo" 'del(.[$repo])' "$SESSION_FILE" > "${SESSION_FILE}.tmp" && mv "${SESSION_FILE}.tmp" "$SESSION_FILE"
+  echo "Session ended for $repo."
+}
+
+cmd_status() {
+  local repo="$1"
+  local session
+  session=$(read_session "$repo")
+  local reviewed_count
+  reviewed_count=$(echo "$session" | jq '.reviewed | length')
+  local current
+  current=$(echo "$session" | jq -r '.current // empty')
+  echo "Repo:    $repo"
+  echo "Reviewed: $reviewed_count PR(s) this session"
+  if [[ -n "$current" ]]; then
+    echo "Current: #$current"
+  else
+    echo "Current: (none)"
+  fi
+}
+
+# Main
+if [[ $# -lt 1 ]]; then
+  usage
+  exit 0
+fi
+
+CMD="${1:-}"
+shift || true
+
+case "$CMD" in
+  -h|--help)
+    usage
+    exit 0
+    ;;
+  list)
+    REPO=$(get_repo)
+    cmd_list "$REPO"
+    ;;
+  next)
+    REPO=$(get_repo)
+    cmd_next "$REPO"
+    ;;
+  view)
+    REPO=$(get_repo)
+    cmd_view "$REPO" "$@"
+    ;;
+  end)
+    REPO=$(get_repo)
+    cmd_end "$REPO"
+    ;;
+  status)
+    REPO=$(get_repo)
+    cmd_status "$REPO"
+    ;;
+  *)
+    echo "Unknown command: $CMD" >&2
+    usage >&2
+    exit 1
+    ;;
+esac
