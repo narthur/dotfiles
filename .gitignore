@@ -8,6 +8,8 @@
 !.claude/skills/
 !.claude/skills/resolve-pr-feedback/
 !.claude/skills/resolve-pr-feedback/SKILL.md
+!.claude/skills/review-prs/
+!.claude/skills/review-prs/SKILL.md
 !.claude/skills/split-pr/
 !.claude/skills/split-pr/SKILL.md
 !.config/
@@ -34,13 +36,7 @@
 !.cursor/rules/conventional-commits.mdc
 !.cursor/rules/gitbutler.mdc
 !.cursor/rules/test-driven-development.mdc
-!.cursor/skills/
-!.cursor/skills/resolve-pr-feedback/
-!.cursor/skills/resolve-pr-feedback/SKILL.md
-!.cursor/skills/review-prs/
-!.cursor/skills/review-prs/SKILL.md
-!.cursor/skills/work-on-issue/
-!.cursor/skills/work-on-issue/SKILL.md
+!.cursor/skills
 !.git-hooks/
 !.git-hooks/*
 !.gitconfig
