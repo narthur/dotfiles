@@ -172,7 +172,7 @@ print_pr_summary() {
   local repo_name="${repo#*/}"
 
   local json
-  json=$(gh pr view "$pr_num" --repo "$repo" --json number,title,headRefName,author,url,additions,deletions,changedFiles,mergeable,mergeStateStatus,reviewDecision,isDraft,latestReviews,statusCheckRollup 2>&1) || {
+  json=$(gh pr view "$pr_num" --repo "$repo" --json number,title,body,headRefName,author,url,additions,deletions,changedFiles,mergeable,mergeStateStatus,reviewDecision,isDraft,latestReviews,statusCheckRollup 2>&1) || {
     echo "Error: Could not load PR #$pr_num." >&2
     return 1
   }
@@ -212,6 +212,15 @@ print_pr_summary() {
   printf "  | %-9s | %-48s |\n" "URL" "$url"
   printf "  | %-9s | %-48s |\n" "Size" "+${additions} / -${deletions} (${changedFiles} files)"
   printf "  | %-9s | %-48s |\n" "Mergeable" "$merge_str"
+  echo ""
+  echo "  Description:"
+  local body
+  body=$(echo "$json" | jq -r '.body // ""')
+  if [[ -z "$body" || "$body" == "null" ]]; then
+    echo "  (no description)"
+  else
+    echo "$body" | sed 's/^/  /'
+  fi
   echo ""
   echo "  CI Status:"
   local ci_summary
