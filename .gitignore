@@ -2,6 +2,8 @@
 !.bashrc
 !.Brewfile
 !.claude/
+!.claude/agents/
+!.claude/agents/pr-feedback-resolver.md
 !.claude/hooks/
 !.claude/hooks/track-tokens.sh
 !.claude/settings.json
@@ -31,6 +33,7 @@
 !.config/qt6ct/qt6ct.conf
 !.config/rofimoji.rc
 !.cursor/
+!.cursor/agents
 !.cursor/mcp.json
 !.cursor/rules/
 !.cursor/rules/conventional-commits.mdc
