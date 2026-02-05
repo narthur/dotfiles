@@ -17,7 +17,7 @@ List open PRs not yet reviewed this session:
 pr-review-session list
 ```
 
-If no unreviewed PRs, inform the user. They can run `pr-review-session end` to clear the session and start fresh, or stop.
+If no unreviewed PRs, inform the user. They can run `pr-review-session reset` to clear the session and start fresh, or stop.
 
 Optional: check session state first:
 
@@ -58,7 +58,7 @@ What would you like to do?
 6. Merge PR - Merge the pull request
 7. View PR in browser - Open the PR URL
 8. Next - Mark reviewed and move to next unreviewed (`pr-review-session next`)
-9. Stop - End the review session (`pr-review-session end`)
+9. Reset - Reset the review session (`pr-review-session reset`)
 ```
 
 Adjust options based on PR state:
@@ -123,7 +123,7 @@ After each action:
 
 - **Move to next unreviewed**: `pr-review-session next` — marks current PR as reviewed and shows the next (wraps to first when at end).
 - **Jump to another PR**: `pr-review-session view <number>`
-- **End session**: `pr-review-session end` — clears session state for this repo.
+- **Reset session**: `pr-review-session reset` — clears session state for this repo.
 - Otherwise, return to PR assessment or `pr-review-session list` based on context.
 
 ## Status Indicators
@@ -152,7 +152,7 @@ After each action:
 | `pr-review-session next`                    | Mark current as reviewed and show next unreviewed (wraps) |
 | `pr-review-session view [N] [--web]`        | Show PR summary and details; N = number or current branch |
 | `pr-review-session status`                  | Show session state (repo, reviewed count, current PR)     |
-| `pr-review-session end`                     | End the review session for this repo                      |
+| `pr-review-session reset`                   | Reset the review session for this repo                    |
 | `gh pr checkout <number>`                   | Checkout PR branch                                        |
 | `gh pr ready <number>`                      | Mark draft as ready                                       |
 | `gh pr merge <number>`                      | Merge the PR                                              |

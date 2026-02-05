@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-# pr-review-session - Manage PR review sessions (track reviewed, next, list, view, end)
-# Usage: pr-review-session list | next | view [N] [--web] | end | status
+# pr-review-session - Manage PR review sessions (track reviewed, next, list, view, reset)
+# Usage: pr-review-session list | next | view [N] [--web] | reset | status
 
 set -euo pipefail
 
@@ -16,7 +16,7 @@ Commands:
   list              List open PRs not yet reviewed this session
   next              Mark current PR as reviewed and show the next unreviewed PR (wraps to first when at end)
   view [N] [--web]  Show PR details. N = PR number (default: PR for current branch). --web opens in browser
-  end               End the current session (clear state for this repo)
+  reset             Reset the current session (clear state for this repo)
   status            Show session state: repo, reviewed count, current PR
 
 Session is per-repo (current directory). Run from a git repo with gh configured.
@@ -396,7 +396,7 @@ cmd_next() {
   print_pr_summary "$repo" "$next_num" ""
 }
 
-cmd_end() {
+cmd_reset() {
   local repo="$1"
   if [[ ! -f "$SESSION_FILE" ]]; then
     echo "No session for this repo."
@@ -407,7 +407,7 @@ cmd_end() {
     return
   fi
   jq --arg repo "$repo" 'del(.[$repo])' "$SESSION_FILE" > "${SESSION_FILE}.tmp" && mv "${SESSION_FILE}.tmp" "$SESSION_FILE"
-  echo "Session ended for $repo."
+  echo "Session reset for $repo."
 }
 
 cmd_status() {
@@ -453,9 +453,9 @@ case "$CMD" in
     REPO=$(get_repo)
     cmd_view "$REPO" "$@"
     ;;
-  end)
+  reset)
     REPO=$(get_repo)
-    cmd_end "$REPO"
+    cmd_reset "$REPO"
     ;;
   status)
     REPO=$(get_repo)
