@@ -9,6 +9,16 @@ Use the **pr-review-session** script to run review sessions: it tracks which PRs
 
 ## Workflow
 
+### Step 0: Reset Session (Optional)
+
+Before starting a new review session, you may want to reset any existing session state:
+
+```bash
+pr-review-session reset
+```
+
+This clears the session state for the current repo, allowing you to start fresh. Only do this if the user wants to start over or if starting a new review session.
+
 ### Step 1: List Unreviewed PRs
 
 List open PRs not yet reviewed this session:
@@ -83,8 +93,9 @@ Adjust options based on PR state:
 **Option 2 - Resolve feedback:**
 
 1. Checkout the PR branch (if not already)
-2. Invoke the resolve-pr-feedback workflow
-3. Return to PR assessment when done
+2. Use the **Task** tool to launch the **pr-feedback-resolver** agent to systematically resolve all unresolved review comments
+3. The agent will handle fetching feedback, implementing fixes, and resolving threads
+4. Return to PR assessment when the agent completes
 
 **Option 3 - Fix conflicts:**
 

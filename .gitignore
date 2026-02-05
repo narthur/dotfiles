@@ -4,6 +4,7 @@
 !.claude/
 !.claude/agents/
 !.claude/agents/pr-feedback-resolver.md
+!.claude/agents/pr-reviewer.md
 !.claude/hooks/
 !.claude/hooks/track-tokens.sh
 !.claude/settings.json
