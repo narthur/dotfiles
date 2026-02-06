@@ -466,15 +466,18 @@ else
   fi
   
   # Group PRs by involvement type, then by repository
-  # Define involvement type labels and order
+  # Define involvement type labels, order, and colors for section headings
   INVOLVEMENT_TYPES=("author" "committer" "reviewer" "commenter")
   INVOLVEMENT_LABELS=("Authored" "Committed to" "Reviewed" "Commented on")
+  # ANSI colors: green, blue, cyan, yellow (bold)
+  INVOLVEMENT_COLORS=("32" "34" "36" "33")
   
   # Display PRs grouped by involvement type
   INVOLVEMENT_INDEX=0
   FIRST_SECTION=true
   for INVOLVEMENT_TYPE in "${INVOLVEMENT_TYPES[@]}"; do
     INVOLVEMENT_LABEL="${INVOLVEMENT_LABELS[$INVOLVEMENT_INDEX]}"
+    INVOLVEMENT_COLOR="${INVOLVEMENT_COLORS[$INVOLVEMENT_INDEX]}"
     
     # Get PRs where user has this involvement type
     TYPE_PRS=$(echo "$PRS_JSON" | jq --arg type "$INVOLVEMENT_TYPE" '[.[] | select(.involvement | index($type))]')
@@ -487,8 +490,8 @@ else
       fi
       FIRST_SECTION=false
       
-      # Print involvement type header (bold, with divider)
-      echo -e "\033[1m$INVOLVEMENT_LABEL\033[0m \033[90m($TYPE_PR_COUNT PRs)\033[0m"
+      # Print involvement type header (bold + color, count in gray)
+      echo -e "\033[1;${INVOLVEMENT_COLOR}m$INVOLVEMENT_LABEL\033[0m \033[90m($TYPE_PR_COUNT PRs)\033[0m"
       echo ""
       
       # Get unique repos for this involvement type
@@ -565,7 +568,8 @@ else
     fi
     
     # Print issues section header
-    echo -e "\033[1mIssues\033[0m \033[90m($ISSUE_TOTAL issues)\033[0m"
+    # Issues section heading (bold magenta to distinguish from PR sections)
+    echo -e "\033[1;35mIssues\033[0m \033[90m($ISSUE_TOTAL issues)\033[0m"
     echo ""
     
     ISSUE_REPO_INDEX=0
