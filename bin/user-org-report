@@ -162,6 +162,34 @@ format_review() {
   esac
 }
 
+# Function to format involvement types as colored single characters
+# A=author (green), C=committer (blue), R=reviewer (cyan), M=commenter (yellow)
+format_involvement_chars() {
+  local involvement_json="$1"
+  local color_reset=$'\033[0m'
+  local color_green=$'\033[32m'
+  local color_blue=$'\033[34m'
+  local color_cyan=$'\033[36m'
+  local color_yellow=$'\033[33m'
+  local result=""
+  
+  # Map involvement types to characters and colors
+  if echo "$involvement_json" | jq -e 'index("author")' >/dev/null 2>&1; then
+    result="${result}${color_green}A${color_reset}"  # Green
+  fi
+  if echo "$involvement_json" | jq -e 'index("committer")' >/dev/null 2>&1; then
+    result="${result}${color_blue}C${color_reset}"  # Blue
+  fi
+  if echo "$involvement_json" | jq -e 'index("reviewer")' >/dev/null 2>&1; then
+    result="${result}${color_cyan}R${color_reset}"  # Cyan
+  fi
+  if echo "$involvement_json" | jq -e 'index("commenter")' >/dev/null 2>&1; then
+    result="${result}${color_yellow}M${color_reset}"  # Yellow
+  fi
+  
+  echo -e "$result"
+}
+
 # GraphQL query template for fetching PRs with involvement data
 # This query searches for PRs and includes nested fields for commits, reviews, and comments
 read -r -d '' GRAPHQL_PR_QUERY <<'EOF' || true
@@ -524,7 +552,7 @@ else
   NUM_WIDTH=8
   STATE_WIDTH=8
   UPDATED_WIDTH=10
-  INVOLVEMENT_WIDTH=14
+  INVOLVEMENT_WIDTH=4  # Just enough for colored chars like "ACR"
   SPACING=2
   # format_state outputs ANSI codes; reserve extra so total line fits in TERM_WIDTH
   ANSI_SLOP=12
@@ -572,7 +600,7 @@ else
       
       # Table header
       printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${INVOLVEMENT_WIDTH}s %-${TITLE_WIDTH}s\n" \
-        "Number" "State" "Updated" "Involvement" "Title"
+        "Number" "State" "Updated" "Inv" "Title"
       
       printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${INVOLVEMENT_WIDTH}s %-${TITLE_WIDTH}s\n" \
         "$(printf '%*s' $NUM_WIDTH '' | tr ' ' '-')" \
@@ -581,29 +609,36 @@ else
         "$(printf '%*s' $INVOLVEMENT_WIDTH '' | tr ' ' '-')" \
         "$(printf '%*s' $TITLE_WIDTH '' | tr ' ' '-')"
       
-      echo "$REPO_PRS" | jq -r '.[] | 
-        "\(.number)|\(.state)|\(.updatedAt)|\(.isDraft)|\(.reviewDecision // "none")|\(.involvement | join(", "))|\(.title)"' | \
-      while IFS='|' read -r number state updated draft review involvement title; do
+      echo "$REPO_PRS" | jq -c '.[]' | \
+      while IFS= read -r pr_json; do
+        number=$(echo "$pr_json" | jq -r '.number')
+        state=$(echo "$pr_json" | jq -r '.state')
+        updated=$(echo "$pr_json" | jq -r '.updatedAt')
+        draft=$(echo "$pr_json" | jq -r '.isDraft')
+        review=$(echo "$pr_json" | jq -r '.reviewDecision // "none"')
+        title=$(echo "$pr_json" | jq -r '.title')
+        involvement=$(echo "$pr_json" | jq '.involvement')
+        
         relative=$(relative_time "$updated")
         state_fmt=$(format_state "$state" "$draft")
+        involvement_fmt=$(format_involvement_chars "$involvement")
         
-        # Handle empty involvement
-        if [[ -z "$involvement" ]] || [[ "$involvement" == "null" ]]; then
-          involvement_fmt=""
+        # Calculate visible width of involvement (strip ANSI codes for width calculation)
+        involvement_visible=$(echo -e "$involvement_fmt" | sed 's/\x1b\[[0-9;]*m//g')
+        involvement_visible_len=${#involvement_visible}
+        involvement_padding=$((INVOLVEMENT_WIDTH - involvement_visible_len))
+        if [[ $involvement_padding -gt 0 ]]; then
+          involvement_padded="${involvement_fmt}$(printf '%*s' $involvement_padding '')"
         else
-          involvement_fmt="$involvement"
+          involvement_padded="$involvement_fmt"
         fi
         
         # Truncate title
         title_short="${title:0:$((TITLE_WIDTH - 3))}"
         [[ ${#title} -gt $((TITLE_WIDTH - 3)) ]] && title_short="${title_short}..."
         
-        # Truncate involvement if needed
-        involvement_short="${involvement_fmt:0:$((INVOLVEMENT_WIDTH - 3))}"
-        [[ ${#involvement_fmt} -gt $((INVOLVEMENT_WIDTH - 3)) ]] && involvement_short="${involvement_short}..."
-        
-        printf "%-${NUM_WIDTH}s %s %-${UPDATED_WIDTH}s %-${INVOLVEMENT_WIDTH}s %-${TITLE_WIDTH}s\n" \
-          "#$number" "$state_fmt" "$relative" "$involvement_short" "$title_short"
+        printf "%-${NUM_WIDTH}s %s %-${UPDATED_WIDTH}s %s %-${TITLE_WIDTH}s\n" \
+          "#$number" "$state_fmt" "$relative" "$involvement_padded" "$title_short"
         
         # Show review status on second line if present
         review_fmt=$(format_review "$review")
