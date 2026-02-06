@@ -3,10 +3,85 @@
 
 log_dir="$HOME/.claude/token-usage"
 
+# Parse date arguments
+start_date=""
+end_date=""
+command=""
+command_args=()
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --start)
+            start_date="$2"
+            shift 2
+            ;;
+        --end)
+            end_date="$2"
+            shift 2
+            ;;
+        *)
+            # This is the command or its arguments
+            if [ -z "$command" ]; then
+                command="$1"
+            else
+                command_args+=("$1")
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Set command to summary if not specified
+command="${command:-summary}"
+
 # Check if log directory exists
 if [ ! -d "$log_dir" ]; then
     echo "No token usage data found yet."
     exit 0
+fi
+
+# Function to filter data by date range
+filter_by_date() {
+    local input_file="$1"
+    local filter='true'
+    
+    if [ -n "$start_date" ]; then
+        filter="$filter and (.timestamp >= \"$start_date\")"
+    fi
+    
+    if [ -n "$end_date" ]; then
+        filter="$filter and (.timestamp <= \"$end_date\")"
+    fi
+    
+    jq -c "select($filter)" "$input_file"
+}
+
+# Create filtered data file if date filters are specified
+if [ -n "$start_date" ] || [ -n "$end_date" ]; then
+    temp_dir=$(mktemp -d)
+    trap "rm -rf $temp_dir" EXIT
+    
+    # Filter all-repos.jsonl
+    if [ -f "$log_dir/all-repos.jsonl" ]; then
+        filter_by_date "$log_dir/all-repos.jsonl" > "$temp_dir/all-repos.jsonl"
+    fi
+    
+    # Filter individual repo files
+    for file in "$log_dir"/*.jsonl; do
+        if [ "$(basename "$file")" != "all-repos.jsonl" ] && [ -f "$file" ]; then
+            basename=$(basename "$file")
+            filter_by_date "$file" > "$temp_dir/$basename"
+        fi
+    done
+    
+    # Use filtered data
+    log_dir="$temp_dir"
+    
+    # Show date range in output
+    echo "Date range filter:"
+    [ -n "$start_date" ] && echo "  Start: $start_date"
+    [ -n "$end_date" ] && echo "  End: $end_date"
+    echo ""
 fi
 
 # Function to display stats for a file
@@ -44,8 +119,8 @@ show_stats() {
     echo ""
 }
 
-# Parse arguments
-case "${1:-summary}" in
+# Execute command
+case "$command" in
     summary)
         echo "=== Claude Code Token Usage Summary ==="
         echo ""
@@ -140,12 +215,12 @@ case "${1:-summary}" in
         ;;
     
     client)
-        if [ -z "$2" ]; then
-            echo "Usage: $0 client <name>"
+        if [ ${#command_args[@]} -eq 0 ]; then
+            echo "Usage: $0 client <name> [--start DATE] [--end DATE]"
             exit 1
         fi
         
-        client_name=$(echo "$2" | tr '[:upper:]' '[:lower:]')
+        client_name=$(echo "${command_args[0]}" | tr '[:upper:]' '[:lower:]')
         
         if [ ! -f "$log_dir/all-repos.jsonl" ]; then
             echo "No token usage data found yet."
@@ -154,7 +229,7 @@ case "${1:-summary}" in
         
         # Check if client exists
         if ! jq -r '.client // "unknown"' "$log_dir/all-repos.jsonl" | tr '[:upper:]' '[:lower:]' | grep -qx "$client_name"; then
-            echo "No data found for client: $2"
+            echo "No data found for client: ${command_args[0]}"
             echo ""
             echo "Available clients:"
             jq -r '.client // "unknown"' "$log_dir/all-repos.jsonl" | tr '[:upper:]' '[:lower:]' | sort -u | sed 's/^/  /'
@@ -231,15 +306,15 @@ case "${1:-summary}" in
         ;;
     
     repo)
-        if [ -z "$2" ]; then
-            echo "Usage: $0 repo <path>"
+        if [ ${#command_args[@]} -eq 0 ]; then
+            echo "Usage: $0 repo <path> [--start DATE] [--end DATE]"
             exit 1
         fi
-        repo_slug=$(echo "$2" | sed 's|/|_|g' | sed 's|^_||')
+        repo_slug=$(echo "${command_args[0]}" | sed 's|/|_|g' | sed 's|^_||')
         repo_file="$log_dir/${repo_slug}.jsonl"
         
         if [ ! -f "$repo_file" ]; then
-            echo "No data found for repository: $2"
+            echo "No data found for repository: ${command_args[0]}"
             exit 1
         fi
         
@@ -260,7 +335,7 @@ case "${1:-summary}" in
     help|--help|-h)
         echo "get-claude-code-report - Display Claude Code token usage statistics"
         echo ""
-        echo "Usage: get-claude-code-report [COMMAND] [ARGS]"
+        echo "Usage: get-claude-code-report [COMMAND] [ARGS] [OPTIONS]"
         echo ""
         echo "Commands:"
         echo "  summary (default)    Show per-repository usage grouped by client"
@@ -269,19 +344,35 @@ case "${1:-summary}" in
         echo "  repo <path>          Show usage for a specific repository"
         echo "  list                 List all tracked repositories"
         echo ""
+        echo "Options:"
+        echo "  --start DATE         Filter to sessions on or after this date (ISO 8601)"
+        echo "  --end DATE           Filter to sessions on or before this date (ISO 8601)"
+        echo ""
+        echo "Date format: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ"
+        echo ""
+        echo "Examples:"
+        echo "  # Show all usage"
+        echo "  get-claude-code-report"
+        echo ""
+        echo "  # Show usage for February 2026"
+        echo "  get-claude-code-report --start 2026-02-01 --end 2026-02-28"
+        echo ""
+        echo "  # Show seedtime client usage for last week"
+        echo "  get-claude-code-report client seedtime --start 2026-01-30"
+        echo ""
         echo "Token rates used for effective billable calculation:"
         echo "  Input tokens:         1.0x"
         echo "  Output tokens:        3.0x"
         echo "  Cache creation:       1.25x"
         echo "  Cache read:           0.1x (90% discount)"
         echo ""
-        echo "Data location: $log_dir"
+        echo "Data location: $HOME/.claude/token-usage"
         echo "Client mapping: $HOME/.claude/client-mapping.json"
         exit 0
         ;;
     
     *)
-        echo "Error: Unknown command '$1'"
+        echo "Error: Unknown command '$command'"
         echo "Run 'get-claude-code-report help' for usage information."
         exit 1
         ;;
