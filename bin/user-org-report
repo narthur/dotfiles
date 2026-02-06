@@ -520,17 +520,19 @@ else
   # Get terminal width
   TERM_WIDTH=${COLUMNS:-$(tput cols 2>/dev/null || echo 80)}
   
-  # Fixed column widths
+  # Fixed column widths (keep compact to avoid wrapping)
   NUM_WIDTH=8
   STATE_WIDTH=8
   UPDATED_WIDTH=10
-  INVOLVEMENT_WIDTH=20
-  SPACING=3
+  INVOLVEMENT_WIDTH=14
+  SPACING=2
+  # format_state outputs ANSI codes; reserve extra so total line fits in TERM_WIDTH
+  ANSI_SLOP=12
   
-  # Calculate title width (accounting for involvement column)
-  TITLE_WIDTH=$((TERM_WIDTH - NUM_WIDTH - STATE_WIDTH - UPDATED_WIDTH - INVOLVEMENT_WIDTH - SPACING))
-  if [[ $TITLE_WIDTH -lt 20 ]]; then
-    TITLE_WIDTH=20
+  # Title gets remaining width so table never wraps
+  TITLE_WIDTH=$((TERM_WIDTH - NUM_WIDTH - STATE_WIDTH - UPDATED_WIDTH - INVOLVEMENT_WIDTH - SPACING - ANSI_SLOP))
+  if [[ $TITLE_WIDTH -lt 15 ]]; then
+    TITLE_WIDTH=15
   fi
   
   # Display PRs grouped by repository
