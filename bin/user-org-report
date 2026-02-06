@@ -420,7 +420,8 @@ if [[ "$FORMAT" == "json" ]]; then
   }'
 else
   # Human-readable format
-  PR_COUNT=$(echo "$PRS_JSON" | jq 'length')
+  # Count only PRs with actual involvement (excludes e.g. review-requested-only)
+  PR_COUNT=$(echo "$PRS_JSON" | jq '[.[] | select((.involvement | length) > 0)] | length')
   ISSUE_COUNT=$(echo "$ISSUES_JSON" | jq 'length')
   TOTAL=$((PR_COUNT + ISSUE_COUNT))
   
@@ -513,7 +514,7 @@ else
           if [[ $REPO_INDEX -gt 0 ]]; then
             echo ""
           fi
-          echo -e "  \033[90m$REPO_NAME\033[0m"
+          echo -e "\033[90m$REPO_NAME\033[0m"
           REPO_INDEX=$((REPO_INDEX + 1))
           
           # Table header (no indentation to maximize width)
@@ -590,7 +591,7 @@ else
       if [[ $ISSUE_REPO_INDEX -gt 0 ]]; then
         echo ""
       fi
-      echo -e "  \033[90m$REPO_NAME\033[0m"
+      echo -e "\033[90m$REPO_NAME\033[0m"
       ISSUE_REPO_INDEX=$((ISSUE_REPO_INDEX + 1))
       
       # Table header (no indentation to maximize width)
