@@ -128,11 +128,9 @@ Adjust options based on PR state:
 
 **Option 2 - Resolve feedback:**
 
-1. Checkout the PR branch (if not already)
-2. Fetch and review the unresolved feedback comments
-3. Implement fixes for each piece of feedback directly
-4. Commit, push, and resolve the comment threads
-5. Return to PR assessment
+1. Checkout the PR branch: `gh pr checkout <number>`
+2. Invoke the `/resolve-pr-feedback` skill to handle the rest. It has its own interactive workflow for retrieving feedback, presenting options, and implementing fixes.
+3. After the skill completes, return to PR assessment.
 
 **Option 3 - Fix conflicts:**
 
