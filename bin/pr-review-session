@@ -172,7 +172,7 @@ print_pr_summary() {
   local repo_name="${repo#*/}"
 
   local json
-  json=$(gh pr view "$pr_num" --repo "$repo" --json number,title,body,headRefName,author,url,additions,deletions,changedFiles,mergeable,mergeStateStatus,reviewDecision,isDraft,latestReviews,statusCheckRollup 2>&1) || {
+  json=$(gh pr view "$pr_num" --repo "$repo" --json number,title,body,headRefName,author,url,additions,deletions,changedFiles,mergeable,mergeStateStatus,reviewDecision,isDraft,latestReviews 2>&1) || {
     echo "Error: Could not load PR #$pr_num." >&2
     return 1
   }
@@ -222,16 +222,17 @@ print_pr_summary() {
     echo "$body" | sed 's/^/  /'
   fi
   echo ""
-  echo "  CI Status:"
+  echo "  CI Status (latest commit):"
+  local checks_json
+  checks_json=$(gh pr checks "$pr_num" --repo "$repo" --json name,state,bucket 2>/dev/null) || checks_json="[]"
   local ci_summary
-  ci_summary=$(echo "$json" | jq -r '
-    .statusCheckRollup // [] |
+  ci_summary=$(echo "$checks_json" | jq -r '
     if length == 0 then "none"
     else
-      (map(select(.status == "IN_PROGRESS" or .status == "PENDING")) | length) as $pending |
-      (map(select(.status == "COMPLETED" and (.conclusion == "SUCCESS" or .conclusion == ""))) | length) as $pass |
-      (map(select(.status == "COMPLETED" and .conclusion != "" and .conclusion != "SUCCESS")) | length) as $fail |
-      if $fail > 0 then "fail:\($fail)"
+      (map(select(.bucket == "pending")) | length) as $pending |
+      (map(select(.bucket == "pass" or .bucket == "skipping")) | length) as $pass |
+      (map(select(.bucket == "fail")) | length) as $fail |
+      if $fail > 0 then "fail:\($fail):\($pass):\($pending)"
       elif $pending > 0 then "pending:\($pending):\($pass)"
       else "pass"
       end
@@ -247,7 +248,13 @@ print_pr_summary() {
       echo "  • ⏳ $p pending, $pas passing"
       ;;
     fail:*)
-      echo "  • ✗ ${ci_summary#fail:} check(s) failing"
+      local parts="${ci_summary#fail:}"
+      local f="${parts%%:*}"; parts="${parts#*:}"
+      local pas="${parts%%:*}"; parts="${parts#*:}"
+      local p="$parts"
+      local detail="$f failing, $pas passing"
+      [[ "$p" -gt 0 ]] && detail="$detail, $p pending"
+      echo "  • ✗ $detail"
       ;;
     *) echo "  • (checks unknown)" ;;
   esac

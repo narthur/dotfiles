@@ -1,13 +1,24 @@
 {
-    "files.watcherExclude": {
-      "**/.git/objects/**": true,
-      "**/node_modules/**": true,
-      "**/Downloads/**": true,
-      "**/*.log": true
-    },
-    "search.exclude": {
-      "**/node_modules": true,
-      "**/build": true
-    }
+  "files.watcherExclude": {
+    "**/.git/objects/**": true,
+    "**/node_modules/**": true,
+    "**/Downloads/**": true,
+    "**/*.log": true,
+    "**/.cache/**": true,
+    "**/.bundle/**": true,
+    "**/.local/share/containers/**": true,
+    "**/.local/share/Trash/**": true,
+    "**/.asdf/**": true,
+    "**/vaults/**": true
+  },
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/build": true,
+    "**/.cache": true,
+    "**/.bundle": true,
+    "**/.local/share/containers": true,
+    "**/.local/share/Trash": true,
+    "**/.asdf": true,
+    "**/vaults": true
   }
-  
+}
