@@ -180,7 +180,30 @@ All token usage data is stored in `~/.claude/token-usage/`:
 
 ## Adding New Clients
 
-To track a new client/project:
+### Quick Method (Recommended)
+
+Use the `set-claude-client` helper tool:
+
+```bash
+# Interactive mode - walks through unknown projects
+set-claude-client interactive
+
+# List projects with unknown client
+set-claude-client list
+
+# Set client for a specific project
+set-claude-client set /path/to/repo client-name
+
+# Show current mappings
+set-claude-client show
+
+# List all known clients
+set-claude-client clients
+```
+
+### Manual Method
+
+To manually edit the client mapping:
 
 1. Edit `~/.claude/client-mapping.json`
 2. Add the repository path and client name:
@@ -192,6 +215,7 @@ To track a new client/project:
    }
    ```
 3. Client names are automatically normalized to lowercase
+4. Run `sync-claude-tokens` to update existing logs
 
 ## Maintenance
 
