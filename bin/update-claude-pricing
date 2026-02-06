@@ -1,0 +1,169 @@
+#!/bin/bash
+# Update Claude API pricing configuration
+
+pricing_file="$HOME/.claude/pricing.json"
+pricing_source="https://www.anthropic.com/pricing"
+
+# Create pricing file if it doesn't exist
+if [ ! -f "$pricing_file" ]; then
+    echo "Creating new pricing file at $pricing_file"
+    mkdir -p "$(dirname "$pricing_file")"
+    cat > "$pricing_file" << 'EOF'
+{
+  "models": {
+    "claude-haiku-4-5": {
+      "input_per_million": 1.0,
+      "output_per_million": 5.0,
+      "cache_read_per_million": 0.1,
+      "cache_write_per_million": 1.25
+    },
+    "claude-sonnet-4-5": {
+      "input_per_million": 3.0,
+      "output_per_million": 15.0,
+      "cache_read_per_million": 0.3,
+      "cache_write_per_million": 3.75
+    },
+    "claude-opus-4-5": {
+      "input_per_million": 5.0,
+      "output_per_million": 25.0,
+      "cache_read_per_million": 0.5,
+      "cache_write_per_million": 6.25
+    }
+  },
+  "last_updated": "2026-02-06",
+  "source": "https://www.anthropic.com/pricing"
+}
+EOF
+fi
+
+# Function to validate JSON
+validate_json() {
+    if jq empty "$pricing_file" 2>/dev/null; then
+        return 0
+    else
+        echo "Error: Invalid JSON in pricing file" >&2
+        return 1
+    fi
+}
+
+# Function to show current pricing
+show_pricing() {
+    if [ ! -f "$pricing_file" ]; then
+        echo "Pricing file not found: $pricing_file"
+        return 1
+    fi
+    
+    if ! validate_json; then
+        return 1
+    fi
+    
+    echo "Current Claude API Pricing"
+    echo "========================="
+    echo ""
+    
+    last_updated=$(jq -r '.last_updated // "unknown"' "$pricing_file")
+    echo "Last updated: $last_updated"
+    echo ""
+    
+    jq -r '.models | to_entries | .[] | "Model: \(.key)\n  Input: $\(.value.input_per_million) per million\n  Output: $\(.value.output_per_million) per million\n  Cache read: $\(.value.cache_read_per_million) per million\n  Cache write: $\(.value.cache_write_per_million) per million\n"' "$pricing_file"
+    
+    echo "Source: $pricing_source"
+}
+
+# Function to update timestamp
+update_timestamp() {
+    local new_date=$(date +%Y-%m-%d)
+    jq --arg date "$new_date" '.last_updated = $date' "$pricing_file" > "$pricing_file.tmp" && mv "$pricing_file.tmp" "$pricing_file"
+    echo "Updated timestamp to: $new_date"
+}
+
+# Function to edit pricing interactively
+edit_pricing() {
+    if [ -z "$EDITOR" ]; then
+        echo "Error: EDITOR environment variable not set"
+        echo "Please set EDITOR to your preferred editor, e.g.:"
+        echo "  export EDITOR=vim"
+        echo "  export EDITOR=nano"
+        return 1
+    fi
+    
+    local temp_file=$(mktemp)
+    cp "$pricing_file" "$temp_file"
+    
+    echo "Opening pricing file in $EDITOR..."
+    echo "After editing, the file will be validated."
+    echo ""
+    
+    $EDITOR "$temp_file"
+    
+    if jq empty "$temp_file" 2>/dev/null; then
+        mv "$temp_file" "$pricing_file"
+        update_timestamp
+        echo ""
+        echo "Pricing updated successfully!"
+        show_pricing
+    else
+        echo "Error: Invalid JSON. Changes not saved." >&2
+        rm -f "$temp_file"
+        return 1
+    fi
+}
+
+# Main command handling
+case "${1:-show}" in
+    show)
+        show_pricing
+        ;;
+    
+    edit)
+        if ! validate_json; then
+            exit 1
+        fi
+        edit_pricing
+        ;;
+    
+    update-timestamp|timestamp)
+        if ! validate_json; then
+            exit 1
+        fi
+        update_timestamp
+        ;;
+    
+    validate)
+        if validate_json; then
+            echo "Pricing file is valid JSON"
+            exit 0
+        else
+            exit 1
+        fi
+        ;;
+    
+    help|--help|-h)
+        echo "update-claude-pricing - Update Claude API pricing configuration"
+        echo ""
+        echo "Usage: update-claude-pricing [COMMAND]"
+        echo ""
+        echo "Commands:"
+        echo "  show (default)    Display current pricing"
+        echo "  edit              Edit pricing file in your default editor"
+        echo "  timestamp         Update last_updated timestamp to today"
+        echo "  validate          Validate JSON structure"
+        echo "  help              Show this help message"
+        echo ""
+        echo "Pricing file: $pricing_file"
+        echo "Source: $pricing_source"
+        echo ""
+        echo "To update pricing:"
+        echo "  1. Visit $pricing_source"
+        echo "  2. Run: update-claude-pricing edit"
+        echo "  3. Update the pricing values in the JSON file"
+        echo "  4. Save and close - the file will be validated automatically"
+        exit 0
+        ;;
+    
+    *)
+        echo "Error: Unknown command '$1'"
+        echo "Run 'update-claude-pricing help' for usage information."
+        exit 1
+        ;;
+esac

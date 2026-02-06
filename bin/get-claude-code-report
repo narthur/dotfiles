@@ -84,6 +84,89 @@ if [ -n "$start_date" ] || [ -n "$end_date" ]; then
     echo ""
 fi
 
+# Pricing configuration
+pricing_file="$HOME/.claude/pricing.json"
+pricing_loaded=false
+
+# Function to load pricing configuration
+load_pricing() {
+    if [ -f "$pricing_file" ]; then
+        if jq empty "$pricing_file" 2>/dev/null; then
+            pricing_loaded=true
+        else
+            echo "Warning: Invalid pricing file format. Cost calculations disabled." >&2
+            pricing_loaded=false
+        fi
+    else
+        pricing_loaded=false
+    fi
+}
+
+# Function to get base model name from full model identifier
+# e.g., claude-haiku-4-5-20251001 -> claude-haiku-4-5
+get_base_model_name() {
+    local model="$1"
+    # Extract base model name by removing date suffix (format: YYYYMMDD)
+    echo "$model" | sed -E 's/-[0-9]{8}$//'
+}
+
+# Function to get pricing for a model
+get_model_pricing() {
+    local model="$1"
+    local base_model=$(get_base_model_name "$model")
+    
+    if [ "$pricing_loaded" = false ]; then
+        echo ""
+        return
+    fi
+    
+    # Try to find matching pricing entry (exact match)
+    jq -r --arg base "$base_model" '.models | to_entries | map(select(.key == $base)) | .[0].value // empty' "$pricing_file" 2>/dev/null
+}
+
+# Function to calculate cost in dollars
+calculate_cost() {
+    local model="$1"
+    local input_tokens="$2"
+    local output_tokens="$3"
+    local cache_creation_tokens="$4"
+    local cache_read_tokens="$5"
+    
+    if [ "$pricing_loaded" = false ]; then
+        echo ""
+        return
+    fi
+    
+    local pricing=$(get_model_pricing "$model")
+    if [ -z "$pricing" ]; then
+        echo ""
+        return
+    fi
+    
+    local input_price=$(echo "$pricing" | jq -r '.input_per_million // 0')
+    local output_price=$(echo "$pricing" | jq -r '.output_per_million // 0')
+    local cache_write_price=$(echo "$pricing" | jq -r '.cache_write_per_million // 0')
+    local cache_read_price=$(echo "$pricing" | jq -r '.cache_read_per_million // 0')
+    
+    # Calculate cost: (tokens / 1,000,000) * price_per_million
+    local cost=$(echo "scale=4; ($input_tokens / 1000000) * $input_price + ($output_tokens / 1000000) * $output_price + ($cache_creation_tokens / 1000000) * $cache_write_price + ($cache_read_tokens / 1000000) * $cache_read_price" | bc)
+    
+    echo "$cost"
+}
+
+# Function to format cost for display
+format_cost() {
+    local cost="$1"
+    if [ -z "$cost" ] || [ "$cost" = "0" ] || [ "$(echo "$cost < 0.01" | bc)" = "1" ]; then
+        echo ""
+    else
+        printf "$%.2f" "$cost"
+    fi
+}
+
+# Load pricing at startup
+load_pricing
+
 # Function to display stats for a file
 show_stats() {
     local file="$1"
@@ -108,6 +191,25 @@ show_stats() {
     # Input: 1x, Output: 3x, Cache creation: 1.25x, Cache read: 0.1x
     local effective_billable=$(echo "$total_input + ($total_output * 3) + ($total_cache_creation * 1.25) + ($total_cache_read * 0.1)" | bc)
     
+    # Calculate estimated cost
+    local total_cost=0
+    if [ "$pricing_loaded" = true ]; then
+        # Group by model and calculate cost per model group, then sum
+        local cost_sum=0
+        while IFS= read -r line; do
+            local model=$(echo "$line" | jq -r '.model')
+            local model_input=$(echo "$line" | jq -r '.tokens.input')
+            local model_output=$(echo "$line" | jq -r '.tokens.output')
+            local model_cache_creation=$(echo "$line" | jq -r '.tokens.cache_creation')
+            local model_cache_read=$(echo "$line" | jq -r '.tokens.cache_read')
+            local model_cost=$(calculate_cost "$model" "$model_input" "$model_output" "$model_cache_creation" "$model_cache_read")
+            if [ -n "$model_cost" ] && [ "$(echo "$model_cost > 0" | bc)" = "1" ]; then
+                cost_sum=$(echo "$cost_sum + $model_cost" | bc)
+            fi
+        done < <(jq -s 'group_by(.model) | map({model: .[0].model, tokens: {input: (map(.tokens.input) | add), output: (map(.tokens.output) | add), cache_creation: (map(.tokens.cache_creation) | add), cache_read: (map(.tokens.cache_read) | add)}})' "$file" 2>/dev/null | jq -c '.[]')
+        total_cost="$cost_sum"
+    fi
+    
     echo "Repository: $repo_path"
     echo "Sessions: $session_count"
     echo "Total tokens: $total_all"
@@ -116,6 +218,11 @@ show_stats() {
     echo "  - Cache creation: $total_cache_creation"
     echo "  - Cache read: $total_cache_read"
     printf "Effective billable tokens: %.0f (at typical rates: input=1x, output=3x, cache_creation=1.25x, cache_read=0.1x)\n" "$effective_billable"
+    
+    local formatted_cost=$(format_cost "$total_cost")
+    if [ -n "$formatted_cost" ]; then
+        echo "Estimated cost: $formatted_cost"
+    fi
     echo ""
 }
 
@@ -169,6 +276,10 @@ case "$command" in
                 cache_read=$(echo "$line" | jq -r '.tokens.cache_read')
                 effective=$(echo "$input + ($output * 3) + ($cache_creation * 1.25) + ($cache_read * 0.1)" | bc)
                 
+                # Calculate cost
+                cost=$(calculate_cost "$model_name" "$input" "$output" "$cache_creation" "$cache_read")
+                formatted_cost=$(format_cost "$cost")
+                
                 echo "Model: $model_name"
                 echo "  Sessions: $sessions"
                 echo "  Total tokens: $total"
@@ -177,6 +288,9 @@ case "$command" in
                 echo "  - Cache creation: $cache_creation"
                 echo "  - Cache read: $cache_read"
                 printf "  Effective billable: %.0f\n" "$effective"
+                if [ -n "$formatted_cost" ]; then
+                    echo "  Estimated cost: $formatted_cost"
+                fi
                 echo ""
             done
         fi
@@ -195,6 +309,23 @@ case "$command" in
                 cache_read=$(echo "$line" | jq -r '.tokens.cache_read')
                 effective=$(echo "$input + ($output * 3) + ($cache_creation * 1.25) + ($cache_read * 0.1)" | bc)
                 
+                # Calculate cost - need to get models for this client
+                client_cost=0
+                if [ "$pricing_loaded" = true ]; then
+                    while IFS= read -r model_line; do
+                        model=$(echo "$model_line" | jq -r '.model')
+                        model_input=$(echo "$model_line" | jq -r '.tokens.input')
+                        model_output=$(echo "$model_line" | jq -r '.tokens.output')
+                        model_cache_creation=$(echo "$model_line" | jq -r '.tokens.cache_creation')
+                        model_cache_read=$(echo "$model_line" | jq -r '.tokens.cache_read')
+                        model_cost=$(calculate_cost "$model" "$model_input" "$model_output" "$model_cache_creation" "$model_cache_read")
+                        if [ -n "$model_cost" ] && [ "$(echo "$model_cost > 0" | bc)" = "1" ]; then
+                            client_cost=$(echo "$client_cost + $model_cost" | bc)
+                        fi
+                    done < <(jq -s --arg client "$client_name" 'map(.client |= (. // "unknown" | ascii_downcase)) | map(select(.client == $client)) | group_by(.model) | map({model: .[0].model, tokens: {input: (map(.tokens.input) | add), output: (map(.tokens.output) | add), cache_creation: (map(.tokens.cache_creation) | add), cache_read: (map(.tokens.cache_read) | add)}})' "$log_dir/all-repos.jsonl" 2>/dev/null | jq -c '.[]')
+                fi
+                formatted_cost=$(format_cost "$client_cost")
+                
                 echo "Client: $client_name"
                 echo "  Sessions: $sessions"
                 echo "  Total tokens: $total"
@@ -203,6 +334,9 @@ case "$command" in
                 echo "  - Cache creation: $cache_creation"
                 echo "  - Cache read: $cache_read"
                 printf "  Effective billable: %.0f\n" "$effective"
+                if [ -n "$formatted_cost" ]; then
+                    echo "  Estimated cost: $formatted_cost"
+                fi
                 echo ""
             done
         fi
@@ -267,6 +401,10 @@ case "$command" in
             cache_read=$(echo "$line" | jq -r '.tokens.cache_read')
             effective=$(echo "$input + ($output * 3) + ($cache_creation * 1.25) + ($cache_read * 0.1)" | bc)
             
+            # Calculate cost
+            cost=$(calculate_cost "$model_name" "$input" "$output" "$cache_creation" "$cache_read")
+            formatted_cost=$(format_cost "$cost")
+            
             echo "Model: $model_name"
             echo "  Sessions: $sessions"
             echo "  Total tokens: $total"
@@ -275,6 +413,9 @@ case "$command" in
             echo "  - Cache creation: $cache_creation"
             echo "  - Cache read: $cache_read"
             printf "  Effective billable: %.0f\n" "$effective"
+            if [ -n "$formatted_cost" ]; then
+                echo "  Estimated cost: $formatted_cost"
+            fi
             echo ""
         done
         
@@ -283,6 +424,22 @@ case "$command" in
         echo "Total for client: $client_name"
         echo "═══════════════════════════════════════════════════"
         echo ""
+        
+        # Calculate total cost for client
+        client_total_cost=0
+        if [ "$pricing_loaded" = true ]; then
+            while IFS= read -r model_line; do
+                model=$(echo "$model_line" | jq -r '.model')
+                model_input=$(echo "$model_line" | jq -r '.tokens.input')
+                model_output=$(echo "$model_line" | jq -r '.tokens.output')
+                model_cache_creation=$(echo "$model_line" | jq -r '.tokens.cache_creation')
+                model_cache_read=$(echo "$model_line" | jq -r '.tokens.cache_read')
+                model_cost=$(calculate_cost "$model" "$model_input" "$model_output" "$model_cache_creation" "$model_cache_read")
+                if [ -n "$model_cost" ] && [ "$(echo "$model_cost > 0" | bc)" = "1" ]; then
+                    client_total_cost=$(echo "$client_total_cost + $model_cost" | bc)
+                fi
+            done < <(jq -s --arg client "$client_name" 'map(.client |= (. // "unknown" | ascii_downcase)) | map(select(.client == $client)) | group_by(.model) | map({model: .[0].model, tokens: {input: (map(.tokens.input) | add), output: (map(.tokens.output) | add), cache_creation: (map(.tokens.cache_creation) | add), cache_read: (map(.tokens.cache_read) | add)}})' "$log_dir/all-repos.jsonl" 2>/dev/null | jq -c '.[]')
+        fi
         
         jq -s 'map(.client |= (. // "unknown" | ascii_downcase)) | map(select(.client == "'$client_name'")) | {sessions: length, tokens: {input: (map(.tokens.input) | add), output: (map(.tokens.output) | add), cache_creation: (map(.tokens.cache_creation) | add), cache_read: (map(.tokens.cache_read) | add), total: (map(.tokens.total) | add)}}' "$log_dir/all-repos.jsonl" | jq -r 'to_entries | map("\(.key): \(.value)") | .[]' | while IFS=': ' read -r key value; do
             if [ "$key" = "sessions" ]; then
@@ -301,6 +458,10 @@ case "$command" in
                 echo "  - Cache creation: $cache_creation"
                 echo "  - Cache read: $cache_read"
                 printf "Effective billable tokens: %.0f\n" "$effective"
+                formatted_cost=$(format_cost "$client_total_cost")
+                if [ -n "$formatted_cost" ]; then
+                    echo "Estimated cost: $formatted_cost"
+                fi
             fi
         done
         ;;
@@ -365,6 +526,13 @@ case "$command" in
         echo "  Output tokens:        3.0x"
         echo "  Cache creation:       1.25x"
         echo "  Cache read:           0.1x (90% discount)"
+        echo ""
+        echo "Cost calculations:"
+        echo "  Estimated costs are shown when pricing data is available."
+        echo "  Pricing is stored in: $HOME/.claude/pricing.json"
+        echo "  Update pricing with: update-claude-pricing edit"
+        echo "  View current pricing: update-claude-pricing show"
+        echo "  Pricing source: https://www.anthropic.com/pricing"
         echo ""
         echo "Data location: $HOME/.claude/token-usage"
         echo "Client mapping: $HOME/.claude/client-mapping.json"
