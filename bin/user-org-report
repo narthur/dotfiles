@@ -162,57 +162,96 @@ format_review() {
   esac
 }
 
-# Function to determine how a user is involved in a PR
-# Returns a JSON array of involvement types: ["committer", "commenter", "reviewer"]
-# Note: "author" is checked separately from PR data
-determine_pr_involvement() {
-  local owner="$1"
-  local repo="$2"
-  local pr_number="$3"
-  local username="$4"
-  
-  local involvement_types=()
-  
-  # Check commits: fetch PR commits and see if user authored/committed any
-  local commit_count=$(gh api "repos/$owner/$repo/pulls/$pr_number/commits" --jq "[.[] | select(.author.login == \"$username\" or .committer.login == \"$username\")] | length" 2>/dev/null || echo "0")
-  if [[ "$commit_count" =~ ^[0-9]+$ ]] && [[ "$commit_count" -gt 0 ]]; then
-    involvement_types+=("committer")
-  fi
-  
-  # Check review comments (PR-specific comments)
-  local review_comment_count=$(gh api "repos/$owner/$repo/pulls/$pr_number/comments" --jq "[.[] | select(.user.login == \"$username\")] | length" 2>/dev/null || echo "0")
-  if [[ "$review_comment_count" =~ ^[0-9]+$ ]] && [[ "$review_comment_count" -gt 0 ]]; then
-    involvement_types+=("commenter")
-  fi
-  
-  # Check issue comments (general PR comments)
-  local issue_comment_count=$(gh api "repos/$owner/$repo/issues/$pr_number/comments" --jq "[.[] | select(.user.login == \"$username\")] | length" 2>/dev/null || echo "0")
-  if [[ "$issue_comment_count" =~ ^[0-9]+$ ]] && [[ "$issue_comment_count" -gt 0 ]]; then
-    involvement_types+=("commenter")
-  fi
-  
-  # Check reviews
-  local review_count=$(gh api "repos/$owner/$repo/pulls/$pr_number/reviews" --jq "[.[] | select(.user.login == \"$username\")] | length" 2>/dev/null || echo "0")
-  if [[ "$review_count" =~ ^[0-9]+$ ]] && [[ "$review_count" -gt 0 ]]; then
-    involvement_types+=("reviewer")
-  fi
-  
-  # Output as JSON array, removing duplicates
-  if [[ ${#involvement_types[@]} -eq 0 ]]; then
-    echo "[]"
-  else
-    printf '%s\n' "${involvement_types[@]}" | sort -u | jq -R . | jq -s .
-  fi
+# GraphQL query template for fetching PRs with involvement data
+# This query searches for PRs and includes nested fields for commits, reviews, and comments
+read -r -d '' GRAPHQL_PR_QUERY <<'EOF' || true
+query($query: String!, $first: Int, $after: String) {
+  search(query: $query, type: ISSUE, first: $first, after: $after) {
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+    nodes {
+      ... on PullRequest {
+        number
+        title
+        url
+        state
+        mergedAt
+        isDraft
+        updatedAt
+        author {
+          login
+        }
+        labels(first: 100) {
+          nodes {
+            name
+          }
+        }
+        repository {
+          owner {
+            login
+          }
+          name
+        }
+        # Involvement data nested here:
+        # Use smaller limits to avoid node limit errors (100 PRs × 50 commits × 10 threads × 10 comments = 5M max, but we only need to check for user involvement)
+        commits(first: 50) {
+          nodes {
+            commit {
+              author {
+                user {
+                  login
+                }
+              }
+              committer {
+                user {
+                  login
+                }
+              }
+            }
+          }
+        }
+        reviews(first: 50) {
+          nodes {
+            author {
+              login
+            }
+          }
+        }
+        reviewThreads(first: 10) {
+          nodes {
+            comments(first: 10) {
+              nodes {
+                author {
+                  login
+                }
+              }
+            }
+          }
+        }
+        comments(first: 50) {
+          nodes {
+            author {
+              login
+            }
+          }
+        }
+      }
+    }
+  }
 }
+EOF
 
-# Fetch PRs using GitHub search API for better qualifier support
+
+# Fetch PRs using GraphQL API with nested involvement data
 if [[ "$DEBUG" == true ]]; then
   echo "Debug: Fetching PRs for user $USERNAME in org $ORG" >&2
   echo "Debug: Search query: $SEARCH_QUERY" >&2
   echo "Debug: State: $STATE" >&2
 fi
 
-# Use gh api search for PRs to support full search qualifiers
+# Build GraphQL search query
 PR_SEARCH_QUERY="is:pr $SEARCH_QUERY"
 if [[ "$STATE" != "all" ]]; then
   if [[ "$STATE" == "merged" ]]; then
@@ -224,113 +263,141 @@ if [[ "$STATE" != "all" ]]; then
   fi
 fi
 
-# Fetch PRs using search API
-PR_SEARCH_RESULT=$(gh api --paginate "search/issues?q=$(echo "$PR_SEARCH_QUERY" | jq -sRr @uri)&per_page=100" 2>&1) || {
-  echo "Error: Failed to search for PRs. Check your GitHub CLI authentication and permissions." >&2
-  if [[ "$DEBUG" == true ]]; then
-    echo "Debug: Search query was: $PR_SEARCH_QUERY" >&2
-    echo "Debug: Raw error output:" >&2
-    echo "$PR_SEARCH_RESULT" >&2
-  fi
-  exit 1
-}
+# Fetch PRs using GraphQL with pagination
+PRS_JSON="[]"
+CURSOR=""
+FIRST_PAGE=true
 
-# Extract PR data from search results and transform to match expected format
-# Note: Search API returns items in .items array
-# involves: already filters by user, so we only need to check org
-# Repository info is in repository_url, need to parse it
-PRS_JSON=$(echo "$PR_SEARCH_RESULT" | jq --arg org "$ORG" --arg user "$USERNAME" '
-  if type == "object" and has("items") then
-    .items
-  elif type == "array" then
-    .
+while true; do
+  # Build GraphQL variables as JSON
+  if [[ -z "$CURSOR" ]]; then
+    GRAPHQL_VARS_JSON=$(jq -n \
+      --arg query "$PR_SEARCH_QUERY" \
+      --argjson first 100 \
+      '{query: $query, first: $first}')
   else
-    []
-  end |
-  map(
-    . as $item |
-    ($item.repository_url | split("/") | {owner: .[-2], name: .[-1]}) as $repo |
-    $item | select($repo.owner | ascii_downcase == ($org | ascii_downcase)) |
-    {
-      number: .number,
-      title: .title,
-      author: {login: .user.login},
-      updatedAt: .updated_at,
-      state: (if .pull_request.merged_at then "MERGED" elif .state == "open" then "OPEN" else "CLOSED" end),
-      headRepository: {owner: {login: $repo.owner}, name: $repo.name},
-      headRepositoryOwner: {login: $repo.owner},
-      url: .html_url,
-      labels: (.labels // [] | map({name: .name})),
-      isDraft: .draft,
-      reviewDecision: null,
-      repository: {owner: {login: $repo.owner}, name: $repo.name}
-    }
-  )
-')
+    GRAPHQL_VARS_JSON=$(jq -n \
+      --arg query "$PR_SEARCH_QUERY" \
+      --argjson first 100 \
+      --arg cursor "$CURSOR" \
+      '{query: $query, first: $first, after: $cursor}')
+  fi
+  
+  if [[ "$DEBUG" == true ]]; then
+    echo "Debug: GraphQL search query: $PR_SEARCH_QUERY" >&2
+    if [[ -n "$CURSOR" ]]; then
+      echo "Debug: Using cursor: $CURSOR" >&2
+    fi
+  fi
+  
+  # Execute GraphQL query
+  # Construct full request body with query and variables
+  GRAPHQL_REQUEST_BODY=$(jq -n \
+    --arg query "$GRAPHQL_PR_QUERY" \
+    --argjson variables "$GRAPHQL_VARS_JSON" \
+    '{query: $query, variables: $variables}')
+  
+  if [[ "$DEBUG" == true ]]; then
+    echo "Debug: Full GraphQL request:" >&2
+    echo "$GRAPHQL_REQUEST_BODY" | jq . >&2
+    echo "" >&2
+  fi
+  
+  # Use gh api to POST to graphql endpoint with full body
+  GRAPHQL_RESPONSE=$(echo "$GRAPHQL_REQUEST_BODY" | gh api graphql --input - 2>&1) || {
+    echo "Error: Failed to search for PRs using GraphQL. Check your GitHub CLI authentication and permissions." >&2
+    if [[ "$DEBUG" == true ]]; then
+      echo "Debug: Search query was: $PR_SEARCH_QUERY" >&2
+      echo "Debug: Raw error output:" >&2
+      echo "$GRAPHQL_RESPONSE" >&2
+    fi
+    exit 1
+  }
+  
+  # Check for GraphQL errors
+  if echo "$GRAPHQL_RESPONSE" | jq -e '.errors' >/dev/null 2>&1; then
+    echo "Error: GraphQL API returned errors:" >&2
+    echo "$GRAPHQL_RESPONSE" | jq '.errors' >&2
+    exit 1
+  fi
+  
+  # Extract PRs from this page and transform to expected format
+  PAGE_PRS=$(echo "$GRAPHQL_RESPONSE" | jq --arg org "$ORG" --arg user "$USERNAME" '
+    .data.search.nodes |
+    map(select(. != null)) |  # Filter out null nodes (non-PRs)
+    map(
+      . as $pr |
+      select($pr.repository.owner.login | ascii_downcase == ($org | ascii_downcase)) |
+      {
+        number: .number,
+        title: .title,
+        author: {login: (.author.login // "")},
+        updatedAt: .updatedAt,
+        state: (if (.mergedAt // null) != null then "MERGED" elif .state == "OPEN" then "OPEN" else "CLOSED" end),
+        headRepository: {owner: {login: .repository.owner.login}, name: .repository.name},
+        headRepositoryOwner: {login: .repository.owner.login},
+        url: .url,
+        labels: (.labels.nodes // [] | map({name: .name})),
+        isDraft: .isDraft,
+        reviewDecision: null,
+        repository: {owner: {login: .repository.owner.login}, name: .repository.name},
+        # Include raw GraphQL data for involvement extraction
+        _graphql_data: {
+          author: .author,
+          commits: .commits,
+          reviews: .reviews,
+          reviewThreads: .reviewThreads,
+          comments: .comments
+        }
+      }
+    )
+  ')
+  
+  # Merge with existing PRs
+  PRS_JSON=$(echo "$PRS_JSON" "$PAGE_PRS" | jq -s 'add')
+  
+  # Check if there are more pages
+  HAS_NEXT_PAGE=$(echo "$GRAPHQL_RESPONSE" | jq -r '.data.search.pageInfo.hasNextPage')
+  CURSOR=$(echo "$GRAPHQL_RESPONSE" | jq -r '.data.search.pageInfo.endCursor // ""')
+  
+  if [[ "$HAS_NEXT_PAGE" != "true" ]] || [[ -z "$CURSOR" ]]; then
+    break
+  fi
+  
+  FIRST_PAGE=false
+done
 
-# Enrich PRs with involvement types
+# Enrich PRs with involvement types from GraphQL data
 # This determines how the user was involved: author, committer, commenter, reviewer
 if [[ "$DEBUG" == true ]]; then
-  echo "Debug: Enriching PRs with involvement types..." >&2
+  echo "Debug: Extracting involvement types from GraphQL data..." >&2
 fi
 
-# Convert PRS_JSON to array and enrich each PR
-PRS_ENRICHED="[]"
+# Process each PR to extract involvement and remove _graphql_data field
 PR_COUNT=$(echo "$PRS_JSON" | jq 'length')
 
 if [[ "$PR_COUNT" -gt 0 ]]; then
-  for i in $(seq 0 $((PR_COUNT - 1))); do
-    PR=$(echo "$PRS_JSON" | jq ".[$i]")
-    OWNER=$(echo "$PR" | jq -r '.repository.owner.login')
-    REPO=$(echo "$PR" | jq -r '.repository.name')
-    PR_NUM=$(echo "$PR" | jq -r '.number')
-    AUTHOR=$(echo "$PR" | jq -r '.author.login')
-    
-    # Build involvement types array
-    INVOLVEMENT_TYPES=()
-    
-    # Check if user is author
-    if [[ "$AUTHOR" == "$USERNAME" ]]; then
-      INVOLVEMENT_TYPES+=("author")
-    fi
-    
-    # Check other involvement types
-    OTHER_INVOLVEMENT=$(determine_pr_involvement "$OWNER" "$REPO" "$PR_NUM" "$USERNAME" 2>/dev/null || echo "[]")
-    
-    # Merge involvement types
-    if [[ "$OTHER_INVOLVEMENT" != "[]" ]] && [[ -n "$OTHER_INVOLVEMENT" ]]; then
-      # Add other involvement types (committer, commenter, reviewer)
-      while IFS= read -r type; do
-        if [[ -n "$type" ]] && [[ "$type" != "null" ]]; then
-          INVOLVEMENT_TYPES+=("$type")
-        fi
-      done < <(echo "$OTHER_INVOLVEMENT" | jq -r '.[]')
-    fi
-    
-    # Remove duplicates and create JSON array
-    # Handle empty array case - if no types, create empty JSON array directly
-    if [[ ${#INVOLVEMENT_TYPES[@]} -eq 0 ]]; then
-      INVOLVEMENT_JSON='[]'
-    else
-      INVOLVEMENT_JSON=$(printf '%s\n' "${INVOLVEMENT_TYPES[@]}" | sort -u | jq -R . | jq -s .)
-    fi
-    
-    # Note: We don't add a fallback "involved" type because involves: search includes
-    # PRs where a review was requested, which shouldn't count as actual involvement.
-    # Only PRs with detected involvement types (author, committer, commenter, reviewer)
-    # will be shown.
-    
-    # Add involvement to PR object
-    PR_ENRICHED=$(echo "$PR" | jq --argjson involvement "$INVOLVEMENT_JSON" '. + {involvement: $involvement}')
-    PRS_ENRICHED=$(echo "$PRS_ENRICHED" | jq --argjson pr "$PR_ENRICHED" '. + [$pr]')
-    
-    if [[ "$DEBUG" == true ]]; then
-      echo "Debug: PR #$PR_NUM in $OWNER/$REPO: involvement=$(echo "$INVOLVEMENT_JSON" | jq -r 'join(", ")')" >&2
-    fi
-  done
+  PRS_ENRICHED=$(echo "$PRS_JSON" | jq --arg user "$USERNAME" '
+    map(
+      . as $pr |
+      # Extract involvement from GraphQL data
+      ($pr._graphql_data // {}) as $gql |
+      (if $pr.author.login == $user then ["author"] else [] end) as $author_involvement |
+      ([$gql.commits.nodes[]?.commit | select(.author.user.login == $user or .committer.user.login == $user)] | if length > 0 then ["committer"] else [] end) as $committer_involvement |
+      ([$gql.reviews.nodes[]? | select(.author.login == $user)] | if length > 0 then ["reviewer"] else [] end) as $reviewer_involvement |
+      (([$gql.reviewThreads.nodes[]?.comments.nodes[]? | select(.author.login == $user)] | length) + ([$gql.comments.nodes[]? | select(.author.login == $user)] | length) | if . > 0 then ["commenter"] else [] end) as $commenter_involvement |
+      ($author_involvement + $committer_involvement + $reviewer_involvement + $commenter_involvement | unique) as $involvement |
+      # Remove _graphql_data and add involvement
+      ($pr | del(._graphql_data)) + {involvement: $involvement}
+    )
+  ')
+  
+  PRS_JSON="$PRS_ENRICHED"
+  
+  if [[ "$DEBUG" == true ]]; then
+    echo "$PRS_JSON" | jq -r '.[] | "Debug: PR #\(.number) in \(.repository.name): involvement=[\(.involvement | join(", "))]"' >&2
+  fi
 fi
-
-PRS_JSON="$PRS_ENRICHED"
 
 # Apply limit if specified
 if [[ "$LIMIT" -gt 0 ]]; then
