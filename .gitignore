@@ -4,11 +4,12 @@
 !.claude/
 !.claude/agents/
 !.claude/agents/pr-feedback-resolver.md
-!.claude/agents/pr-triage.md
 !.claude/hooks/
 !.claude/hooks/track-tokens.sh
 !.claude/settings.json
 !.claude/skills/
+!.claude/skills/pr-triage/
+!.claude/skills/pr-triage/SKILL.md
 !.claude/skills/resolve-pr-feedback/
 !.claude/skills/resolve-pr-feedback/SKILL.md
 !.claude/skills/review-prs/
