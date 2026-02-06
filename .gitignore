@@ -61,6 +61,8 @@
 !.vscode/settings.json
 !bin/
 !bin/*
+!docs/
+!docs/*
 !packages.txt
 !prompts/
 !prompts/extract-pr.md
