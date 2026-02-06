@@ -6,6 +6,31 @@
 # Source environment variables
 source ~/.env
 
+# Helper function to check if a datapoint should be updated
+# Returns 0 (success) if update should proceed, 1 (failure) if it should be skipped
+should_update() {
+  local goalslug=$1
+  local requestid=$2
+  local new_value=$3
+  
+  # Get existing datapoint value (if any) for this requestid
+  existing_value=$(buzz view "$goalslug" --json --datapoints 2>/dev/null | \
+    jq -r --arg rid "$requestid" '.datapoints[] | select(.requestid == $rid) | .value' | \
+    head -1)
+  
+  # If no existing value, update
+  if [ -z "$existing_value" ]; then
+    return 0
+  fi
+  
+  # Compare: update only if new value is greater
+  if (( $(echo "$new_value > $existing_value" | bc -l) )); then
+    return 0
+  fi
+  
+  return 1
+}
+
 # Get current date in YYYY-MM-DD format (used as datapoint id)
 today=$(date +%Y-%m-%d)
 
@@ -18,10 +43,22 @@ touched_count=$(find "$CRM_DIR" -type f -name "*.md" -exec grep -l "^Last Contac
 
 # Add datapoint to rolofresh goal
 echo "Syncing rolofresh: $modified_count modified CRM docs for $today"
-buzz add --requestid "$today" rolofresh "$modified_count" "CRM docs modified on $today"
+if should_update rolofresh "$today" "$modified_count"; then
+  buzz add --requestid "$today" rolofresh "$modified_count" "CRM docs modified on $today"
+else
+  existing_value=$(buzz view rolofresh --json --datapoints 2>/dev/null | \
+    jq -r --arg rid "$today" '.datapoints[] | select(.requestid == $rid) | .value' | head -1)
+  echo "Skipping rolofresh update: existing value ($existing_value) is greater than or equal to new value ($modified_count)"
+fi
 
 # Add datapoint to rolotouch goal
 echo "Syncing rolotouch: $touched_count contacts touched on $today"
-buzz add --requestid "$today" rolotouch "$touched_count" "Contacts touched on $today"
+if should_update rolotouch "$today" "$touched_count"; then
+  buzz add --requestid "$today" rolotouch "$touched_count" "Contacts touched on $today"
+else
+  existing_value=$(buzz view rolotouch --json --datapoints 2>/dev/null | \
+    jq -r --arg rid "$today" '.datapoints[] | select(.requestid == $rid) | .value' | head -1)
+  echo "Skipping rolotouch update: existing value ($existing_value) is greater than or equal to new value ($touched_count)"
+fi
 
 echo "Sync complete."
