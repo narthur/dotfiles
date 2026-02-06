@@ -648,6 +648,10 @@ else
         fi
       done
     done
+    
+    # Add legend for involvement types
+    echo ""
+    echo -e "  Inv: \033[32mA\033[0m=author \033[34mC\033[0m=committer \033[36mR\033[0m=reviewer \033[33mM\033[0m=commenter"
   fi
   
   # Display issues grouped by repository (issues don't have involvement types)
