@@ -95,17 +95,27 @@ run_capture_phase() {
     while IFS= read -r project_id; do
         log_step "Scanning: $project_id"
 
-        # Check if project has auto_capture_todos enabled
+        # Get project path and check auto_capture setting
+        local project_data
+        project_data=$(registry_get_project "$project_id")
         local auto_capture
-        auto_capture=$(registry_get_project "$project_id" | jq -r '.orchestration.auto_capture_todos')
+        auto_capture=$(echo "$project_data" | jq -r '.orchestration.auto_capture_todos')
+        local project_path
+        project_path=$(echo "$project_data" | jq -r '.path')
 
         if [[ "$auto_capture" != "true" ]]; then
             log "  → TODO capture not enabled (skipping)"
             continue
         fi
 
-        # Run capture
-        if "${HOME}/.claude/skills/capture/execute.sh" scan "$project_id" >> "$LOG_FILE" 2>&1; then
+        if [[ -z "$project_path" ]] || [[ ! -d "$project_path" ]]; then
+            log_error "Project path not found or invalid: $project_path"
+            STATS_ERRORS=$((STATS_ERRORS + 1))
+            continue
+        fi
+
+        # Run capture in project directory for proper token attribution
+        if (cd "$project_path" && "${HOME}/.claude/skills/capture/execute.sh" scan "$project_id") >> "$LOG_FILE" 2>&1; then
             STATS_PROJECTS_PROCESSED=$((STATS_PROJECTS_PROCESSED + 1))
         else
             log_error "Failed to scan $project_id"

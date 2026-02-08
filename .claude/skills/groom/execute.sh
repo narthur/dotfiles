@@ -251,8 +251,18 @@ auto_groom() {
     echo "Processing $project_count project(s)"
     echo ""
 
-    echo "$projects" | jq -r '.[].id' | while read -r project_id; do
-        groom_project "$project_id" "$unlabeled_only"
+    echo "$projects" | jq -c '.[]' | while read -r project_json; do
+        local project_id
+        project_id=$(echo "$project_json" | jq -r '.id')
+        local project_path
+        project_path=$(echo "$project_json" | jq -r '.path')
+
+        # Run in project directory for proper token attribution
+        if [[ -n "$project_path" ]] && [[ -d "$project_path" ]]; then
+            (cd "$project_path" && groom_project "$project_id" "$unlabeled_only")
+        else
+            groom_project "$project_id" "$unlabeled_only"
+        fi
         echo ""
     done
 
@@ -363,7 +373,16 @@ main() {
                 exit 1
             fi
 
-            groom_project "$project_id" "false"
+            # Get project path for token attribution
+            local project_path
+            project_path=$(registry_get_project "$project_id" | jq -r '.path')
+
+            # Run in project directory if available
+            if [[ -n "$project_path" ]] && [[ -d "$project_path" ]]; then
+                (cd "$project_path" && groom_project "$project_id" "false")
+            else
+                groom_project "$project_id" "false"
+            fi
             ;;
 
         issue)

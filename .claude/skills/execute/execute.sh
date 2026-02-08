@@ -351,44 +351,60 @@ auto_execute() {
 
     local executed=0
 
-    echo "$projects" | jq -r '.[].id' | while read -r project_id; do
+    echo "$projects" | jq -c '.[]' | while read -r project_json; do
         if [[ $executed -ge $max_issues ]]; then
             break
         fi
 
+        local project_id
+        project_id=$(echo "$project_json" | jq -r '.id')
+        local project_path
+        project_path=$(echo "$project_json" | jq -r '.path')
+
         echo -e "${BLUE}→${NC} Analyzing project: $project_id"
 
-        # Fetch issues
-        local issues
-        issues=$(fetch_project_issues "$project_id")
-
-        local issue_count
-        issue_count=$(echo "$issues" | jq 'length')
-
-        if [[ $issue_count -eq 0 ]]; then
-            echo "  No open issues"
+        # Verify project path exists
+        if [[ -z "$project_path" ]] || [[ ! -d "$project_path" ]]; then
+            echo "  Error: Project path not found: $project_path"
             continue
         fi
 
-        echo "  Found $issue_count open issue(s)"
+        # Run in project directory for proper token attribution
+        (
+            cd "$project_path" || exit 1
 
-        # Select executable issue
-        local selected_issue
-        selected_issue=$(select_executable_issue "$project_id" "$issues")
+            # Fetch issues
+            local issues
+            issues=$(fetch_project_issues "$project_id")
 
-        if [[ "$selected_issue" == "{}" ]] || [[ -z "$selected_issue" ]]; then
-            echo "  No executable issues found"
-            continue
-        fi
+            local issue_count
+            issue_count=$(echo "$issues" | jq 'length')
 
-        local issue_number
-        issue_number=$(echo "$selected_issue" | jq -r '.number')
-        echo -e "  ${GREEN}✓${NC} Selected issue #$issue_number for execution"
+            if [[ $issue_count -eq 0 ]]; then
+                echo "  No open issues"
+                exit 0
+            fi
 
-        # Execute the issue
-        if execute_issue "$project_id" "$selected_issue"; then
-            executed=$((executed + 1))
-        fi
+            echo "  Found $issue_count open issue(s)"
+
+            # Select executable issue
+            local selected_issue
+            selected_issue=$(select_executable_issue "$project_id" "$issues")
+
+            if [[ "$selected_issue" == "{}" ]] || [[ -z "$selected_issue" ]]; then
+                echo "  No executable issues found"
+                exit 0
+            fi
+
+            local issue_number
+            issue_number=$(echo "$selected_issue" | jq -r '.number')
+            echo -e "  ${GREEN}✓${NC} Selected issue #$issue_number for execution"
+
+            # Execute the issue
+            if execute_issue "$project_id" "$selected_issue"; then
+                executed=$((executed + 1))
+            fi
+        )
 
         if [[ $executed -ge $max_issues ]]; then
             break
