@@ -1,8 +1,11 @@
 # Git Hooks
 
-## Pre-Commit Hook - Blacklist Checker
+## Pre-Commit Hook
 
-The `pre-commit` hook checks staged files for sensitive strings before allowing a commit.
+The `pre-commit` hook performs multiple checks before allowing a commit:
+
+1. **GitButler Workspace Branch Warning** - Warns before committing to `gitbutler/workspace` branch
+2. **Blacklist String Checker** - Checks staged files for sensitive strings
 
 ### Setup
 
@@ -17,9 +20,10 @@ The `pre-commit` hook checks staged files for sensitive strings before allowing 
    # Git Commit Blacklist
    # Add sensitive strings that should not be committed (one per line)
    # Lines starting with # are comments
+   # Matching is case-insensitive - no need to add case variations
 
    # Add your sensitive strings here
-   # Examples:
+   # Examples (matches any case):
    # mycompany
    # secretproject
    # myusername
@@ -33,7 +37,8 @@ The `pre-commit` hook checks staged files for sensitive strings before allowing 
 
 ### How It Works
 
-- Reads patterns from `~/.gitblacklist.txt` (case-insensitive)
+- Reads patterns from `~/.gitblacklist.txt`
+- **Case-insensitive matching** - no need to add case variations (e.g., just add "myproject", matches "MyProject", "MYPROJECT", etc.)
 - Checks all staged files for any blacklisted strings
 - Shows violations with file names and line numbers
 - Asks for confirmation before allowing the commit
