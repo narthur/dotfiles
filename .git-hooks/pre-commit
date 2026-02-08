@@ -1,17 +1,78 @@
 #!/bin/bash
+# Pre-commit hook to check for blacklisted strings
 
-# Get the current branch name
-current_branch=$(git symbolic-ref --short HEAD 2>/dev/null)
+set -e
 
-# Check if we're on a gitbutler/workspace branch
-if [[ "$current_branch" == "gitbutler/workspace" ]]; then
-    echo "⚠️  You are about to commit to branch: $current_branch"
-    echo ""
-    read -p "Are you sure you want to commit to this branch? (y/N): " -n 1 -r
-    echo ""
-    
+BLACKLIST_FILE="${HOME}/.gitblacklist.txt"
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# Check if blacklist file exists
+if [[ ! -f "$BLACKLIST_FILE" ]]; then
+    echo "Warning: Blacklist file not found at $BLACKLIST_FILE"
+    exit 0
+fi
+
+# Read blacklist (skip comments and empty lines)
+blacklist_patterns=()
+while IFS= read -r line; do
+    # Skip comments and empty lines
+    [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
+    blacklist_patterns+=("$line")
+done < "$BLACKLIST_FILE"
+
+# If no patterns, skip check
+if [[ ${#blacklist_patterns[@]} -eq 0 ]]; then
+    exit 0
+fi
+
+# Get staged files (exclude deleted files)
+staged_files=$(git diff --cached --name-only --diff-filter=ACM)
+
+# Check each staged file for blacklisted strings
+found_violations=false
+violations_output=""
+
+while IFS= read -r file; do
+    # Skip if file doesn't exist (shouldn't happen with our filter, but safe)
+    [[ ! -f "$file" ]] && continue
+
+    # Check file against each blacklist pattern
+    for pattern in "${blacklist_patterns[@]}"; do
+        # Use grep with line numbers, case-insensitive
+        matches=$(grep -n -i "$pattern" "$file" 2>/dev/null || true)
+
+        if [[ -n "$matches" ]]; then
+            found_violations=true
+            violations_output+="${YELLOW}${file}${NC} contains blacklisted string '${RED}${pattern}${NC}':\n"
+            # Show first 3 matches
+            echo "$matches" | head -3 | while IFS= read -r match; do
+                violations_output+="  ${match}\n"
+            done
+            violations_output+="\n"
+        fi
+    done
+done <<< "$staged_files"
+
+# If violations found, warn and ask for confirmation
+if [[ "$found_violations" == "true" ]]; then
+    echo -e "\n${RED}WARNING: Blacklisted strings found in staged files!${NC}\n"
+    echo -e "$violations_output"
+    echo -e "${YELLOW}These strings are in your blacklist file: $BLACKLIST_FILE${NC}"
+    echo -e "${YELLOW}You may be committing sensitive information.${NC}\n"
+
+    # In non-interactive mode or CI, fail the commit
+    if [[ ! -t 0 ]]; then
+        echo "Running in non-interactive mode. Commit blocked."
+        exit 1
+    fi
+
+    # Ask user if they want to proceed
+    read -p "Do you want to proceed with this commit anyway? [y/N] " -n 1 -r
+    echo
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "Commit cancelled."
+        echo "Commit aborted."
         exit 1
     fi
 fi
