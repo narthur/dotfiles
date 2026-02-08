@@ -97,9 +97,46 @@ Personal dotfiles and scripts for my Linux desktop setup.
 
 ## Setup
 
+This repo uses a bare git repository to manage dotfiles directly in `$HOME`.
+
+### New Machine
+
+```bash
+# Clone the bare repo
+git clone --bare https://github.com/narthur/dotfiles.git $HOME/.dotfiles
+
+# Define the alias (add to .bashrc later)
+alias dotfiles='git --git-dir=$HOME/.dotfiles --work-tree=$HOME'
+
+# Don't show untracked files (the entire home directory)
+dotfiles config --local status.showUntrackedFiles no
+
+# Checkout the files
+dotfiles checkout
+```
+
+If checkout fails due to existing files, back them up first:
+
+```bash
+mkdir -p ~/.dotfiles-backup
+dotfiles checkout 2>&1 | grep -E "^\s+" | xargs -I{} mv {} ~/.dotfiles-backup/{}
+dotfiles checkout
+```
+
+### Post-Setup
+
 1. Install packages: `~/bin/install-packages`
 2. Configure postfix for local mail: `~/bin/configure-postfix`
 3. Install crontab: `crontab ~/.config/crontab`
+
+### Daily Usage
+
+```bash
+dotfiles status              # Check status
+dotfiles add ~/.vimrc        # Track a new file
+dotfiles commit -m "message" # Commit changes
+dotfiles push                # Push to GitHub
+```
 
 ## Mail (Cron Output)
 
