@@ -118,13 +118,14 @@ Adjust options based on PR state:
 
 **Option 1 - Fix failing CI:**
 
-1. Determine workspace type (GitButler or standard git)
-2. Checkout the PR branch:
+1. **Review CI run history first.** Before re-running or fixing anything, check whether the failing check has already been re-run previously. Use `gh run list --branch <branch> --limit 5` to see recent runs. If a check has already failed multiple times across different runs, it's almost certainly a real bug — don't re-run, investigate and fix instead. Only re-run if this is the first failure and it looks transient (e.g. timeout, network error, resource exhaustion).
+2. Determine workspace type (GitButler or standard git)
+3. Checkout the PR branch:
    - **Standard git**: `gh pr checkout <number>`
    - **GitButler**: Check if branch exists in `but status`, if not create it
-3. Identify failing checks and their logs
-4. Fix the issues directly
-5. After fixes, commit and push
+4. Identify failing checks and their logs
+5. Fix the issues directly
+6. After fixes, commit and push
 
 **Option 2 - Resolve feedback:**
 

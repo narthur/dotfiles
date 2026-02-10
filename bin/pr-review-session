@@ -69,10 +69,18 @@ write_session() {
   fi
 }
 
-# Output list of open PR numbers, sorted by number (one per line).
+# Get the default branch for the repo.
+get_default_branch() {
+  local repo="$1"
+  gh repo view "$repo" --json defaultBranchRef -q '.defaultBranchRef.name'
+}
+
+# Output list of open PR numbers targeting the default branch, sorted by number (one per line).
 get_open_pr_numbers_sorted() {
   local repo="$1"
-  gh pr list --state open --repo "$repo" --json number -q '.[].number' | sort -n
+  local default_branch
+  default_branch=$(get_default_branch "$repo")
+  gh pr list --state open --repo "$repo" --base "$default_branch" --json number -q '.[].number' | sort -n
 }
 
 # Get unreviewed PR numbers for repo (open PRs minus reviewed), sorted by number.
@@ -298,8 +306,10 @@ cmd_list() {
   reviewed_json=$(echo "$session" | jq -c '.reviewed')
   local unreviewed
   unreviewed=$(get_unreviewed_numbers "$repo" "$session")
+  local default_branch
+  default_branch=$(get_default_branch "$repo")
   local prs_json
-  prs_json=$(gh pr list --state open --repo "$repo" --json number,title,updatedAt,author,isDraft,reviewDecision 2>&1) || {
+  prs_json=$(gh pr list --state open --repo "$repo" --base "$default_branch" --json number,title,updatedAt,author,isDraft,reviewDecision 2>&1) || {
     echo "Error: Failed to fetch PRs." >&2
     exit 1
   }
