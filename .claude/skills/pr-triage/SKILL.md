@@ -103,8 +103,9 @@ What would you like to do?
 5. Mark ready - Convert from draft to ready for review
 6. Merge PR - Merge the pull request
 7. View PR in browser - Open the PR URL
-8. Next - Mark reviewed and move to next unreviewed (`pr-review-session next`)
-9. Reset - Reset the triage session (`pr-review-session reset`)
+8. Snooze - Temporarily hide this PR and revisit later (e.g. 1h, 1d, 1w)
+9. Next - Mark reviewed and move to next unreviewed (`pr-review-session next`)
+10. Reset - Reset the triage session (`pr-review-session reset`)
 ```
 
 Adjust options based on PR state:
@@ -164,6 +165,12 @@ gh pr merge <number> --squash  # or --merge, --rebase based on repo settings
 gh pr view <number> --web
 ```
 
+**Option 8 - Snooze:**
+
+1. Ask the user how long to snooze (e.g. 1h, 4h, 1d, 3d, 1w), or accept inline if already specified
+2. Run: `pr-review-session snooze <number> <duration>`
+3. The PR will be hidden from the triage list until the snooze expires, then automatically reappear
+
 ### Step 6: Continue Loop
 
 After each action:
@@ -199,6 +206,7 @@ After each action:
 | `pr-review-session next`                    | Mark current as triaged and show next unreviewed (wraps)  |
 | `pr-review-session view [N] [--web]`        | Show PR summary and details; N = number or current branch |
 | `pr-review-session status`                  | Show session state (repo, triaged count, current PR)      |
+| `pr-review-session snooze [N] <dur>`        | Snooze a PR for a duration (e.g. 1h, 1d, 1w)             |
 | `pr-review-session reset`                   | Reset the triage session for this repo                    |
 | `gh pr checkout <number>`                   | Checkout PR branch                                        |
 | `gh pr ready <number>`                      | Mark draft as ready                                       |

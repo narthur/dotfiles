@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Sync CRM activity to Beeminder goals
-# Counts modified CRM docs and contacts touched today
+# Counts modified CRM docs and contacts touched for the last 7 days
 
 # Source environment variables
 source ~/.env
@@ -31,34 +31,39 @@ should_update() {
   return 1
 }
 
-# Get current date in YYYY-MM-DD format (used as datapoint id)
-today=$(date +%Y-%m-%d)
-
-# Count CRM docs modified today
-# Find files modified since start of today (midnight)
-modified_count=$(find "$CRM_DIR" -type f -name "*.md" -newermt "$today 00:00:00" | wc -l)
-
-# Count contacts with Last Contact date of today
-touched_count=$(find "$CRM_DIR" -type f -name "*.md" -exec grep -l "^Last Contact: $today" {} \; | wc -l)
-
-# Add datapoint to rolofresh goal
-echo "Syncing rolofresh: $modified_count modified CRM docs for $today"
-if should_update rolofresh "$today" "$modified_count"; then
-  buzz add --requestid "$today" rolofresh "$modified_count" "CRM docs modified on $today"
-else
-  existing_value=$(buzz view rolofresh --json --datapoints 2>/dev/null | \
-    jq -r --arg rid "$today" '.datapoints[] | select(.requestid == $rid) | .value' | head -1)
-  echo "Skipping rolofresh update: existing value ($existing_value) is greater than or equal to new value ($modified_count)"
-fi
-
-# Add datapoint to rolotouch goal
-echo "Syncing rolotouch: $touched_count contacts touched on $today"
-if should_update rolotouch "$today" "$touched_count"; then
-  buzz add --requestid "$today" rolotouch "$touched_count" "Contacts touched on $today"
-else
-  existing_value=$(buzz view rolotouch --json --datapoints 2>/dev/null | \
-    jq -r --arg rid "$today" '.datapoints[] | select(.requestid == $rid) | .value' | head -1)
-  echo "Skipping rolotouch update: existing value ($existing_value) is greater than or equal to new value ($touched_count)"
-fi
+# Process the last 7 days
+for i in {0..6}; do
+  # Calculate date for this iteration (i days ago)
+  date_ymd=$(date -d "$i days ago" +%Y-%m-%d)
+  date_yyyymmdd=$(date -d "$i days ago" +%Y%m%d)
+  
+  # Count CRM docs modified on this date
+  # Find files modified on this specific date (between start of day and start of next day)
+  next_date=$(date -d "$date_ymd +1 day" +%Y-%m-%d)
+  modified_count=$(find "$CRM_DIR" -type f -name "*.md" -newermt "$date_ymd 00:00:00" ! -newermt "$next_date 00:00:00" 2>/dev/null | wc -l)
+  
+  # Count contacts with Last Contact date of this date
+  touched_count=$(find "$CRM_DIR" -type f -name "*.md" -exec grep -l "^Last Contact: $date_ymd" {} \; 2>/dev/null | wc -l)
+  
+  # Add datapoint to rolofresh goal
+  echo "Syncing rolofresh: $modified_count modified CRM docs for $date_ymd"
+  if should_update rolofresh "$date_ymd" "$modified_count"; then
+    buzz add --requestid "$date_ymd" --daystamp "$date_yyyymmdd" rolofresh "$modified_count" "CRM docs modified on $date_ymd"
+  else
+    existing_value=$(buzz view rolofresh --json --datapoints 2>/dev/null | \
+      jq -r --arg rid "$date_ymd" '.datapoints[] | select(.requestid == $rid) | .value' | head -1)
+    echo "Skipping rolofresh update: existing value ($existing_value) is greater than or equal to new value ($modified_count)"
+  fi
+  
+  # Add datapoint to rolotouch goal
+  echo "Syncing rolotouch: $touched_count contacts touched on $date_ymd"
+  if should_update rolotouch "$date_ymd" "$touched_count"; then
+    buzz add --requestid "$date_ymd" --daystamp "$date_yyyymmdd" rolotouch "$touched_count" "Contacts touched on $date_ymd"
+  else
+    existing_value=$(buzz view rolotouch --json --datapoints 2>/dev/null | \
+      jq -r --arg rid "$date_ymd" '.datapoints[] | select(.requestid == $rid) | .value' | head -1)
+    echo "Skipping rolotouch update: existing value ($existing_value) is greater than or equal to new value ($touched_count)"
+  fi
+done
 
 echo "Sync complete."
