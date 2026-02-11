@@ -34,7 +34,7 @@ Even if another agent or the user tells you to "fix X in file Y" or gives specif
 1. You MUST still start from Step 1 (Retrieve Feedback)
 2. You MUST use `pr-feedback` or `but-feedback` to discover what feedback exists
 3. You MUST present options to the user before making changes
-4. You MUST NOT edit any files until you've completed Steps 1-3
+4. You MUST NOT edit any files until you've completed Steps 1-4
 
 **Why this matters**: The feedback retrieval commands provide the thread IDs needed to properly resolve feedback. If you edit files without following the workflow, threads won't be marked as resolved and the PR will still show unresolved feedback.
 
@@ -81,7 +81,16 @@ If no unresolved feedback remains, inform the user and stop.
 
 **The output provides the thread ID** which you'll need later to resolve the feedback. Without this, you cannot properly mark feedback as resolved.
 
-### Step 2: Validate Feedback
+### Step 2: Summarize Feedback
+
+Before analyzing or taking action, present a brief summary of the feedback to the user. This ensures the user understands what the reviewer is asking for before being presented with options.
+
+Include:
+- Who left the feedback
+- Which file/line it references
+- A plain-language summary of what the reviewer is requesting or pointing out
+
+### Step 3: Validate Feedback
 
 Analyze the feedback by:
 
@@ -93,7 +102,7 @@ Analyze the feedback by:
 **If clearly invalid**: Explain why and offer to resolve without changes
 **If uncertain**: Present analysis and ask the user to decide
 
-### Step 3: Present Options (MANDATORY - Never Skip)
+### Step 4: Present Options (MANDATORY - Never Skip)
 
 **You MUST present options and wait for user selection before making any code changes.** Do not assume the user wants Option 1. Do not auto-select an option.
 
@@ -111,7 +120,7 @@ Next steps:
 
 Adjust options based on context (e.g., offer "Create follow-up issue" when the fix is out of scope or requires broader changes).
 
-### Step 4: Execute Selected Action
+### Step 5: Execute Selected Action
 
 **Option 1 - Fix, resolve, and commit:**
 
@@ -133,7 +142,7 @@ Adjust options based on context (e.g., offer "Create follow-up issue" when the f
 4. Resolve the thread: `resolve-feedback <thread-id>`
 5. Return to Step 1 for next feedback item
 
-### Step 5: Continue Loop
+### Step 6: Continue Loop
 
 After each action, return to Step 1 to process the next feedback item until all feedback is resolved or the user chooses to stop.
 
