@@ -220,3 +220,4 @@ After each action:
 - **Priority order**: Consider triaging oldest PRs first, or those closest to being mergeable
 - **Delegate**: For PRs that need author action, leave a comment and move on
 - **Stale PRs**: For PRs with no activity, consider closing or requesting status updates
+- **Stacked PRs**: The session only surfaces PRs targeting the default branch, so if a PR is part of a stack, it's already the next one that can land. Don't worry about the rest of the stack — treat it as an independent PR.
