@@ -26,8 +26,14 @@ if [[ "$current_branch" == "gitbutler/workspace" ]]; then
 fi
 
 # ============================================================================
-# Check 2: Blacklist string checker
+# Check 2: Blacklist string checker (dotfiles repo only)
 # ============================================================================
+
+# Only run blacklist check in dotfiles repo
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null)
+if [[ "$repo_root" != "$HOME" ]]; then
+    exit 0
+fi
 
 BLACKLIST_FILE="${HOME}/.gitblacklist.txt"
 
