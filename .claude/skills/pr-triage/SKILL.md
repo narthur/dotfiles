@@ -123,7 +123,7 @@ Adjust options based on PR state:
 
 1. **Review CI run history first.** Before re-running or fixing anything, check whether the failing check has already been re-run previously. Use `gh run list --branch <branch> --limit 5` to see recent runs. If a check has already failed multiple times across different runs, it's almost certainly a real bug — don't re-run, investigate and fix instead. Only re-run if this is the first failure and it looks transient (e.g. timeout, network error, resource exhaustion).
 2. Determine workspace type (GitButler or standard git)
-3. Checkout the PR branch:
+3. Checkout the PR branch (see "Handling Git Worktrees" section if checkout fails due to worktree conflict):
    - **Standard git**: `gh pr checkout <number>`
    - **GitButler**: Check if branch exists in `but status`, if not create it
 4. Identify failing checks and their logs
@@ -132,7 +132,7 @@ Adjust options based on PR state:
 
 **Option 2 - Resolve feedback:**
 
-1. Checkout the PR branch: `gh pr checkout <number>`
+1. Checkout the PR branch: `gh pr checkout <number>` (see "Handling Git Worktrees" section if checkout fails)
 2. Invoke the `/resolve-pr-feedback` skill to handle the rest. It has its own interactive workflow for retrieving feedback, presenting options, and implementing fixes.
 3. After the skill completes, return to PR assessment.
 
@@ -163,7 +163,7 @@ gh pr merge <number> --squash  # or --merge, --rebase based on repo settings
 
 **Option 7 - Run CodeRabbit review:**
 
-1. Checkout the PR branch: `gh pr checkout <number>`
+1. Checkout the PR branch: `gh pr checkout <number>` (see "Handling Git Worktrees" section if checkout fails)
 2. Run the `/coderabbit:review` skill to perform a local AI code review of the PR's changes.
 3. After the review completes, present findings and offer to act on them.
 4. Return to PR assessment.
@@ -207,6 +207,23 @@ After each action:
 | REVIEW_REQUIRED   | Waiting for required reviews |
 | (empty)           | No reviews yet               |
 
+## Handling Git Worktrees
+
+When using vibe kanban or similar tools that create git worktrees for feature branches, `gh pr checkout` will fail with an error like `fatal: '<branch>' is already checked out at '<path>'`.
+
+**When checking out a PR branch, always use this approach:**
+
+1. First try `gh pr checkout <number>`
+2. If it fails due to a worktree conflict, find the existing worktree:
+   ```bash
+   git worktree list
+   ```
+3. Identify which worktree has the PR's branch checked out
+4. `cd` to that worktree path and work from there instead
+5. When done, `cd` back to the original repository root
+
+This applies to all actions that require checking out a branch (Fix CI, Resolve feedback, Fix conflicts, Run CodeRabbit review).
+
 ## Commands Reference
 
 | Command                                     | Purpose                                                   |
@@ -217,7 +234,7 @@ After each action:
 | `pr-review-session status`                  | Show session state (repo, triaged count, current PR)      |
 | `pr-review-session snooze [N] <dur>`        | Snooze a PR for a duration (e.g. 1h, 1d, 1w)             |
 | `pr-review-session reset`                   | Reset the triage session for this repo                    |
-| `gh pr checkout <number>`                   | Checkout PR branch                                        |
+| `gh pr checkout <number>`                   | Checkout PR branch (see worktree handling above)          |
 | `gh pr ready <number>`                      | Mark draft as ready                                       |
 | `gh pr merge <number>`                      | Merge the PR                                              |
 | `gh pr edit <number> --add-reviewer <user>` | Add reviewer                                              |
