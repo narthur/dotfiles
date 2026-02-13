@@ -242,6 +242,7 @@ This applies to all actions that require checking out a branch (Fix CI, Resolve 
 
 ## Tips
 
+- **Auto-skip**: `pr-review-session next` automatically skips PRs that are approved, mergeable, have no unresolved feedback, no failed CI, and are just waiting for pending CI checks. These PRs are marked as reviewed and a brief skip message is printed.
 - **Batch triage**: Use `pr-review-session next` repeatedly to work through all PRs in order (session tracks progress and wraps when at end)
 - **Priority order**: Consider triaging oldest PRs first, or those closest to being mergeable
 - **Delegate**: For PRs that need author action, leave a comment and move on

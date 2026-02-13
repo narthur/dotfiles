@@ -416,6 +416,46 @@ cmd_view() {
   write_session "$repo" "$reviewed_json" "$pr_num" "$snoozed_json"
 }
 
+# Check if a PR should be auto-skipped: approved, mergeable, no unresolved
+# feedback, no failed CI, but has pending CI checks. Returns 0 if should skip.
+should_auto_skip() {
+  local repo="$1"
+  local pr_num="$2"
+  local owner="${repo%%/*}"
+  local repo_name="${repo#*/}"
+
+  local json
+  json=$(gh pr view "$pr_num" --repo "$repo" --json number,title,mergeable,reviewDecision,isDraft 2>/dev/null) || return 1
+
+  local isDraft mergeable reviewDecision
+  isDraft=$(echo "$json" | jq -r '.isDraft // false')
+  mergeable=$(echo "$json" | jq -r '.mergeable // "UNKNOWN"')
+  reviewDecision=$(echo "$json" | jq -r '.reviewDecision // "REVIEW_REQUIRED"')
+
+  # Must not be draft
+  [[ "$isDraft" == "true" ]] && return 1
+  # Must be approved
+  [[ "$reviewDecision" != "APPROVED" ]] && return 1
+  # Must not have conflicts
+  [[ "$mergeable" == "CONFLICTING" ]] && return 1
+
+  # Must have no unresolved feedback
+  local unresolved
+  unresolved=$(unresolved_feedback_count "$owner" "$repo_name" "$pr_num" 2>/dev/null) || unresolved=0
+  [[ "$unresolved" -gt 0 ]] && return 1
+
+  # Must have pending CI (not all passing, not failing)
+  local checks_json
+  checks_json=$(gh pr checks "$pr_num" --repo "$repo" --json name,state,bucket 2>/dev/null) || return 1
+  local has_pending has_fail
+  has_pending=$(echo "$checks_json" | jq '[.[] | select(.bucket == "pending")] | length')
+  has_fail=$(echo "$checks_json" | jq '[.[] | select(.bucket == "fail")] | length')
+
+  # Skip only if there are pending checks and no failures
+  [[ "$has_pending" -gt 0 ]] && [[ "$has_fail" -eq 0 ]] && return 0
+  return 1
+}
+
 cmd_next() {
   local repo="$1"
   local session
@@ -440,23 +480,49 @@ cmd_next() {
     write_session "$repo" "$reviewed_json" "$current" "$snoozed_json"
     return
   fi
-  # Pick next in order: first after current, or wrap to first
-  local next_num=""
-  if [[ -n "$current" ]]; then
-    local found=""
-    for n in "${unreviewed_arr[@]}"; do
-      if [[ "$n" -gt "$current" ]]; then
-        next_num="$n"
-        found=1
-        break
-      fi
-    done
-    [[ -z "$found" ]] && next_num="${unreviewed_arr[0]}"
-  else
-    next_num="${unreviewed_arr[0]}"
-  fi
-  write_session "$repo" "$reviewed_json" "$next_num" "$snoozed_json"
-  print_pr_summary "$repo" "$next_num" ""
+
+  # Pick next in order, auto-skipping PRs that are just waiting for CI
+  local start_current="$current"
+  local tried=0
+  local total=${#unreviewed_arr[@]}
+  while [[ $tried -lt $total ]]; do
+    local next_num=""
+    if [[ -n "$current" ]]; then
+      local found=""
+      for n in "${unreviewed_arr[@]}"; do
+        if [[ "$n" -gt "$current" ]]; then
+          next_num="$n"
+          found=1
+          break
+        fi
+      done
+      [[ -z "$found" ]] && next_num="${unreviewed_arr[0]}"
+    else
+      next_num="${unreviewed_arr[0]}"
+    fi
+
+    # Prevent infinite loop if we've wrapped back to start
+    if [[ $tried -gt 0 ]] && [[ "$next_num" == "$start_current" ]]; then
+      break
+    fi
+
+    if should_auto_skip "$repo" "$next_num"; then
+      local title
+      title=$(gh pr view "$next_num" --repo "$repo" --json title -q '.title' 2>/dev/null || echo "")
+      echo "  ⏭ Skipping PR #${next_num}: ${title} (approved, waiting for CI)"
+      reviewed_json=$(echo "$reviewed_json" | jq -c --argjson n "$next_num" '. + [$n] | unique')
+      current="$next_num"
+      tried=$((tried + 1))
+      continue
+    fi
+
+    write_session "$repo" "$reviewed_json" "$next_num" "$snoozed_json"
+    print_pr_summary "$repo" "$next_num" ""
+    return
+  done
+
+  echo "No unreviewed PRs (remaining PRs are waiting for CI)."
+  write_session "$repo" "$reviewed_json" "$current" "$snoozed_json"
 }
 
 cmd_reset() {
