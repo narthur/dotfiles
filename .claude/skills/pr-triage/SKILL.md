@@ -139,7 +139,7 @@ Adjust options based on PR state:
 **Option 3 - Fix conflicts:**
 
 1. Checkout the PR branch
-2. Rebase onto base branch or merge base into branch
+2. Fetch and rebase onto `origin/<base-branch>` (always use the remote base branch, never the local one, to avoid stale state): `git fetch origin <base-branch> && git rebase origin/<base-branch>`
 3. Resolve conflicts
 4. Push updated branch
 
