@@ -142,6 +142,8 @@ esac
 
 export QT_QPA_PLATFORMTHEME=qt6ct
 
+export PATH="/home/narthur/.devcontainers/bin:$PATH"
+
 # Disabling zoxide doctor since my computer has bash-preexec installed which triggers
 # zoxide's warning. I determined this was the issue by running the following command:
 # echo "${PROMPT_COMMAND}"

@@ -144,5 +144,13 @@ else
     log_success "ollama already installed"
 fi
 
+log_section "Devcontainers CLI"
+if ! command -v devcontainer &> /dev/null; then
+    log "devcontainer not found, installing..."
+    run "install devcontainer" curl -fsSL https://raw.githubusercontent.com/devcontainers/cli/main/scripts/install.sh | bash
+else
+    log_success "devcontainer already installed"
+fi
+
 log_section "Complete"
 log_success "All packages installed successfully!"
