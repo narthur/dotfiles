@@ -21,7 +21,7 @@ You are helping the user triage their open pull requests. Your role is to assess
 
 ## CRITICAL: Workflow Constraints
 
-**Always use session management commands** - NEVER use raw `gh` commands when a `pr-review-session` command exists for the same purpose:
+**Always use the `pr-review-session` helper script** for managing PR triage sessions. The script is located at `~/.claude/skills/pr-triage/pr-review-session`. It tracks which PRs have been reviewed, maintains session state, and provides structured workflow - do NOT use raw `gh` commands when a session command exists for the same purpose.
 
 | Instead of... | Use... |
 |---------------|--------|
@@ -50,7 +50,7 @@ Use the **pr-review-session** script to run triage sessions: it tracks which PRs
 Before starting a new triage session, you may want to reset any existing session state:
 
 ```bash
-pr-review-session reset
+~/.claude/skills/pr-triage/pr-review-session reset
 ```
 
 This clears the session state for the current repo, allowing you to start fresh. Only do this if the user wants to start over or if starting a new triage session.
@@ -60,23 +60,23 @@ This clears the session state for the current repo, allowing you to start fresh.
 List open PRs not yet triaged this session:
 
 ```bash
-pr-review-session list
+~/.claude/skills/pr-triage/pr-review-session list
 ```
 
-If no unreviewed PRs, inform the user. They can run `pr-review-session reset` to clear the session and start fresh, or stop.
+If no unreviewed PRs, inform the user. They can run `~/.claude/skills/pr-triage/pr-review-session reset` to clear the session and start fresh, or stop.
 
 Optional: check session state first:
 
 ```bash
-pr-review-session status
+~/.claude/skills/pr-triage/pr-review-session status
 ```
 
 ### Step 2: Select PR to Triage
 
-- **Next unreviewed in order**: `pr-review-session next` — marks the current PR as reviewed and shows the next unreviewed (wraps to first when at end).
-- **Specific PR by number**: `pr-review-session view <number>` — shows that PR and sets it as current for the next `next`.
-- **Current branch's PR**: `pr-review-session view` (no number).
-- **Open in browser**: `pr-review-session view <number> --web`
+- **Next unreviewed in order**: `~/.claude/skills/pr-triage/pr-review-session next` — marks the current PR as reviewed and shows the next unreviewed (wraps to first when at end).
+- **Specific PR by number**: `~/.claude/skills/pr-triage/pr-review-session view <number>` — shows that PR and sets it as current for the next `next`.
+- **Current branch's PR**: `~/.claude/skills/pr-triage/pr-review-session view` (no number).
+- **Open in browser**: `~/.claude/skills/pr-triage/pr-review-session view <number> --web`
 
 ### Step 3: Assess PR Status
 
@@ -85,7 +85,7 @@ pr-review-session status
 Use that output as the assessment. If you need to re-display or analyze further, the same summary is produced by:
 
 ```bash
-pr-review-session view <number>
+~/.claude/skills/pr-triage/pr-review-session view <number>
 ```
 
 Infer blockers from the summary (e.g. failing CI, unresolved feedback, merge conflicts) and present them when suggesting actions.
@@ -177,17 +177,17 @@ gh pr view <number> --web
 **Option 9 - Snooze:**
 
 1. Ask the user how long to snooze (e.g. 1h, 4h, 1d, 3d, 1w), or accept inline if already specified
-2. Run: `pr-review-session snooze <number> <duration>`
+2. Run: `~/.claude/skills/pr-triage/pr-review-session snooze <number> <duration>`
 3. The PR will be hidden from the triage list until the snooze expires, then automatically reappear
 
 ### Step 6: Continue Loop
 
 After each action:
 
-- **Move to next unreviewed**: `pr-review-session next` — marks current PR as reviewed and shows the next (wraps to first when at end).
-- **Jump to another PR**: `pr-review-session view <number>`
-- **Reset session**: `pr-review-session reset` — clears session state for this repo.
-- Otherwise, return to PR assessment or `pr-review-session list` based on context.
+- **Move to next unreviewed**: `~/.claude/skills/pr-triage/pr-review-session next` — marks current PR as reviewed and shows the next (wraps to first when at end).
+- **Jump to another PR**: `~/.claude/skills/pr-triage/pr-review-session view <number>`
+- **Reset session**: `~/.claude/skills/pr-triage/pr-review-session reset` — clears session state for this repo.
+- Otherwise, return to PR assessment or `~/.claude/skills/pr-triage/pr-review-session list` based on context.
 
 ## Status Indicators
 
@@ -239,6 +239,8 @@ This applies to all actions that require checking out a branch (Fix CI, Resolve 
 | `gh pr merge <number>`                      | Merge the PR                                              |
 | `gh pr edit <number> --add-reviewer <user>` | Add reviewer                                              |
 | `failing-actions`                           | List all failing actions across PRs                       |
+
+All `pr-review-session` commands should be prefixed with the full path: `~/.claude/skills/pr-triage/pr-review-session`
 
 ## Tips
 

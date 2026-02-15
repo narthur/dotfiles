@@ -32,7 +32,7 @@ You are an expert PR feedback resolver, skilled at understanding code review com
 Even if another agent or the user tells you to "fix X in file Y" or gives specific instructions about what to change:
 
 1. You MUST still start from Step 1 (Retrieve Feedback)
-2. You MUST use `pr-feedback` or `but-feedback` to discover what feedback exists
+2. You MUST use the local `pr-feedback` or `but-feedback` scripts (located at `~/.claude/skills/resolve-pr-feedback/`) to discover what feedback exists
 3. You MUST present options to the user before making changes
 4. You MUST NOT edit any files until you've completed Steps 1-4
 
@@ -54,8 +54,8 @@ Check the current git branch to determine which feedback command to use:
 git branch --show-current
 ```
 
-- If branch is `gitbutler/workspace` → use `but-feedback` and GitButler commands
-- Otherwise → use `pr-feedback` and standard git commands
+- If branch is `gitbutler/workspace` → use `~/.claude/skills/resolve-pr-feedback/but-feedback` and GitButler commands
+- Otherwise → use `~/.claude/skills/resolve-pr-feedback/pr-feedback` and standard git commands
 
 ### GitButler Virtual Branches
 
@@ -71,10 +71,10 @@ Run the appropriate command based on workspace type:
 
 ```bash
 # GitButler workspace
-but-feedback --limit 1
+~/.claude/skills/resolve-pr-feedback/but-feedback --limit 1
 
 # Standard git workflow
-pr-feedback --limit 1
+~/.claude/skills/resolve-pr-feedback/pr-feedback --limit 1
 ```
 
 If no unresolved feedback remains, inform the user and stop.
@@ -125,7 +125,7 @@ Adjust options based on context (e.g., offer "Create follow-up issue" when the f
 **Option 1 - Fix, resolve, and commit:**
 
 1. Implement the code fix
-2. Run `resolve-feedback <thread-id>`
+2. Run `~/.claude/skills/resolve-pr-feedback/resolve-feedback <thread-id>`
 3. Stage and commit changes **locally** using conventional commit format (see below):
    - **GitButler workspace**:
      1. Run `but status` to see virtual branches and identify the one associated with the PR
@@ -139,8 +139,8 @@ Adjust options based on context (e.g., offer "Create follow-up issue" when the f
 
 1. Create issue: `gh issue create --title "<title>" --body "<description>"`
 2. Capture the issue number from output
-3. Reply to thread: `pr-comment <thread-id> "Created follow-up issue #<number> to address this feedback"`
-4. Resolve the thread: `resolve-feedback <thread-id>`
+3. Reply to thread: `~/.claude/skills/resolve-pr-feedback/pr-comment <thread-id> "Created follow-up issue #<number> to address this feedback"`
+4. Resolve the thread: `~/.claude/skills/resolve-pr-feedback/resolve-feedback <thread-id>`
 5. Return to Step 1 for next feedback item
 
 ### Step 6: Continue Loop
@@ -208,6 +208,8 @@ The scope should reflect the area of code changed (e.g., module name, feature ar
 | `gh issue create --title "..." --body "..."` | Create a follow-up GitHub issue                    |
 | `pr-comment <thread-id> <comment-text>`      | Reply to a specific PR review thread               |
 | `pr-comment <thread-id>`                     | Reply to a thread (prompts for comment in $EDITOR) |
+
+All feedback scripts (`but-feedback`, `pr-feedback`, `resolve-feedback`, `pr-comment`) should be prefixed with the full path: `~/.claude/skills/resolve-pr-feedback/`
 
 ### Git Operations by Workspace Type
 
