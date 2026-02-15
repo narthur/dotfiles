@@ -126,13 +126,14 @@ Adjust options based on context (e.g., offer "Create follow-up issue" when the f
 
 1. Implement the code fix
 2. Run `resolve-feedback <thread-id>`
-3. Stage and commit changes using conventional commit format (see below):
+3. Stage and commit changes **locally** using conventional commit format (see below):
    - **GitButler workspace**:
      1. Run `but status` to see virtual branches and identify the one associated with the PR
      2. Stage changed files to the branch: `but rub <file> <branch-name>`
      3. Commit to the branch: `but commit <branch-name> -m "..."`
    - **Standard git workflow**: Use `git add` and `git commit -m "..."`
-4. Return to Step 1 for next feedback item
+4. **DO NOT push yet** - commits should accumulate locally
+5. Return to Step 1 for next feedback item
 
 **Option 4 - Create follow-up issue:**
 
@@ -145,6 +146,29 @@ Adjust options based on context (e.g., offer "Create follow-up issue" when the f
 ### Step 6: Continue Loop
 
 After each action, return to Step 1 to process the next feedback item until all feedback is resolved or the user chooses to stop.
+
+### Step 7: Push All Commits (When Complete)
+
+When all feedback has been resolved (no more unresolved feedback items), offer to push all local commits:
+
+**For standard git workflow:**
+```bash
+git push
+```
+
+**For GitButler workspace:**
+```bash
+but push <branch-name>
+```
+
+Present this option to the user:
+```
+All feedback resolved! You have X local commits ready to push.
+
+Would you like to push all commits now? (yes/no)
+```
+
+Only push if the user confirms. This allows them to review all changes together before pushing to remote.
 
 ## Conventional Commit Format
 
