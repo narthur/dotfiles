@@ -18,6 +18,7 @@ pandoc
 pipx
 podman-docker
 postfix
+postgresql-client-16
 python3-venv
 qt6ct
 rofi

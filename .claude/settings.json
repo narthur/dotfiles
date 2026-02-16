@@ -13,5 +13,7 @@
   },
   "enabledPlugins": {
     "coderabbit@claude-plugins-official": true
-  }
+  },
+  "effortLevel": "medium",
+  "model": "opus"
 }

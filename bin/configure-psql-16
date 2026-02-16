@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+# Configure PostgreSQL 16 as the default version using update-alternatives
+
+set -e
+
+echo "Installing PostgreSQL 16..."
+
+sudo install -d /usr/share/postgresql-common/pgdg
+sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
+echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt trixie-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+sudo apt update
+sudo apt install postgresql-client-16
+
+echo "Configuring PostgreSQL 16 as default..."
+
+sudo update-alternatives --install /usr/bin/pg_dump pg_dump /usr/lib/postgresql/16/bin/pg_dump 100
+sudo update-alternatives --install /usr/bin/pg_restore pg_restore /usr/lib/postgresql/16/bin/pg_restore 100
+sudo update-alternatives --install /usr/bin/psql psql /usr/lib/postgresql/16/bin/psql 100
+
+echo "Done! PostgreSQL 16 utilities are now configured as defaults."

@@ -80,7 +80,7 @@ Optional: check session state first:
 
 ### Step 3: Assess PR Status
 
-`pr-review-session view` (and `next`) already prints a summary: branch, author, status, URL, size, mergeable, CI status, reviews, and unresolved feedback count, then runs `gh pr view` for the full body.
+`pr-review-session view` (and `next`) already prints a summary: branch, author, status, URL, size, mergeable, CI status, reviews, and unresolved feedback count, then runs `gh pr view` for the full body. The PR is automatically opened in Firefox.
 
 Use that output as the assessment. If you need to re-display or analyze further, the same summary is produced by:
 
@@ -138,10 +138,26 @@ Adjust options based on PR state:
 
 **Option 3 - Fix conflicts:**
 
-1. Checkout the PR branch
+**IMPORTANT: Detect GitButler workspace before rebasing**
+
+First, check if you're in a GitButler workspace:
+```bash
+git branch --show-current
+```
+
+**If on `gitbutler/workspace` branch (GitButler mode):**
+
+1. Use the `/gitbutler` skill to handle the rebase:
+   - The skill knows how to work with GitButler virtual branches
+   - It will use `but` CLI commands to rebase the virtual branch
+   - Example: `/gitbutler rebase <branch-name> onto <base-branch>`
+
+**If on a regular git branch (standard git mode):**
+
+1. Checkout the PR branch: `gh pr checkout <number>` (see "Handling Git Worktrees" section if checkout fails)
 2. Fetch and rebase onto `origin/<base-branch>` (always use the remote base branch, never the local one, to avoid stale state): `git fetch origin <base-branch> && git rebase origin/<base-branch>`
 3. Resolve conflicts
-4. Push updated branch
+4. Push updated branch: `git push --force-with-lease`
 
 **Option 4 - Request review:**
 
