@@ -119,6 +119,9 @@ fi
 
 export DOCKER_HOST=unix:///run/user/$(id -u)/podman/podman.sock
 
+# Set default editor
+export EDITOR=nano
+
 # Add ~/bin to PATH
 export PATH=$PATH:~/bin
 

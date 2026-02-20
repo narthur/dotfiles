@@ -3,20 +3,56 @@
 
 log_dir="$HOME/.claude/token-usage"
 
+# Function to convert a local datetime string to UTC ISO 8601
+# Uses epoch as intermediate to avoid GNU date -d/-u quirks
+local_to_utc() {
+    local epoch
+    epoch=$(date -d "$1" +%s)
+    date -d "@$epoch" -u +"%Y-%m-%dT%H:%M:%SZ"
+}
+
+# Function to normalize a date to UTC ISO 8601 format
+# Handles local timezone conversion and date-only inputs
+normalize_date() {
+    local input="$1"
+    local position="$2"  # "start" or "end"
+
+    # Check if date-only (YYYY-MM-DD)
+    if [[ "$input" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+        if [ "$position" = "start" ]; then
+            # Beginning of day in local timezone, converted to UTC
+            local_to_utc "${input} 00:00:00"
+        else
+            # End of day in local timezone, converted to UTC
+            local_to_utc "${input} 23:59:59"
+        fi
+    elif [[ "$input" =~ Z$ ]]; then
+        # Already UTC, use as-is
+        echo "$input"
+    else
+        # Has time but no Z suffix - treat as local time, convert to UTC
+        local_to_utc "$input"
+    fi
+}
+
 # Parse date arguments
 start_date=""
 end_date=""
+start_date_display=""
+end_date_display=""
 command=""
 command_args=()
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --start)
-            start_date="$2"
+            start_date_display="$2"
+            start_date=$(normalize_date "$2" "start")
             shift 2
             ;;
         --end)
-            end_date="$2"
+            end_date_display="$2"
+            end_date=$(normalize_date "$2" "end")
             shift 2
             ;;
         *)
@@ -79,8 +115,20 @@ if [ -n "$start_date" ] || [ -n "$end_date" ]; then
     
     # Show date range in output
     echo "Date range filter:"
-    [ -n "$start_date" ] && echo "  Start: $start_date"
-    [ -n "$end_date" ] && echo "  End: $end_date"
+    if [ -n "$start_date" ]; then
+        if [ "$start_date_display" != "$start_date" ]; then
+            echo "  Start: $start_date_display ($start_date UTC)"
+        else
+            echo "  Start: $start_date"
+        fi
+    fi
+    if [ -n "$end_date" ]; then
+        if [ "$end_date_display" != "$end_date" ]; then
+            echo "  End: $end_date_display ($end_date UTC)"
+        else
+            echo "  End: $end_date"
+        fi
+    fi
     echo ""
 fi
 
@@ -468,17 +516,17 @@ case "$command" in
     
     repo)
         if [ ${#command_args[@]} -eq 0 ]; then
-            echo "Usage: $0 repo <path> [--start DATE] [--end DATE]"
+            echo "Usage: $0 repo <org/repo> [--start DATE] [--end DATE]"
             exit 1
         fi
         repo_slug=$(echo "${command_args[0]}" | sed 's|/|_|g' | sed 's|^_||')
         repo_file="$log_dir/${repo_slug}.jsonl"
-        
+
         if [ ! -f "$repo_file" ]; then
             echo "No data found for repository: ${command_args[0]}"
             exit 1
         fi
-        
+
         show_stats "$repo_file"
         ;;
     
@@ -502,14 +550,17 @@ case "$command" in
         echo "  summary (default)    Show per-repository usage grouped by client"
         echo "  all                  Show combined totals across all repositories"
         echo "  client <name>        Show usage for a specific client"
-        echo "  repo <path>          Show usage for a specific repository"
+        echo "  repo <org/repo>      Show usage for a specific repository"
         echo "  list                 List all tracked repositories"
         echo ""
         echo "Options:"
         echo "  --start DATE         Filter to sessions on or after this date (ISO 8601)"
         echo "  --end DATE           Filter to sessions on or before this date (ISO 8601)"
         echo ""
-        echo "Date format: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ"
+        echo "Date format: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS or YYYY-MM-DDTHH:MM:SSZ"
+        echo "  Date-only values are treated as local timezone."
+        echo "  --start uses beginning of day, --end uses end of day."
+        echo "  Timestamps ending in Z are treated as UTC."
         echo ""
         echo "Examples:"
         echo "  # Show all usage"
@@ -518,8 +569,8 @@ case "$command" in
         echo "  # Show usage for February 2026"
         echo "  get-claude-code-report --start 2026-02-01 --end 2026-02-28"
         echo ""
-        echo "  # Show seedtime client usage for last week"
-        echo "  get-claude-code-report client seedtime --start 2026-01-30"
+        echo "  # Show client-a usage for last week"
+        echo "  get-claude-code-report client client-a --start 2026-01-30"
         echo ""
         echo "Token rates used for effective billable calculation:"
         echo "  Input tokens:         1.0x"

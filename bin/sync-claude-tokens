@@ -4,6 +4,9 @@
 
 set -eo pipefail
 
+# Source shared git resolver
+. "$HOME/.claude/hooks/resolve-git-repo.sh"
+
 # Directories
 CLAUDE_DIR="$HOME/.claude"
 PROJECTS_DIR="$CLAUDE_DIR/projects"
@@ -29,16 +32,16 @@ mark_tracked() {
     echo "$session_id" >> "$TRACKED_FILE"
 }
 
-# Function to get client name from repo path
+# Function to get client name from repo identifier
 get_client() {
-    local repo_path="$1"
+    local repo_id="$1"
     local client="unknown"
-    
+
     if [ -f "$CLIENT_MAPPING" ]; then
-        client=$(jq -r --arg repo "$repo_path" '.clients[$repo] // "unknown"' "$CLIENT_MAPPING" 2>/dev/null || echo "unknown")
+        client=$(jq -r --arg repo "$repo_id" '.clients[$repo] // "unknown"' "$CLIENT_MAPPING" 2>/dev/null || echo "unknown")
         client=$(echo "$client" | tr '[:upper:]' '[:lower:]')
     fi
-    
+
     echo "$client"
 }
 
@@ -46,39 +49,47 @@ get_client() {
 process_transcript() {
     local transcript="$1"
     local is_subagent="${2:-false}"
-    
+
     # Skip if file is empty or doesn't exist
     if [ ! -s "$transcript" ]; then
         return
     fi
-    
+
     # Extract session info from first entry
     local session_id=$(jq -r 'select(.sessionId != null) | .sessionId' "$transcript" 2>/dev/null | head -1)
     local cwd=$(jq -r 'select(.cwd != null) | .cwd' "$transcript" 2>/dev/null | head -1)
-    
+
     if [ -z "$session_id" ]; then
         return
     fi
-    
+
     # Default cwd if empty
     if [ -z "$cwd" ]; then
         cwd="unknown"
     fi
-    
+
+    # Resolve cwd to git repo identifier (org/repo)
+    local repo_id
+    if [ "$cwd" != "unknown" ] && [ -d "$cwd" ]; then
+        repo_id=$(resolve_git_repo "$cwd")
+    else
+        repo_id="$cwd"
+    fi
+
     # Generate unique ID for this transcript (session + file path for subagents)
     local tracking_id="$session_id"
     if [ "$is_subagent" = "true" ]; then
         tracking_id="${session_id}:$(basename "$transcript")"
     fi
-    
+
     # Skip if already tracked
     if is_tracked "$tracking_id"; then
         return
     fi
-    
+
     # Calculate token usage
     local usage=$(jq -s '
-        map(select(.message.usage != null) | .message.usage) | 
+        map(select(.message.usage != null) | .message.usage) |
         {
             input_tokens: (map(.input_tokens // 0) | add // 0),
             output_tokens: (map(.output_tokens // 0) | add // 0),
@@ -86,50 +97,50 @@ process_transcript() {
             cache_read_tokens: (map(.cache_read_input_tokens // 0) | add // 0)
         }
     ' "$transcript" 2>/dev/null)
-    
+
     if [ -z "$usage" ]; then
         mark_tracked "$tracking_id"
         return
     fi
-    
+
     local input_tokens=$(echo "$usage" | jq -r '.input_tokens // 0')
     local output_tokens=$(echo "$usage" | jq -r '.output_tokens // 0')
     local cache_creation_tokens=$(echo "$usage" | jq -r '.cache_creation_tokens // 0')
     local cache_read_tokens=$(echo "$usage" | jq -r '.cache_read_tokens // 0')
-    
+
     # Skip if no token usage
     if [ "$input_tokens" -eq 0 ] && [ "$output_tokens" -eq 0 ] && \
        [ "$cache_creation_tokens" -eq 0 ] && [ "$cache_read_tokens" -eq 0 ]; then
         mark_tracked "$tracking_id"
         return
     fi
-    
+
     # Calculate total
     local total_tokens=$((input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens))
-    
+
     # Get model name
     local model=$(jq -r 'select(.message.model != null) | .message.model' "$transcript" 2>/dev/null | head -1)
     if [ -z "$model" ]; then
         model="unknown"
     fi
-    
-    # Get client name
-    local client=$(get_client "$cwd")
-    
+
+    # Get client name (using resolved repo_id)
+    local client=$(get_client "$repo_id")
+
     # Create timestamp
     local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    
+
     # Determine reason
     local reason="session"
     if [ "$is_subagent" = "true" ]; then
         reason="subagent"
     fi
-    
-    # Create log entry
+
+    # Create log entry (repo_path field stores the repo identifier)
     local log_entry=$(jq -nc \
         --arg timestamp "$timestamp" \
         --arg session_id "$session_id" \
-        --arg repo_path "$cwd" \
+        --arg repo_path "$repo_id" \
         --arg client "$client" \
         --arg reason "$reason" \
         --arg model "$model" \
@@ -153,19 +164,19 @@ process_transcript() {
                 total: $total
             }
         }')
-    
-    # Create repo slug
-    local repo_slug=$(echo "$cwd" | sed 's|/|_|g' | sed 's|^_||')
+
+    # Create repo slug (replace / with _ for filename)
+    local repo_slug=$(echo "$repo_id" | sed 's|/|_|g' | sed 's|^_||')
     local repo_log="$TOKEN_DIR/${repo_slug}.jsonl"
-    
+
     # Append to logs
     echo "$log_entry" >> "$repo_log"
     echo "$log_entry" >> "$TOKEN_DIR/all-repos.jsonl"
-    
+
     # Mark as tracked
     mark_tracked "$tracking_id"
-    
-    echo "Tracked: $model - $total_tokens tokens ($reason) - $cwd"
+
+    echo "Tracked: $model - $total_tokens tokens ($reason) - $repo_id"
 }
 
 # Main execution
@@ -179,23 +190,23 @@ total_new=0
 while IFS= read -r -d '' transcript || [ -n "$transcript" ]; do
     # Skip empty entries
     [ -z "$transcript" ] && continue
-    
+
     total_processed=$((total_processed + 1))
-    
+
     # Check if this is a subagent
     is_subagent="false"
     if [[ "$transcript" == */subagents/* ]]; then
         is_subagent="true"
     fi
-    
+
     # Get current tracked count
     before_count=$(wc -l < "$TRACKED_FILE" 2>/dev/null || echo "0")
-    
+
     # Process the transcript (catch errors and continue)
     if ! process_transcript "$transcript" "$is_subagent" 2>&1; then
         echo "Warning: Failed to process $transcript" >&2
     fi
-    
+
     # Check if we added a new entry
     after_count=$(wc -l < "$TRACKED_FILE" 2>/dev/null || echo "0")
     if [ "$after_count" -gt "$before_count" ]; then

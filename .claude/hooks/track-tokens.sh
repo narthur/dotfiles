@@ -1,6 +1,9 @@
 #!/bin/bash
 # Track Claude Code token usage per repository
 
+# Source shared git resolver
+. "$HOME/.claude/hooks/resolve-git-repo.sh"
+
 # Read JSON input from stdin
 input=$(cat)
 
@@ -14,6 +17,9 @@ transcript_path=$(echo "$input" | jq -r '.transcript_path // ""' 2>/dev/null)
 if [ -z "$transcript_path" ] || [ ! -f "$transcript_path" ]; then
     exit 0
 fi
+
+# Resolve cwd to git repo identifier (org/repo)
+repo_id=$(resolve_git_repo "$cwd")
 
 # Calculate total token usage from transcript
 usage=$(jq -s 'map(select(.message.usage != null) | .message.usage) | {input_tokens: (map(.input_tokens // 0) | add // 0), output_tokens: (map(.output_tokens // 0) | add // 0), cache_creation_tokens: (map(.cache_creation_input_tokens // 0) | add // 0), cache_read_tokens: (map(.cache_read_input_tokens // 0) | add // 0)}' "$transcript_path")
@@ -43,13 +49,10 @@ fi
 # Calculate total tokens
 total_tokens=$((input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens))
 
-# Determine repository path (use cwd or fall back to unknown)
-repo_path="$cwd"
-
-# Get client name from mapping file
+# Get client name from mapping file (using repo_id)
 client="unknown"
 if [ -f "$HOME/.claude/client-mapping.json" ]; then
-    client=$(jq -r --arg repo "$repo_path" '.clients[$repo] // "unknown"' "$HOME/.claude/client-mapping.json" 2>/dev/null)
+    client=$(jq -r --arg repo "$repo_id" '.clients[$repo] // "unknown"' "$HOME/.claude/client-mapping.json" 2>/dev/null)
     # Normalize to lowercase
     client=$(echo "$client" | tr '[:upper:]' '[:lower:]')
 fi
@@ -61,8 +64,8 @@ mkdir -p "$log_dir"
 # Create timestamp
 timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-# Log to repository-specific file
-repo_slug=$(echo "$repo_path" | sed 's|/|_|g' | sed 's|^_||')
+# Log to repository-specific file (replace / with _ for filename)
+repo_slug=$(echo "$repo_id" | sed 's|/|_|g' | sed 's|^_||')
 repo_log="$log_dir/${repo_slug}.jsonl"
 
 # Create one log entry per model used in the session
@@ -73,12 +76,12 @@ echo "$usage_by_model" | jq -c '.[]' | while read -r model_usage; do
     cache_creation_tokens=$(echo "$model_usage" | jq -r '.tokens.cache_creation')
     cache_read_tokens=$(echo "$model_usage" | jq -r '.tokens.cache_read')
     total_tokens=$((input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens))
-    
+
     # Create log entry
     log_entry=$(jq -n \
         --arg timestamp "$timestamp" \
         --arg session_id "$session_id" \
-        --arg repo_path "$repo_path" \
+        --arg repo_path "$repo_id" \
         --arg client "$client" \
         --arg reason "$reason" \
         --arg model "$model" \
@@ -102,10 +105,10 @@ echo "$usage_by_model" | jq -c '.[]' | while read -r model_usage; do
                 total: $total
             }
         }')
-    
+
     # Append to log file
     echo "$log_entry" >> "$repo_log"
-    
+
     # Also append to global log
     echo "$log_entry" >> "$log_dir/all-repos.jsonl"
 done

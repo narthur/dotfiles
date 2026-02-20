@@ -553,12 +553,13 @@ else
   STATE_WIDTH=8
   UPDATED_WIDTH=10
   INVOLVEMENT_WIDTH=4  # Just enough for colored chars like "ACR"
+  OWNER_WIDTH=16
   SPACING=2
   # format_state outputs ANSI codes; reserve extra so total line fits in TERM_WIDTH
   ANSI_SLOP=12
-  
+
   # Title gets remaining width so table never wraps
-  TITLE_WIDTH=$((TERM_WIDTH - NUM_WIDTH - STATE_WIDTH - UPDATED_WIDTH - INVOLVEMENT_WIDTH - SPACING - ANSI_SLOP))
+  TITLE_WIDTH=$((TERM_WIDTH - NUM_WIDTH - STATE_WIDTH - UPDATED_WIDTH - INVOLVEMENT_WIDTH - OWNER_WIDTH - SPACING - ANSI_SLOP))
   if [[ $TITLE_WIDTH -lt 15 ]]; then
     TITLE_WIDTH=15
   fi
@@ -599,16 +600,17 @@ else
       PR_REPO_INDEX=$((PR_REPO_INDEX + 1))
       
       # Table header
-      printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${INVOLVEMENT_WIDTH}s %-${TITLE_WIDTH}s\n" \
-        "Number" "State" "Updated" "Inv" "Title"
-      
-      printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${INVOLVEMENT_WIDTH}s %-${TITLE_WIDTH}s\n" \
+      printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${INVOLVEMENT_WIDTH}s %-${OWNER_WIDTH}s %-${TITLE_WIDTH}s\n" \
+        "Number" "State" "Updated" "Inv" "Owner" "Title"
+
+      printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${INVOLVEMENT_WIDTH}s %-${OWNER_WIDTH}s %-${TITLE_WIDTH}s\n" \
         "$(printf '%*s' $NUM_WIDTH '' | tr ' ' '-')" \
         "$(printf '%*s' $STATE_WIDTH '' | tr ' ' '-')" \
         "$(printf '%*s' $UPDATED_WIDTH '' | tr ' ' '-')" \
         "$(printf '%*s' $INVOLVEMENT_WIDTH '' | tr ' ' '-')" \
+        "$(printf '%*s' $OWNER_WIDTH '' | tr ' ' '-')" \
         "$(printf '%*s' $TITLE_WIDTH '' | tr ' ' '-')"
-      
+
       echo "$REPO_PRS" | jq -c '.[]' | \
       while IFS= read -r pr_json; do
         number=$(echo "$pr_json" | jq -r '.number')
@@ -618,11 +620,12 @@ else
         review=$(echo "$pr_json" | jq -r '.reviewDecision // "none"')
         title=$(echo "$pr_json" | jq -r '.title')
         involvement=$(echo "$pr_json" | jq '.involvement')
-        
+        owner=$(echo "$pr_json" | jq -r '.author.login // ""')
+
         relative=$(relative_time "$updated")
         state_fmt=$(format_state "$state" "$draft")
         involvement_fmt=$(format_involvement_chars "$involvement")
-        
+
         # Calculate visible width of involvement (strip ANSI codes for width calculation)
         involvement_visible=$(echo -e "$involvement_fmt" | sed 's/\x1b\[[0-9;]*m//g')
         involvement_visible_len=${#involvement_visible}
@@ -632,19 +635,20 @@ else
         else
           involvement_padded="$involvement_fmt"
         fi
-        
-        # Truncate title
+
+        # Truncate owner and title
+        owner_short="${owner:0:$((OWNER_WIDTH - 1))}"
         title_short="${title:0:$((TITLE_WIDTH - 3))}"
         [[ ${#title} -gt $((TITLE_WIDTH - 3)) ]] && title_short="${title_short}..."
-        
-        printf "%-${NUM_WIDTH}s %s %-${UPDATED_WIDTH}s %s %-${TITLE_WIDTH}s\n" \
-          "#$number" "$state_fmt" "$relative" "$involvement_padded" "$title_short"
-        
+
+        printf "%-${NUM_WIDTH}s %s %-${UPDATED_WIDTH}s %s %-${OWNER_WIDTH}s %-${TITLE_WIDTH}s\n" \
+          "#$number" "$state_fmt" "$relative" "$involvement_padded" "$owner_short" "$title_short"
+
         # Show review status on second line if present
         review_fmt=$(format_review "$review")
         if [[ -n "$review_fmt" ]]; then
-          printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${INVOLVEMENT_WIDTH}s %-${TITLE_WIDTH}s\n" \
-            "" "" "" "" "  └─ $review_fmt"
+          printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${INVOLVEMENT_WIDTH}s %-${OWNER_WIDTH}s %-${TITLE_WIDTH}s\n" \
+            "" "" "" "" "" "  └─ $review_fmt"
         fi
       done
     done
@@ -696,27 +700,29 @@ else
       ISSUE_REPO_INDEX=$((ISSUE_REPO_INDEX + 1))
       
       # Table header (no indentation to maximize width)
-      printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${TITLE_WIDTH}s\n" \
-        "Number" "State" "Updated" "Title"
-      
-      printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${TITLE_WIDTH}s\n" \
+      printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${OWNER_WIDTH}s %-${TITLE_WIDTH}s\n" \
+        "Number" "State" "Updated" "Author" "Title"
+
+      printf "%-${NUM_WIDTH}s %-${STATE_WIDTH}s %-${UPDATED_WIDTH}s %-${OWNER_WIDTH}s %-${TITLE_WIDTH}s\n" \
         "$(printf '%*s' $NUM_WIDTH '' | tr ' ' '-')" \
         "$(printf '%*s' $STATE_WIDTH '' | tr ' ' '-')" \
         "$(printf '%*s' $UPDATED_WIDTH '' | tr ' ' '-')" \
+        "$(printf '%*s' $OWNER_WIDTH '' | tr ' ' '-')" \
         "$(printf '%*s' $TITLE_WIDTH '' | tr ' ' '-')"
-      
-      echo "$REPO_ISSUES" | jq -r '.[] | 
-        "\(.number)|\(.state)|\(.updatedAt)|\(.title)"' | \
-      while IFS='|' read -r number state updated title; do
+
+      echo "$REPO_ISSUES" | jq -r '.[] |
+        "\(.number)|\(.state)|\(.updatedAt)|\(.author.login // "")|\(.title)"' | \
+      while IFS='|' read -r number state updated author title; do
         relative=$(relative_time "$updated")
         state_fmt=$(format_state "$state" "false")
-        
-        # Truncate title
+
+        # Truncate author and title
+        author_short="${author:0:$((OWNER_WIDTH - 1))}"
         title_short="${title:0:$((TITLE_WIDTH - 3))}"
         [[ ${#title} -gt $((TITLE_WIDTH - 3)) ]] && title_short="${title_short}..."
-        
-        printf "%-${NUM_WIDTH}s %s %-${UPDATED_WIDTH}s %-${TITLE_WIDTH}s\n" \
-          "#$number" "$state_fmt" "$relative" "$title_short"
+
+        printf "%-${NUM_WIDTH}s %s %-${UPDATED_WIDTH}s %-${OWNER_WIDTH}s %-${TITLE_WIDTH}s\n" \
+          "#$number" "$state_fmt" "$relative" "$author_short" "$title_short"
       done
     done
   fi
