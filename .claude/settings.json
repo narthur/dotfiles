@@ -1,5 +1,4 @@
 {
-  "model": "opus",
   "hooks": {
     "SessionEnd": [
       {
@@ -13,6 +12,8 @@
     ]
   },
   "enabledPlugins": {
-    "coderabbit@claude-plugins-official": true
-  }
+    "coderabbit@claude-plugins-official": true,
+    "example-skills@anthropic-agent-skills": true
+  },
+  "skipDangerousModePermissionPrompt": true
 }

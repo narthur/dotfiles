@@ -25,5 +25,6 @@ rofi
 shfmt
 taskwarrior
 texlive-xetex
+warp-terminal
 xournalpp
 zoxide

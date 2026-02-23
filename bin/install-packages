@@ -152,5 +152,21 @@ else
     log_success "devcontainer already installed"
 fi
 
+log_section "Bun"
+if ! command -v bun &> /dev/null; then
+    log "bun not found, installing..."
+    run "install bun" bash -c 'curl -fsSL https://bun.sh/install | bash'
+else
+    log_success "bun already installed"
+fi
+
+log_section "YNAB CLI"
+if ! command -v ynab &> /dev/null; then
+    log "ynab not found, installing..."
+    run "install ynab-cli" bun install -g @stephendolan/ynab-cli
+else
+    log_success "ynab already installed"
+fi
+
 log_section "Complete"
 log_success "All packages installed successfully!"

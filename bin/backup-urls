@@ -6,7 +6,7 @@
 set -euo pipefail
 
 # Configuration
-BACKUP_DIR="$HOME/.local/share/backup-urls"
+BACKUP_DIR="$OBSIDIAN_VAULT/Backups/backup-urls"
 URLS_FILE="$HOME/.config/backup-urls/urls.txt"
 LOG_FILE="$HOME/.local/log/backup-urls.log"
 MAX_AGE_DAYS=365
