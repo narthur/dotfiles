@@ -44,13 +44,10 @@ found_violations=false
 violations_output=""
 
 while IFS= read -r file; do
-    # Skip if file doesn't exist (shouldn't happen with our filter, but safe)
-    [[ ! -f "$file" ]] && continue
-
     # Check file against each blacklist pattern
     for pattern in "${blacklist_patterns[@]}"; do
         # Use grep with line numbers, case-insensitive
-        matches=$(grep -n -i "$pattern" "$file" 2>/dev/null || true)
+        matches=$(git show ":$file" 2>/dev/null | grep -n -i "$pattern" 2>/dev/null || true)
 
         if [[ -n "$matches" ]]; then
             found_violations=true
