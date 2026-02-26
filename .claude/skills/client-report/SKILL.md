@@ -47,7 +47,8 @@ The user may specify:
 5. Extract these values for use throughout the workflow:
    - `CLIENT_NAME` — human-readable name (e.g. "Acme Corp")
    - `GITHUB_ORG` — GitHub org slug (e.g. "acme-corp")
-   - `TEAM_MEMBERS` — array of GitHub usernames
+   - `TEAM_MEMBERS` — array of objects, each with `github` (GitHub username) and optional `narthbugz_id`
+   - `NARTHBUGZ_CLIENT_NAME` — Narthbugz `clientName` to filter time entries (may be absent; skip time tracking if so)
    - `OUTPUT_DIR` — local directory path for saving reports
    - `SURGE_DOMAIN` — Surge.sh domain for publishing
 
@@ -57,13 +58,29 @@ Parse the user's request for a number of days. Default to **7 days** if not spec
 
 ### Step 2: Run Reports
 
-Run `user-org-report` for each team member in `TEAM_MEMBERS` in parallel:
+Run `user-org-report` for each team member in `TEAM_MEMBERS` in parallel, using the `github` field from each member object:
 
 ```bash
-user-org-report <member> <GITHUB_ORG> --days <N>
+user-org-report <member.github> <GITHUB_ORG> --days <N>
 ```
 
 Where `<N>` is the number of days (default 7).
+
+### Step 2b: Fetch Time Tracking Data
+
+Skip this step if `NARTHBUGZ_CLIENT_NAME` is not set in the config, or if no team members have a `narthbugz_id`.
+
+For each team member who has a `narthbugz_id`, fetch their time entries **in parallel** using the helper script:
+
+```bash
+~/.claude/skills/client-report/narthbugz-entries <narthbugz_id> "<NARTHBUGZ_CLIENT_NAME>" <N>
+```
+
+Where `<N>` is the lookback period in days (default 7).
+
+The script handles credential loading from `~/.env`, auth header construction, API calls, and date/client filtering. It outputs a JSON array of `{taskName, projectName, clientName, hours, notes, date}` objects, or `[]` if credentials are missing or the call fails.
+
+Store the resulting arrays keyed by GitHub username for use in Steps 4 and 5. If the script returns an empty array for a member, note the absence — do not abort the report.
 
 ### Step 3: Research PRs with Sub-agents
 
@@ -158,6 +175,13 @@ List their open PRs and open issues, grouped by theme where possible. For each o
 
 Also include a brief **Reviewing** note if the person was active as a reviewer on others' work.
 
+**Time tracking context (if available):**
+If time entries were fetched in Step 2b, incorporate them into the narrative:
+- Calculate each person's **total hours** tracked against this client over the period and note it in their section header (e.g. "32.5h tracked").
+- Where a time entry's `notes` or `projectName` clearly maps to a PR or theme (by repo name, PR/issue number mention, or topic match), annotate the relevant theme with hours (e.g. "~6h").
+- Do **not** force a match — only annotate when the connection is clear. Unmatched time entries can be listed briefly as "Other tracked work" at the end of the person's section.
+- If time data was unavailable for a member, note it briefly (e.g. "Time tracking unavailable").
+
 Keep the summary concise but informative. Highlight any PRs that are blocked, stale, or unexpectedly not in main.
 
 **Important — do not infer stack completeness:**
@@ -206,6 +230,7 @@ Example: If PR #123 shows `R` for alice and `A C` for bob, the PR is *owned by b
          <span class="stat stat-open">1 open</span>
          <span class="stat stat-closed">3 closed</span>
          <span class="stat stat-issues">8 issues</span>
+         <span class="stat stat-time">32.5h tracked</span>
        </div>
 
        <h3>What they've been working on</h3>
@@ -291,7 +316,7 @@ Example: If PR #123 shows `R` for alice and `A C` for bob, the PR is *owned by b
      ```
 
      Omit subsections that have no content (e.g. skip "Closed without merging" if there are none).
-     The **stat-bar** counts should reflect the person's actual totals: merged PRs, open PRs, closed-without-merging PRs, and open issues.
+     The **stat-bar** counts should reflect the person's actual totals: merged PRs, open PRs, closed-without-merging PRs, open issues, and hours tracked (omit the time chip if time data is unavailable for that member).
      Each **theme-item** groups related work with the theme name and badge on one line, a narrative summary below, and PR links as clickable chips.
      **closed-item** blocks are visually muted to de-emphasize abandoned work.
      **todo-item** blocks show badge + PR ref on one line with description below, reading as a checklist.

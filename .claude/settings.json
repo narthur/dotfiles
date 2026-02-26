@@ -13,7 +13,7 @@
   },
   "enabledPlugins": {
     "coderabbit@claude-plugins-official": true,
-    "example-skills@anthropic-agent-skills": true
+    "example-skills@anthropic-agent-skills": false
   },
   "skipDangerousModePermissionPrompt": true
 }

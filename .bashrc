@@ -128,7 +128,7 @@ export PATH=$PATH:~/bin
 export PATH="${ASDF_DATA_DIR:-$HOME/.asdf}/shims:$PATH"
 
 # Created by `pipx` on 2025-12-15 17:43:09
-export PATH="$PATH:/home/narthur/.local/bin"
+export PATH="$PATH:$HOME/.local/bin"
 
 eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 . <(asdf completion bash)
@@ -136,7 +136,7 @@ eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 export XDG_DATA_DIRS="/var/lib/flatpak/exports/share:$XDG_DATA_DIRS"
 
 # pnpm
-export PNPM_HOME="/home/narthur/.local/share/pnpm"
+export PNPM_HOME="$HOME/.local/share/pnpm"
 case ":$PATH:" in
   *":$PNPM_HOME:"*) ;;
   *) export PATH="$PNPM_HOME:$PATH" ;;
@@ -145,11 +145,14 @@ esac
 
 export QT_QPA_PLATFORMTHEME=qt6ct
 
-export PATH="/home/narthur/.devcontainers/bin:$PATH"
+export PATH="$HOME/.devcontainers/bin:$PATH"
 
 # bun
 export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
+
+# Machine-specific config (not tracked in dotfiles)
+[ -f ~/.bashrc.local ] && . ~/.bashrc.local
 
 # Disabling zoxide doctor since my computer has bash-preexec installed which triggers
 # zoxide's warning. I determined this was the issue by running the following command:

@@ -34,6 +34,7 @@ The session commands track state across the triage session. Using `gh` directly 
 **Only use `gh` commands for actions that have no session equivalent:**
 - `gh pr checkout` - OK (no session equivalent)
 - `gh pr merge` - OK (no session equivalent)
+- `gh pr close` - OK (no session equivalent)
 - `gh pr ready` - OK (no session equivalent)
 - `gh pr edit --add-reviewer` - OK (no session equivalent)
 
@@ -102,11 +103,12 @@ What would you like to do?
 4. Request review - Add reviewers to the PR
 5. Mark ready - Convert from draft to ready for review
 6. Merge PR - Merge the pull request
-7. Run CodeRabbit review - Run a local AI code review on this PR's changes
-8. View PR in browser - Open the PR URL
-9. Snooze - Temporarily hide this PR and revisit later (e.g. 1h, 1d, 1w)
-10. Next - Mark reviewed and move to next unreviewed (`pr-review-session next`)
-11. Reset - Reset the triage session (`pr-review-session reset`)
+7. Close PR - Close without merging
+8. Run CodeRabbit review - Run a local AI code review on this PR's changes
+9. View PR in browser - Open the PR URL
+10. Snooze - Temporarily hide this PR and revisit later (e.g. 1h, 1d, 1w)
+11. Next - Mark reviewed and move to next unreviewed (`pr-review-session next`)
+12. Reset - Reset the triage session (`pr-review-session reset`)
 ```
 
 Adjust options based on PR state:
@@ -177,12 +179,26 @@ gh pr ready <number>
 gh pr merge <number> --squash  # or --merge, --rebase based on repo settings
 ```
 
-**Option 7 - Run CodeRabbit review:**
+**Option 7 - Close PR:**
+
+```bash
+gh pr close <number>
+```
+
+**Option 8 - Run CodeRabbit review:**
 
 1. Checkout the PR branch: `gh pr checkout <number>` (see "Handling Git Worktrees" section if checkout fails)
 2. Run the `/coderabbit:review` skill to perform a local AI code review of the PR's changes.
-3. After the review completes, present findings and offer to act on them.
-4. Return to PR assessment.
+3. After the review completes:
+   a. Write the findings to `/tmp/cr-review-pr<number>.md` wrapped in a `<details><summary>CodeRabbit Review Notes</summary>` spoiler block. Use real markdown code blocks (triple backticks with language) for any code snippets inside.
+   b. Tell the user to run one of the following to copy to clipboard:
+      ```bash
+      cat /tmp/cr-review-pr<number>.md | xclip -selection clipboard
+      # or if using xsel:
+      cat /tmp/cr-review-pr<number>.md | xsel --clipboard --input
+      ```
+4. Present findings and offer to act on them.
+5. Return to PR assessment.
 
 **Option 8 - View in browser:**
 
@@ -253,6 +269,7 @@ This applies to all actions that require checking out a branch (Fix CI, Resolve 
 | `gh pr checkout <number>`                   | Checkout PR branch (see worktree handling above)          |
 | `gh pr ready <number>`                      | Mark draft as ready                                       |
 | `gh pr merge <number>`                      | Merge the PR                                              |
+| `gh pr close <number>`                      | Close without merging                                     |
 | `gh pr edit <number> --add-reviewer <user>` | Add reviewer                                              |
 | `failing-actions`                           | List all failing actions across PRs                       |
 

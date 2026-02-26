@@ -312,8 +312,19 @@ print_pr_summary() {
     gh pr view "$pr_num" --repo "$repo" --web
   else
     gh pr view "$pr_num" --repo "$repo"
-    # Auto-open in Firefox (background, won't block)
-    firefox --new-tab "$url" >/dev/null 2>&1 &
+    # Auto-open in Firefox (background, won't block, won't steal focus)
+    {
+      if command -v xdotool >/dev/null 2>&1; then
+        _FOCUSED=$(xdotool getactivewindow 2>/dev/null || true)
+        firefox --new-tab "$url" >/dev/null 2>&1 &
+        if [[ -n "$_FOCUSED" ]]; then
+          sleep 1
+          xdotool windowfocus "$_FOCUSED" 2>/dev/null || true
+        fi
+      else
+        firefox --new-tab "$url" >/dev/null 2>&1
+      fi
+    } &
   fi
 }
 
