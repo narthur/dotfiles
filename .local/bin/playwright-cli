@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Pinned playwright-cli wrapper — uses node 22.16.0 directly,
+# bypassing asdf version selection so this works from any project
+# regardless of that project's .tool-versions node setting.
+#
+# Re-run ~/.claude/skills/playwright/setup.sh if you upgrade the
+# @playwright/cli package or switch to a different node install.
+
+NODE=$HOME/.asdf/installs/nodejs/22.16.0/bin/node
+PLAYWRIGHT_CLI=$HOME/.asdf/installs/nodejs/22.16.0/lib/node_modules/@playwright/cli/playwright-cli.js
+
+if [[ ! -x "$NODE" ]]; then
+  echo "ERROR: Node not found at $NODE" >&2
+  echo "Run ~/.claude/skills/playwright/setup.sh to fix." >&2
+  exit 1
+fi
+
+if [[ ! -f "$PLAYWRIGHT_CLI" ]]; then
+  echo "ERROR: @playwright/cli not found at $PLAYWRIGHT_CLI" >&2
+  echo "Run ~/.claude/skills/playwright/setup.sh to fix." >&2
+  exit 1
+fi
+
+exec "$NODE" "$PLAYWRIGHT_CLI" "$@"
