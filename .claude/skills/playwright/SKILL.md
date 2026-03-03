@@ -61,6 +61,25 @@ playwright-cli snapshot -s=main
 playwright-cli pdf -s=main
 ```
 
+### Recording a video (.webm)
+
+To record a video of the browser session:
+
+```bash
+# 1. Ensure the output directory exists
+mkdir -p ~/Videos/playwright
+
+# 2. Start recording BEFORE navigating or interacting
+playwright-cli video-start -s=main
+
+# 3. Do your interactions...
+
+# 4. Stop recording and save to ~/Videos/playwright with a timestamped filename
+playwright-cli video-stop --filename ~/Videos/playwright/recording-$(date +%Y%m%d-%H%M%S).webm -s=main
+```
+
+After stopping, always tell the user the full path to the saved video file.
+
 ### Step 4: Manage sessions
 
 ```bash
@@ -89,6 +108,8 @@ playwright-cli close-all
 | `screenshot -s=name` | Capture screenshot |
 | `snapshot -s=name` | Get full page state |
 | `pdf -s=name` | Export as PDF |
+| `video-start -s=name` | Start video recording |
+| `video-stop --filename <path> -s=name` | Stop recording and save .webm |
 | `list` | List active sessions |
 | `show` | Open visual dashboard |
 | `close-all` | Close all sessions |

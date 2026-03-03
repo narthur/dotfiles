@@ -1,0 +1,116 @@
+#!/bin/bash
+# pre-push hook: Warn strongly before force-pushing a branch owned by someone else
+
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+MY_NAME=$(git config user.name 2>/dev/null | tr '[:upper:]' '[:lower:]')
+MY_EMAIL=$(git config user.email 2>/dev/null | tr '[:upper:]' '[:lower:]')
+MY_USER=$(echo "$MY_EMAIL" | cut -d@ -f1 | tr '[:upper:]' '[:lower:]')
+
+REMOTE_URL="$2"
+
+# Get GitHub username if gh is available and remote is GitHub
+MY_GH_USER=""
+is_github=false
+if [[ "$REMOTE_URL" == *github.com* ]] && command -v gh &>/dev/null; then
+    is_github=true
+    MY_GH_USER=$(gh api user --jq '.login' 2>/dev/null | tr '[:upper:]' '[:lower:]')
+fi
+
+# Read push info from stdin: <local ref> <local sha1> <remote ref> <remote sha1>
+while read -r local_ref local_sha remote_ref remote_sha; do
+    # Skip branch deletions
+    [[ "$local_sha" == "0000000000000000000000000000000000000000" ]] && continue
+    # Skip new branches (nothing on remote yet)
+    [[ "$remote_sha" == "0000000000000000000000000000000000000000" ]] && continue
+
+    # Check if this is a force push (remote tip is not an ancestor of local sha)
+    if ! git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then
+        branch_name=$(echo "$remote_ref" | sed 's|refs/heads/||')
+        branch_owner=""
+        owner_reason=""
+        pr_display=""
+
+        # --- Check 1: commits that would be overwritten by foreign authors ---
+        foreign_authors=$(git log "${local_sha}..${remote_sha}" --format="%ae" 2>/dev/null \
+            | grep -v "^$" \
+            | tr '[:upper:]' '[:lower:]' \
+            | grep -v "$MY_EMAIL" \
+            | sort -u)
+
+        if [[ -n "$foreign_authors" ]]; then
+            branch_owner=$(git log "${local_sha}..${remote_sha}" --format="%an" 2>/dev/null \
+                | head -1)
+            owner_reason="commits you would overwrite were authored by them"
+        fi
+
+        # --- Check 2: branch name prefix convention (e.g. alice/feature-x) ---
+        if [[ -z "$branch_owner" && "$branch_name" == */* ]]; then
+            branch_prefix=$(echo "$branch_name" | cut -d'/' -f1 | tr '[:upper:]' '[:lower:]')
+            non_user_prefixes="feature fix bug hotfix release chore docs test refactor wip dev"
+            if [[ "$branch_prefix" != "$MY_USER" ]] \
+                && ! echo "$non_user_prefixes" | grep -qw "$branch_prefix"; then
+                branch_owner="$branch_prefix"
+                owner_reason="branch name prefix"
+            fi
+        fi
+
+        # --- Check 3: GitHub PR assignee / author ---
+        if [[ "$is_github" == "true" ]]; then
+            pr_row=$(gh pr list --head "$branch_name" --state open \
+                --json number,title,assignees,author --limit 1 \
+                --jq '.[0] | "\(.number)\t\(.title)\t\(.assignees[0].login // "")\t\(.author.login)"' \
+                2>/dev/null)
+
+            if [[ -n "$pr_row" ]]; then
+                IFS=$'\t' read -r pr_number pr_title pr_assignee pr_author <<< "$pr_row"
+                pr_assignee=$(echo "$pr_assignee" | tr '[:upper:]' '[:lower:]')
+                pr_author=$(echo "$pr_author" | tr '[:upper:]' '[:lower:]')
+
+                if [[ -n "$pr_assignee" ]]; then
+                    pr_owner="$pr_assignee"
+                    pr_owner_label="assignee: @${pr_assignee}"
+                else
+                    pr_owner="$pr_author"
+                    pr_owner_label="author: @${pr_author} (no assignee)"
+                fi
+
+                pr_display="  PR     : ${YELLOW}#${pr_number}: ${pr_title}${NC}\n  PR owner: ${YELLOW}${pr_owner_label}${NC}"
+
+                # Use PR ownership as fallback if no other signal fired
+                if [[ -z "$branch_owner" ]] && [[ "$pr_owner" != "$MY_GH_USER" ]]; then
+                    branch_owner="$pr_owner"
+                    owner_reason="PR ownership"
+                fi
+            fi
+        fi
+
+        if [[ -n "$branch_owner" ]]; then
+            echo -e "\n${RED}${BOLD}!! WARNING: FORCE PUSH TO SOMEONE ELSE'S BRANCH !!${NC}" >&2
+            echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}" >&2
+            echo -e "  Branch : ${YELLOW}${branch_name}${NC}" >&2
+            echo -e "  Owner  : ${YELLOW}${branch_owner}${NC} (${owner_reason})" >&2
+            [[ -n "$pr_display" ]] && echo -e "$pr_display" >&2
+            echo -e "  You    : ${YELLOW}${MY_NAME} <${MY_EMAIL}>${NC}" >&2
+            echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}" >&2
+            echo -e "${YELLOW}Force pushing rewrites history and can permanently destroy their work.${NC}\n" >&2
+
+            if [[ ! -t 1 ]]; then
+                echo "Non-interactive: force push to foreign branch blocked." >&2
+                exit 1
+            fi
+
+            read -r -p "$(echo -e "${BOLD}Type YES to force push anyway, or anything else to abort: ${NC}")" reply </dev/tty
+            echo >&2
+            if [[ "$reply" != "YES" ]]; then
+                echo "Push aborted." >&2
+                exit 1
+            fi
+        fi
+    fi
+done
+
+exit 0
