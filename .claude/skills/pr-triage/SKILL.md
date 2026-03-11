@@ -277,9 +277,9 @@ All `pr-review-session` commands should be prefixed with the full path: `~/.clau
 
 ## Tips
 
-- **Auto-skip**: `pr-review-session next` automatically skips PRs that are approved, mergeable, have no unresolved feedback, no failed CI, and are just waiting for pending CI checks. These PRs are marked as reviewed and a brief skip message is printed.
-- **Batch triage**: Use `pr-review-session next` repeatedly to work through all PRs in order (session tracks progress and wraps when at end)
-- **Priority order**: Consider triaging oldest PRs first, or those closest to being mergeable
+- **Actionable only**: The session only shows PRs where you have something to do. Non-actionable PRs (e.g., waiting on someone else, no review requested from you) are automatically excluded.
+- **Priority order**: PRs are automatically sorted by action priority: review > resolve conflicts > fix ci > respond > merge > add reviewers > work on. `next` always picks the highest-priority unreviewed PR.
+- **Batch triage**: Use `pr-review-session next` repeatedly to work through all actionable PRs in priority order (session tracks progress)
 - **Delegate**: For PRs that need author action, leave a comment and move on
 - **Stale PRs**: For PRs with no activity, consider closing or requesting status updates
 - **Stacked PRs**: The session only surfaces PRs targeting the default branch, so if a PR is part of a stack, it's already the next one that can land. Don't worry about the rest of the stack — treat it as an independent PR.

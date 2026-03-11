@@ -94,8 +94,16 @@ ARTICLE SUMMARY:
 PROMPT_END
 )
 
-echo "Paste your text (type 'END' on a new line when finished):"
-article_text=$(sed '/^END$/q' | sed '$d')
+if [[ -n "$1" ]]; then
+    if [[ ! -f "$1" ]]; then
+        echo "Error: File not found: $1" >&2
+        exit 1
+    fi
+    article_text=$(cat "$1")
+else
+    echo "Paste your text (type 'END' on a new line when finished):"
+    article_text=$(sed '/^END$/q' | sed '$d')
+fi
 
 llm keys list
 llm models list | grep $model

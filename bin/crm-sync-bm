@@ -48,7 +48,7 @@ for i in {0..6}; do
   # Add datapoint to rolofresh goal
   echo "Syncing rolofresh: $modified_count modified CRM docs for $date_ymd"
   if should_update rolofresh "$date_ymd" "$modified_count"; then
-    buzz add --requestid "$date_ymd" --daystamp "$date_yyyymmdd" rolofresh "$modified_count" "CRM docs modified on $date_ymd"
+    buzz add --requestid "$date_ymd" --daystamp "$date_yyyymmdd" rolofresh "$modified_count" "CRM docs modified on $date_ymd (updated $(date '+%Y-%m-%d %H:%M:%S'))"
   else
     existing_value=$(buzz view rolofresh --json --datapoints 2>/dev/null | \
       jq -r --arg rid "$date_ymd" '.datapoints[] | select(.requestid == $rid) | .value' | head -1)

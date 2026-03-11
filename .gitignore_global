@@ -3,3 +3,6 @@
 .stacker/
 .cursor/plans/
 .claude/worktrees/
+.playwright-cli/
+.playwright/
+.dev-progress.md

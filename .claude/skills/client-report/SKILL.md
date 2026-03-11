@@ -8,7 +8,7 @@ You are helping the user get a summary of GitHub activity for a client team.
 ## What You Do
 
 - Load the appropriate client config from `~/.claude/skills/client-report/clients/`
-- Run `user-org-report` for each team member in the config
+- Fetch GitHub event data and time tracking data via `fetch-client-data.sh`
 - Launch sub-agents to research each authored PR in depth
 - Compile the results into a readable summary with per-PR summaries and stage information
 - Highlight key activity patterns
@@ -47,7 +47,7 @@ The user may specify:
 5. Extract these values for use throughout the workflow:
    - `CLIENT_NAME` — human-readable name (e.g. "Acme Corp")
    - `GITHUB_ORG` — GitHub org slug (e.g. "acme-corp")
-   - `TEAM_MEMBERS` — array of objects, each with `github` (GitHub username) and optional `narthbugz_id`
+   - `TEAM_MEMBERS` — array of objects, each with `github` (GitHub username) and optional `narthbugz_id`. May also be an array of plain strings (treat each string as a GitHub username with no narthbugz_id).
    - `NARTHBUGZ_CLIENT_NAME` — Narthbugz `clientName` to filter time entries (may be absent; skip time tracking if so)
    - `OUTPUT_DIR` — local directory path for saving reports
    - `SURGE_DOMAIN` — Surge.sh domain for publishing
@@ -56,37 +56,48 @@ The user may specify:
 
 Parse the user's request for a number of days. Default to **7 days** if not specified.
 
-### Step 2: Run Reports
+### Step 2: Fetch Activity Data
 
-Run `user-org-report` for each team member in `TEAM_MEMBERS` in parallel, using the `github` field from each member object:
-
-```bash
-user-org-report <member.github> <GITHUB_ORG> --days <N>
-```
-
-Where `<N>` is the number of days (default 7).
-
-### Step 2b: Fetch Time Tracking Data
-
-Skip this step if `NARTHBUGZ_CLIENT_NAME` is not set in the config, or if no team members have a `narthbugz_id`.
-
-For each team member who has a `narthbugz_id`, fetch their time entries **in parallel** using the helper script:
+Run the fetch script for all team members. Build the `--member` arguments from `TEAM_MEMBERS`: for each member object, pass `<github>[:<narthbugz_id>]` (omit the colon-suffix if no `narthbugz_id`). If `NARTHBUGZ_CLIENT_NAME` is set, pass it via `--client-name`.
 
 ```bash
-~/.claude/skills/client-report/narthbugz-entries <narthbugz_id> "<NARTHBUGZ_CLIENT_NAME>" <N>
+~/.claude/skills/client-report/fetch-client-data.sh <GITHUB_ORG> \
+  --days <N> \
+  --member <github1>[:<narthbugz_id1>] \
+  [--member <github2>[:<narthbugz_id2>]] \
+  [--client-name "<NARTHBUGZ_CLIENT_NAME>"]
 ```
 
-Where `<N>` is the lookback period in days (default 7).
+Use a 3-minute timeout since the script fetches many repos in parallel and the Narthbugz API can be slow on cold starts.
 
-The script handles credential loading from `~/.env`, auth header construction, API calls, and date/client filtering. It outputs a JSON array of `{taskName, projectName, clientName, hours, notes, date}` objects, or `[]` if credentials are missing or the call fails.
+The script outputs labeled sections to stdout:
+- `=== META ===` — JSON: `period_start`, `period_end`, `days`
+- `=== <user> GITHUB EVENTS ===` — one JSON object per line, each representing an action the user actually performed in the org during the period (from the repo Events API)
+- `=== <user> OPEN PRS ===` — one JSON object per line (open PRs authored by user in the org)
+- `=== <user> MERGED PRS ===` — one JSON object per line (PRs merged within the period)
+- `=== <user> ASSIGNED ISSUES ===` — one JSON object per line (open issues assigned to user)
+- `=== <user> TIME ===` — JSON array of `{taskName, projectName, clientName, hours, notes, date}` objects, or `[]`
 
-Store the resulting arrays keyed by GitHub username for use in Steps 4 and 5. If the script returns an empty array for a member, note the absence — do not abort the report.
+**Interpreting event types** (same logic as daily-standup):
+- `PullRequestEvent` + `action: "opened"` → user opened a PR
+- `PullRequestEvent` + `action: "closed"` → user closed/merged a PR
+- `PullRequestReviewEvent` → user reviewed a PR
+- `PullRequestReviewCommentEvent` → user left a review comment
+- `IssuesEvent` + `action: "opened"` → user filed an issue
+- `IssuesEvent` + `action: "closed"` → user closed an issue
+- `IssueCommentEvent` → user commented on an issue or PR
+- `PushEvent` → user pushed commits (see `commits[]` for messages, `ref` for branch)
+- `CreateEvent` → user created a branch or tag
+
+Only `PullRequestEvent`/`PullRequestReviewEvent` events (and items in OPEN/MERGED PRS sections) represent actual code work. `IssuesEvent` and `IssueCommentEvent` represent issue triage and discussion.
+
+**Note on Events API coverage:** The Events API only returns the last ~300 events per repo, so coverage may be incomplete for repos with very high activity or for periods longer than a few days. Cross-reference with the MERGED PRS section (which uses the Search API) to ensure merged PRs within the window are not missed.
 
 ### Step 3: Research PRs with Sub-agents
 
-From the reports, collect all PRs where any team member has `A` (author) in their `Inv` column. Group these by repo.
+From the MERGED PRS and OPEN PRS sections, collect all PR numbers attributed to each team member. Group these by repo (extract repo from `repository_url`).
 
-For each repo that has authored PRs, launch a **parallel** sub-agent (subagent_type: `general-purpose`) to research all authored PRs in that repo. Give each sub-agent the following prompt, substituting the actual values:
+For each repo that has PRs to research, launch a **parallel** sub-agent (subagent_type: `general-purpose`) to research all PRs in that repo. Give each sub-agent the following prompt, substituting the actual values:
 
 ---
 
@@ -163,42 +174,54 @@ Launch all repo sub-agents in parallel. Wait for all to return before proceeding
 
 ### Step 4: Summarize Results
 
-Using both the raw report data and the PR research results, present a combined summary organized by person. For each person, include two sections:
+Using the event data, PR/issue lists, PR research results, and time entries, present a combined summary organized by person.
+
+#### 4a: Correlate data into work activities
+
+Look across all data sources and identify distinct pieces of work:
+
+- **Events are the primary source of truth** for what the user actually did. Use `type` and `action` to understand each action (see Step 2 for the mapping).
+- Cross-reference MERGED PRS with events — a merged PR may not have a `PullRequestEvent` in the window if it was opened earlier.
+- Cross-reference ASSIGNED ISSUES with events — if the member commented or closed an assigned issue, note it.
+- Match time entry `notes` and `projectName` to GitHub repos, PR numbers, or issue titles where the connection is clear. Do **not** force matches.
+- Group related PRs into themes (e.g. "auth hardening", "onboarding improvements").
+- If a time entry mentions multiple distinct activities, treat them as separate bullets (do not roll all hours into one item).
+
+#### 4b: Look up missing PR/issue titles
+
+Before writing the summary, ensure every PR and issue referenced has a title. Titles may be `null` in event data. For anything still missing after checking OPEN/MERGED PRS and ASSIGNED ISSUES:
+
+```bash
+gh pr view {number} --repo {org}/{repo} --json title -q .title
+gh issue view {number} --repo {org}/{repo} --json title -q .title
+```
+
+Run these lookups in parallel where possible.
+
+#### 4c: Write the per-person summary
+
+For each person, include these sections:
 
 **What they've been working on:**
-Synthesize their **merged** PRs into a functional narrative. Group related work into themes (e.g. "security hardening", "test infrastructure", "onboarding flow improvements"). For each theme, use the PR summaries from the sub-agents to describe *what changed and why* at a product/engineering level — not just PR titles. Include the PR stage (e.g. "landed in main", "in development branch") where relevant. Aim for 3–5 bullet points per person.
+Synthesize their **merged** PRs and completed work (from events) into a functional narrative. Group related work into themes. For each theme, use the PR summaries from the sub-agents to describe *what changed and why* at a product/engineering level. Include the PR stage where relevant. Aim for 3–5 bullet points per person.
 
-**Important:** PRs that were **closed without merging** are NOT completed work — they represent abandoned, superseded, or deferred efforts. Do NOT include them in "What they've been working on." Instead, briefly note them in a separate **Closed without merging** subsection, explaining why they were closed if the PR body or sub-agent research provides that context (e.g. "superseded by #1234", "approach abandoned"). If there are none, omit this subsection.
+**Important:** PRs that were **closed without merging** are NOT completed work. Do NOT include them here. Instead, briefly note them in a separate **Closed without merging** subsection (explain why if the PR body provides context). Omit if none.
 
 **What they still have to do:**
-List their open PRs and open issues, grouped by theme where possible. For each open PR, include the sub-agent's summary and note whether it's draft, awaiting review, or blocked. This should read as a to-do list, not a raw data dump.
+List their open PRs and assigned issues, grouped by theme where possible. For each open PR, include the sub-agent's summary and note whether it's draft, awaiting review, or blocked. Read as a to-do list.
 
-Also include a brief **Reviewing** note if the person was active as a reviewer on others' work.
+**Reviewing:**
+If the person has `PullRequestReviewEvent` or `PullRequestReviewCommentEvent` events on PRs they didn't author, include a brief note about what they reviewed.
 
 **Time tracking context (if available):**
-If time entries were fetched in Step 2b, incorporate them into the narrative:
-- Calculate each person's **total hours** tracked against this client over the period and note it in their section header (e.g. "32.5h tracked").
-- Where a time entry's `notes` or `projectName` clearly maps to a PR or theme (by repo name, PR/issue number mention, or topic match), annotate the relevant theme with hours (e.g. "~6h").
-- Do **not** force a match — only annotate when the connection is clear. Unmatched time entries can be listed briefly as "Other tracked work" at the end of the person's section.
-- If time data was unavailable for a member, note it briefly (e.g. "Time tracking unavailable").
-
-Keep the summary concise but informative. Highlight any PRs that are blocked, stale, or unexpectedly not in main.
+- Calculate total hours tracked for this client in the period and note in the section header (e.g. "12.5h tracked").
+- Annotate themes with hours where the match is clear.
+- List unmatched time entries briefly as "Other tracked work."
+- If time data was unavailable, note it (e.g. "Time tracking unavailable").
 
 **Important — do not infer stack completeness:**
 
-The reporting window only shows recently-updated PRs. A PR stack may have members that fall outside the window. **Never claim a PR is the "last" or "only remaining" part of a stack** unless the sub-agent's "Stack context" section confirms the full list of stack members and their states. If a PR mentions being "part N of M", report that fact as-is (e.g. "part 8 of a 9-PR stack") and use the stack context to accurately describe how many remain open.
-
-**Important — interpreting the `Inv` column:**
-
-The `Inv` column in each report shows how that specific user was involved:
-- `A` = author (they opened the PR)
-- `C` = committer
-- `R` = reviewer
-- `M` = commenter
-
-The same PR can appear in multiple people's reports with different `Inv` flags. When writing the summary or an "Items Needing Attention" table, **always attribute a PR to the person who has `A` in their Inv column**, not the person whose report you happened to read first. Do not infer ownership from report order.
-
-Example: If PR #123 shows `R` for alice and `A C` for bob, the PR is *owned by bob* and *reviewed by alice*.
+Never claim a PR is the "last" or "only remaining" part of a stack unless the sub-agent's "Stack context" section confirms the full list. Report stacks as-is (e.g. "part 4 of a 9-PR stack").
 
 ### Step 5: Generate HTML Report
 
@@ -254,11 +277,6 @@ Example: If PR #123 shows `R` for alice and `A C` for bob, the PR is *owned by b
              data-tooltip="Added null-safety guards to calendar date ranges to fix edge-case crashes."
              >#2126</a
            >
-           <a
-             href="https://github.com/<GITHUB_ORG>/REPO/pull/2127"
-             data-tooltip="Fixed off-by-one error in weekly view boundary calculations."
-             >#2127</a
-           >
          </div>
        </div>
        <!-- Repeat .theme-item for each theme -->
@@ -284,7 +302,7 @@ Example: If PR #123 shows `R` for alice and `A C` for bob, the PR is *owned by b
            >
            — Extract CalendarToggleTracker into helper
          </div>
-         <p class="todo-detail">Part 8 of the GitButler stack.</p>
+         <p class="todo-detail">Awaiting review.</p>
        </div>
        <!-- Repeat .todo-item for each open PR -->
        <h4>Open Issues</h4>
@@ -301,29 +319,24 @@ Example: If PR #123 shows `R` for alice and `A C` for bob, the PR is *owned by b
            href="https://github.com/<GITHUB_ORG>/REPO/pull/2198"
            data-tooltip="Adds dark mode support across all dashboard views."
            >#2198</a
-         >) and carol's work (<a
+         >) and carol's CSV import (<a
            href="https://github.com/<GITHUB_ORG>/REPO/pull/2240"
            data-tooltip="Updated CSV import to handle bulk uploads."
            >#2240</a
-         >,
-         <a
-           href="https://github.com/<GITHUB_ORG>/REPO/pull/2221"
-           data-tooltip="Fixed pagination bug in list view."
-           >#2221</a
          >).
        </div>
      </div>
      ```
 
-     Omit subsections that have no content (e.g. skip "Closed without merging" if there are none).
-     The **stat-bar** counts should reflect the person's actual totals: merged PRs, open PRs, closed-without-merging PRs, open issues, and hours tracked (omit the time chip if time data is unavailable for that member).
+     Omit subsections that have no content.
+     The **stat-bar** counts should reflect the person's actual totals: merged PRs, open PRs, closed-without-merging PRs, open issues, and hours tracked (omit the time chip if time data is unavailable).
      Each **theme-item** groups related work with the theme name and badge on one line, a narrative summary below, and PR links as clickable chips.
      **closed-item** blocks are visually muted to de-emphasize abandoned work.
      **todo-item** blocks show badge + PR ref on one line with description below, reading as a checklist.
      **issue-list** displays issue references compactly inline, separated by middots.
      **review-note** wraps the reviewing summary in a styled box.
 
-   - For PR references, use `<a href="https://github.com/<GITHUB_ORG>/REPO/pull/NUM" data-tooltip="SUMMARY">#NUM</a>` links, where SUMMARY is the sub-agent's 1–2 sentence summary for that PR. HTML-entity-encode any quotes (`&quot;`), ampersands (`&amp;`), and angle brackets (`&lt;` `&gt;`) inside the attribute value. This powers CSS-only hover tooltips in the report.
+   - For PR references, use `<a href="https://github.com/<GITHUB_ORG>/REPO/pull/NUM" data-tooltip="SUMMARY">#NUM</a>` links, where SUMMARY is the sub-agent's 1–2 sentence summary. HTML-entity-encode quotes (`&quot;`), ampersands (`&amp;`), and angle brackets (`&lt;` `&gt;`) inside the attribute value.
    - For issue references, use `<a href="https://github.com/<GITHUB_ORG>/REPO/issues/NUM">#NUM</a>` links. Do **not** add `data-tooltip` to issue links.
    - For stage badges, use `<span class="badge badge-open">Open</span>`, `<span class="badge badge-merged">Merged</span>`, `<span class="badge badge-in-main">In main</span>`, `<span class="badge badge-closed">Closed</span>`, or `<span class="badge badge-dev-only">In dev only</span>` as appropriate.
    - Replace `{{ATTENTION_SECTION}}` with items needing attention inside the `.attention-section` div, or remove it if there are none.
@@ -348,11 +361,34 @@ Example: If PR #123 shows `R` for alice and `A C` for bob, the PR is *owned by b
    https://<SURGE_DOMAIN>/<timestamp>.html
    ```
 
+## Client Config Format
+
+Each client config JSON file supports these fields:
+
+```json
+{
+  "name": "Acme Corp",
+  "aliases": ["acme", "ac"],
+  "github_org": "acme-corp",
+  "team_members": [
+    { "github": "alice", "narthbugz_id": 3 },
+    { "github": "bob" }
+  ],
+  "narthbugz_client_name": "Acme Corp",
+  "output_dir": "/path/to/reports",
+  "surge_domain": "acme-report.surge.sh",
+  "default": false
+}
+```
+
+`team_members` may also be a plain array of strings (treated as GitHub usernames with no narthbugz_id). Time tracking is skipped unless both `narthbugz_client_name` is set and at least one member has a `narthbugz_id`.
+
 ## Tips
 
-- If a user has no activity, note that briefly rather than omitting them
+- If a user has no activity at all, note that briefly rather than omitting them
 - Call out any stale PRs or issues that may need attention
 - For longer time periods (30+ days), consider grouping by week
-- If a PR was closed without merging, check the PR research sub-agent output — the body often explains why (e.g. superseded by another PR)
+- If a PR was closed without merging, check the PR research sub-agent output — the body often explains why
 - Flag any merged PR that is "In development only" as potentially needing attention if it has been there for several days
+- The Events API covers the last ~300 events per repo; for low-activity repos or short windows this is fine, but always cross-reference with MERGED PRS (Search API) to catch PRs merged in the window that predate the event window
 - After generating the reports, mention the file paths so the user can open the HTML in a browser or share the Markdown

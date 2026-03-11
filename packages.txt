@@ -3,6 +3,7 @@ build-essential
 chromium
 curl
 feh
+ffmpeg
 flatpak
 glances
 gnome-screenshot
@@ -25,6 +26,8 @@ rofi
 shfmt
 taskwarrior
 texlive-xetex
+thunar
+vlc
 warp-terminal
 xournalpp
 zoxide

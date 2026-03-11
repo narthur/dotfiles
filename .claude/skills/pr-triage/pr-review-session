@@ -78,21 +78,155 @@ get_default_branch() {
   gh repo view "$repo" --json defaultBranchRef -q '.defaultBranchRef.name'
 }
 
-# Output list of open PR numbers targeting the default branch, sorted by number (one per line).
-get_open_pr_numbers_sorted() {
+# Get current GitHub username.
+get_me() {
+  gh api user --jq '.login' 2>/dev/null
+}
+
+# Returns TSV lines: number\taction\ttitle\tauthor sorted by action priority.
+# Only includes actionable PRs (where the current user has something to do).
+# Uses the same logic as ~/bin/prs for determining actions and priority.
+get_prioritized_actionable_prs() {
   local repo="$1"
   local default_branch
   default_branch=$(get_default_branch "$repo")
-  gh pr list --state open --repo "$repo" --base "$default_branch" --json number -q '.[].number' | sort -n
+  local me
+  me=$(get_me)
+  local data
+  data=$(gh pr list --state open --repo "$repo" --base "$default_branch" \
+    --json number,title,author,assignees,isDraft,reviews,reviewRequests,statusCheckRollup,mergeable \
+    --limit 100 2>/dev/null) || return 1
+
+  if [ "$(echo "$data" | jq 'length')" -eq 0 ]; then
+    return
+  fi
+
+  # Fetch unresolved review thread counts for all open PRs (GraphQL)
+  local repo_owner="${repo%%/*}"
+  local repo_name="${repo#*/}"
+  local unresolved_map
+  unresolved_map=$(gh api graphql -f query='
+    query($owner: String!, $repo: String!) {
+      repository(owner: $owner, name: $repo) {
+        pullRequests(states: OPEN, first: 100) {
+          nodes {
+            number
+            reviewThreads(first: 100) {
+              nodes { isResolved }
+            }
+          }
+        }
+      }
+    }' -f owner="$repo_owner" -f repo="$repo_name" \
+    --jq '[.data.repository.pullRequests.nodes[] | {
+      key: (.number | tostring),
+      value: [.reviewThreads.nodes[]? | select(.isResolved == false)] | length
+    }] | from_entries' 2>/dev/null || echo '{}')
+
+  echo "$data" | jq -r --arg me "$me" --argjson unresolved "$unresolved_map" '
+    [.[] |
+
+    (.reviewRequests | length) as $pendingRequests |
+    (
+      [.reviews[]? |
+        select(.state == "APPROVED" or .state == "CHANGES_REQUESTED") |
+        select((.author.login // "") | test("\\[bot\\]$") | not)
+      ] |
+      group_by(.author.login) |
+      map(sort_by(.submittedAt) | last) |
+      if length == 0 then
+        if $pendingRequests == 0 then "none"
+        else "awaiting"
+        end
+      elif any(.state == "CHANGES_REQUESTED") then "changes req"
+      elif any(.state == "APPROVED") then "approved"
+      else "awaiting"
+      end
+    ) as $review |
+
+    (
+      (.statusCheckRollup // []) |
+      if length == 0 then "awaiting"
+      else
+        map(.conclusion // .state // "PENDING") |
+        if any(test("FAILURE|ERROR|CANCELLED|TIMED_OUT|ACTION_REQUIRED|STARTUP_FAILURE"; "i")) then "fail"
+        elif all(test("^(SUCCESS|NEUTRAL|SKIPPED)$"; "i")) then "pass"
+        else "awaiting"
+        end
+      end
+    ) as $ci |
+
+    # Unresolved review threads
+    ($unresolved[(.number | tostring)] // 0) as $unresolvedCount |
+
+    # Changes requested from anyone (humans + bots) OR unresolved review threads
+    (
+      [.reviews[]? |
+        select(.state == "APPROVED" or .state == "CHANGES_REQUESTED")
+      ] |
+      group_by(.author.login) |
+      map(sort_by(.submittedAt) | last) |
+      if any(.state == "CHANGES_REQUESTED") then "yes"
+      elif $unresolvedCount > 0 then "yes"
+      else "no"
+      end
+    ) as $changes |
+
+    (.mergeable // "UNKNOWN") as $merge |
+
+    (if (.assignees | length) > 0 then .assignees[0].login
+     else (.author.login // "unknown")
+     end) as $owner |
+
+    # NOTE: Action logic is duplicated in ~/bin/prs
+    # If you change this, update that file too.
+    (if ($owner == $me or (.author.login // "unknown") == "app/github-actions") then
+      if $merge == "CONFLICTING" then "resolve conflicts"
+      elif $ci == "fail" then "fix ci"
+      elif $changes == "yes" then "respond"
+      elif ($review == "approved" or ((.author.login // "unknown") == "app/github-actions" and ($review == "none" or $review == "awaiting"))) and $ci == "pass" and $merge == "MERGEABLE" then "merge"
+      elif $review == "none" and (.isDraft | not) and (.author.login // "unknown") != "app/github-actions" and $ci != "awaiting" then "add reviewers"
+      elif .isDraft then "work on"
+      else ""
+      end
+    else
+      if (.reviewRequests | any(.login == $me)) then "review"
+      else ""
+      end
+    end) as $action |
+
+    select($action != "") |
+
+    {
+      sort: (if $action == "review" then 0
+        elif $action == "resolve conflicts" then 1
+        elif $action == "fix ci" then 2
+        elif $action == "respond" then 3
+        elif $action == "merge" then 4
+        elif $action == "add reviewers" then 5
+        elif $action == "work on" then 6
+        else 7
+        end),
+      number: .number,
+      action: $action,
+      title: (.title // ""),
+      author: ((.author.login // "unknown") |
+        if . == "app/copilot-swe-agent" then "copilot"
+        elif . == "app/github-actions" then "actions"
+        else .
+        end)
+    }
+    ] | sort_by(.sort, .number) | .[] | [(.number | tostring), .action, .title, .author] | @tsv
+  '
 }
 
-# Get unreviewed PR numbers for repo (open PRs minus reviewed and actively snoozed), sorted by number.
-get_unreviewed_numbers() {
-  local repo="$1"
-  local session_json="$2"
-  local open_nums
-  open_nums=$(get_open_pr_numbers_sorted "$repo")
-  if [[ -z "$open_nums" ]]; then
+# Filter prioritized PR TSV data to exclude reviewed and snoozed PRs.
+# Input: session JSON as $1, TSV data (from get_prioritized_actionable_prs) as $2.
+# Output: Same TSV format, filtered, preserving priority order.
+filter_unreviewed_prs() {
+  local session_json="$1"
+  local prs_tsv="$2"
+  if [[ -z "$prs_tsv" ]]; then
     return
   fi
   local reviewed
@@ -101,13 +235,13 @@ get_unreviewed_numbers() {
   now_epoch=$(date +%s)
   local snoozed_json
   snoozed_json=$(echo "$session_json" | jq -c '.snoozed // {}' 2>/dev/null || echo '{}')
-  for n in $open_nums; do
-    if echo "$reviewed" | grep -qFx "$n" 2>/dev/null; then
+  while IFS=$'\t' read -r num action title author; do
+    [[ -z "$num" ]] && continue
+    if echo "$reviewed" | grep -qFx "$num" 2>/dev/null; then
       continue
     fi
-    # Check if snoozed and not yet expired
     local snooze_until
-    snooze_until=$(echo "$snoozed_json" | jq -r --arg n "$n" '.[$n] // empty' 2>/dev/null || true)
+    snooze_until=$(echo "$snoozed_json" | jq -r --arg n "$num" '.[$n] // empty' 2>/dev/null || true)
     if [[ -n "$snooze_until" ]]; then
       local snooze_epoch
       snooze_epoch=$(date -d "$snooze_until" +%s 2>/dev/null || echo 0)
@@ -115,8 +249,8 @@ get_unreviewed_numbers() {
         continue
       fi
     fi
-    echo "$n"
-  done
+    printf '%s\t%s\t%s\t%s\n' "$num" "$action" "$title" "$author"
+  done <<< "$prs_tsv"
 }
 
 # Fetch unresolved review thread count for a PR (GraphQL).
@@ -332,42 +466,25 @@ cmd_list() {
   local repo="$1"
   local session
   session=$(read_session "$repo")
-  local reviewed_json
-  reviewed_json=$(echo "$session" | jq -c '.reviewed')
-  local unreviewed
-  unreviewed=$(get_unreviewed_numbers "$repo" "$session")
-  local default_branch
-  default_branch=$(get_default_branch "$repo")
-  local prs_json
-  prs_json=$(gh pr list --state open --repo "$repo" --base "$default_branch" --json number,title,updatedAt,author,isDraft,reviewDecision 2>&1) || {
-    echo "Error: Failed to fetch PRs." >&2
-    exit 1
-  }
-  local unreviewed_json
-  unreviewed_json=$(echo "$unreviewed" | jq -R -s '[split("\n")[] | select(length > 0) | tonumber]')
-  if [[ "$unreviewed_json" == "[]" ]]; then
-    echo "No unreviewed PRs in this session."
-    return
-  fi
+  local prs_tsv
+  prs_tsv=$(get_prioritized_actionable_prs "$repo")
   local filtered
-  filtered=$(echo "$prs_json" | jq -r --argjson nums "$unreviewed_json" '
-    [.[] | select(.number | IN($nums[]))] | sort_by(.number) |
-    .[] | "\(.number)|\(.title)|\(.updatedAt)|\(.author.login)|\(.isDraft)|\(.reviewDecision // "none")"
-  ')
+  filtered=$(filter_unreviewed_prs "$session" "$prs_tsv")
+
   if [[ -z "$filtered" ]]; then
-    echo "No unreviewed PRs in this session."
+    echo "No actionable PRs to triage."
     return
   fi
-  echo "Unreviewed PRs (session for $repo)"
+
+  echo "Actionable PRs (session for $repo)"
   echo ""
-  printf "%-10s %-12s %-20s %s\n" "Number" "Updated" "Author" "Title"
-  printf "%-10s %-12s %-20s %s\n" "------" "------" "------" "-----"
-  while IFS='|' read -r num title updated author draft decision; do
-    local rel
-    rel=$(relative_time "$updated")
+  printf "%-8s %-18s %-15s %s\n" "Number" "Action" "Author" "Title"
+  printf "%-8s %-18s %-15s %s\n" "------" "------" "------" "-----"
+  while IFS=$'\t' read -r num action title author; do
+    [[ -z "$num" ]] && continue
     local title_short="${title:0:50}"
     [[ ${#title} -gt 50 ]] && title_short="${title_short}..."
-    printf "%-10s %-12s %-20s %s\n" "#$num" "$rel" "$author" "$title_short"
+    printf "%-8s %-18s %-15s %s\n" "#$num" "$action" "$author" "$title_short"
   done <<< "$filtered"
 
   # Show snoozed PRs
@@ -386,9 +503,11 @@ cmd_list() {
     while IFS='|' read -r num until; do
       local until_fmt
       until_fmt=$(date -d "$until" "+%b %d %H:%M" 2>/dev/null || echo "$until")
-      # Try to get PR title from prs_json
       local snoozed_title
-      snoozed_title=$(echo "$prs_json" | jq -r --argjson n "$num" '.[] | select(.number == ($n | tonumber)) | .title // "(unknown)"' 2>/dev/null || echo "(unknown)")
+      snoozed_title=$(echo "$prs_tsv" | awk -F'\t' -v n="$num" '$1 == n { print $3 }')
+      if [[ -z "$snoozed_title" ]]; then
+        snoozed_title=$(gh pr view "$num" --repo "$repo" --json title -q '.title' 2>/dev/null || echo "(unknown)")
+      fi
       local snoozed_title_short="${snoozed_title:0:40}"
       [[ ${#snoozed_title} -gt 40 ]] && snoozed_title_short="${snoozed_title_short}..."
       echo "  💤 #$num until $until_fmt - $snoozed_title_short"
@@ -429,46 +548,6 @@ cmd_view() {
   write_session "$repo" "$reviewed_json" "$pr_num" "$snoozed_json"
 }
 
-# Check if a PR should be auto-skipped: no changes requested, mergeable, no unresolved
-# feedback, no failed CI, but has pending CI checks. Returns 0 if should skip.
-should_auto_skip() {
-  local repo="$1"
-  local pr_num="$2"
-  local owner="${repo%%/*}"
-  local repo_name="${repo#*/}"
-
-  local json
-  json=$(gh pr view "$pr_num" --repo "$repo" --json number,title,mergeable,reviewDecision,isDraft 2>/dev/null) || return 1
-
-  local isDraft mergeable reviewDecision
-  isDraft=$(echo "$json" | jq -r '.isDraft // false')
-  mergeable=$(echo "$json" | jq -r '.mergeable // "UNKNOWN"')
-  reviewDecision=$(echo "$json" | jq -r '.reviewDecision // "REVIEW_REQUIRED"')
-
-  # Must not be draft
-  [[ "$isDraft" == "true" ]] && return 1
-  # Must not have changes requested
-  [[ "$reviewDecision" == "CHANGES_REQUESTED" ]] && return 1
-  # Must not have conflicts
-  [[ "$mergeable" == "CONFLICTING" ]] && return 1
-
-  # Must have no unresolved feedback
-  local unresolved
-  unresolved=$(unresolved_feedback_count "$owner" "$repo_name" "$pr_num" 2>/dev/null) || unresolved=0
-  [[ "$unresolved" -gt 0 ]] && return 1
-
-  # Must have pending CI (not all passing, not failing)
-  local checks_json
-  checks_json=$(gh pr checks "$pr_num" --repo "$repo" --json name,state,bucket 2>/dev/null) || return 1
-  local has_pending has_fail
-  has_pending=$(echo "$checks_json" | jq '[.[] | select(.bucket == "pending")] | length')
-  has_fail=$(echo "$checks_json" | jq '[.[] | select(.bucket == "fail")] | length')
-
-  # Skip only if there are pending checks and no failures
-  [[ "$has_pending" -gt 0 ]] && [[ "$has_fail" -eq 0 ]] && return 0
-  return 1
-}
-
 cmd_next() {
   local repo="$1"
   local session
@@ -483,59 +562,26 @@ cmd_next() {
   if [[ -n "$current" ]]; then
     reviewed_json=$(echo "$reviewed_json" | jq -c --argjson n "$current" '. + [$n] | unique')
   fi
-  local unreviewed
-  unreviewed=$(get_unreviewed_numbers "$repo" "{\"reviewed\":$reviewed_json,\"current\":null,\"snoozed\":$snoozed_json}")
-  local unreviewed_arr
-  unreviewed_arr=($(echo "$unreviewed"))
-  if [[ ${#unreviewed_arr[@]} -eq 0 ]]; then
-    echo "No unreviewed PRs."
-    # Keep current unchanged (plan: "does not change current")
+
+  # Get actionable PRs in priority order, filtered for unreviewed
+  local updated_session="{\"reviewed\":$reviewed_json,\"current\":null,\"snoozed\":$snoozed_json}"
+  local prs_tsv
+  prs_tsv=$(get_prioritized_actionable_prs "$repo")
+  local filtered
+  filtered=$(filter_unreviewed_prs "$updated_session" "$prs_tsv")
+
+  if [[ -z "$filtered" ]]; then
+    echo "No actionable PRs to triage."
     write_session "$repo" "$reviewed_json" "$current" "$snoozed_json"
     return
   fi
 
-  # Pick next in order, auto-skipping PRs that are just waiting for CI
-  local start_current="$current"
-  local tried=0
-  local total=${#unreviewed_arr[@]}
-  while [[ $tried -lt $total ]]; do
-    local next_num=""
-    if [[ -n "$current" ]]; then
-      local found=""
-      for n in "${unreviewed_arr[@]}"; do
-        if [[ "$n" -gt "$current" ]]; then
-          next_num="$n"
-          found=1
-          break
-        fi
-      done
-      [[ -z "$found" ]] && next_num="${unreviewed_arr[0]}"
-    else
-      next_num="${unreviewed_arr[0]}"
-    fi
+  # Pick the first (highest priority) unreviewed PR
+  local next_num
+  next_num=$(echo "$filtered" | head -1 | cut -f1)
 
-    # Prevent infinite loop if we've wrapped back to start
-    if [[ $tried -gt 0 ]] && [[ "$next_num" == "$start_current" ]]; then
-      break
-    fi
-
-    if should_auto_skip "$repo" "$next_num"; then
-      local title
-      title=$(gh pr view "$next_num" --repo "$repo" --json title -q '.title' 2>/dev/null || echo "")
-      echo "  ⏭ Skipping PR #${next_num}: ${title} (waiting for CI)"
-      reviewed_json=$(echo "$reviewed_json" | jq -c --argjson n "$next_num" '. + [$n] | unique')
-      current="$next_num"
-      tried=$((tried + 1))
-      continue
-    fi
-
-    write_session "$repo" "$reviewed_json" "$next_num" "$snoozed_json"
-    print_pr_summary "$repo" "$next_num" ""
-    return
-  done
-
-  echo "No unreviewed PRs (remaining PRs are waiting for CI)."
-  write_session "$repo" "$reviewed_json" "$current" "$snoozed_json"
+  write_session "$repo" "$reviewed_json" "$next_num" "$snoozed_json"
+  print_pr_summary "$repo" "$next_num" ""
 }
 
 cmd_reset() {
