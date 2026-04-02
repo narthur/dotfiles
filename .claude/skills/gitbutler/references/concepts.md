@@ -43,13 +43,15 @@ workspace (gitbutler/workspace)
 
 ## CLI IDs: Short Identifiers
 
-Every object gets a short, human-readable CLI ID shown in `but status`:
+Every object gets a short, human-readable CLI ID shown in `but status`. IDs are generated per-session and are unique across all entity types (no two objects share an ID) — always read them from `but status --json`.
 
 ```
-Commits:    c1, c2, c3, c4, c5
-Branches:   bu, bv, bw
-Files:      a1, a2, a3
-Hunks:      h1, h2, h3
+Commits:    1b, 8f, c2     (short hex prefixes of the SHA, long enough to be unique)
+Branches:   fe, bu, ui     (unique 2–3 char substring of the branch name, e.g. "fe" from "feature-x";
+                             falls back to auto-generated ID if no unique substring exists)
+Files:      g0, h0, i0     (auto-generated, 2–3 chars)
+Hunks:      j0, k1, l2     (auto-generated, 2–3 chars)
+Stacks:     m0, n0          (auto-generated, 2–3 chars)
 ```
 
 **Why?** Git commit SHAs are long (40 chars). CLI IDs are short (2-3 chars) and unique within your current workspace context.
@@ -57,9 +59,9 @@ Hunks:      h1, h2, h3
 **Usage:** Pass these IDs as arguments to commands:
 
 ```bash
-but commit bu -m "message"     # Commit to branch 'bu'
-but stage a1 bu                # Stage file 'a1' to branch 'bu'
-but rub c2 c3                  # Squash commits 'c2' and 'c3'
+but commit <branch-id> -m "message"      # Commit to branch
+but stage <file-id> <branch-id>          # Stage file to branch
+but rub <commit-id> <commit-id>          # Squash commits
 ```
 
 ## Parallel vs Stacked Branches
@@ -83,7 +85,9 @@ Example: Adding a new API endpoint and updating button styles are independent.
 
 ### Stacked Branches (Dependent Work)
 
-Create with `but branch new <name> -a <anchor>`:
+**To stack an existing branch** on top of another: `but branch move <child-branch-name> <parent-branch-name>` — this is the primary way to stack branches.
+
+**To create a new stacked branch** from scratch: `but branch new <name> -a <anchor>` — only use this when the child branch doesn't exist yet.
 
 ```
 main ── authentication ── user-profile ── settings-page
@@ -97,6 +101,12 @@ Use when:
 - Creating a series of related changes
 
 Example: User profile page needs authentication to be implemented first.
+
+**Stacking two existing branches:** If both branches already exist and you need to make one depend on the other, use `but branch move`:
+```bash
+but branch move feature/frontend feature/backend
+# Now frontend is stacked on top of backend — both in the same stack
+```
 
 **Dependency tracking:** GitButler automatically tracks which changes depend on which commits. You can't stage dependent changes to the wrong branch.
 
@@ -131,12 +141,30 @@ but commit ui-branch -m "..."    # Commit from ui-branch's staging area
 
 The operation performed depends on what you combine:
 
+```
+SOURCE ↓ / TARGET →  │ zz (unassigned) │ Commit     │ Branch      │ Stack
+─────────────────────┼─────────────────┼────────────┼─────────────┼────────────
+File/Hunk            │ Unstage         │ Amend      │ Stage       │ Stage
+Commit               │ Undo            │ Squash     │ Move        │ -
+Branch (all changes) │ Unstage all     │ Amend all  │ Reassign    │ Reassign
+Stack (all changes)  │ Unstage all     │ -          │ Reassign    │ Reassign
+Unassigned (zz)      │ -               │ Amend all  │ Stage all   │ Stage all
+File-in-Commit       │ Uncommit        │ Move       │ Uncommit & assign │ -
+```
+
+`zz` is a special target meaning "unassigned" (no branch).
+
+**Common examples:**
+
 | Source | Target | Operation | Example |
 |--------|--------|-----------|---------|
 | File | Branch | Stage file to branch | `but rub a1 bu` |
 | File | Commit | Amend file into commit | `but rub a1 c3` |
 | Commit | Commit | Squash commits | `but rub c2 c3` |
 | Commit | Branch | Move commit to branch | `but rub c2 bu` |
+| File | `zz` | Unstage file | `but rub a1 zz` |
+| Commit | `zz` | Undo commit | `but rub c2 zz` |
+| `zz` | Branch | Stage all unassigned | `but rub zz bu` |
 
 ### Higher-Level Conveniences
 
@@ -317,15 +345,15 @@ Git commands that don't modify state are safe to use:
 **Safe (read-only):**
 
 - `git log` - View history
-- `git diff` - See changes
+- `git diff` - See changes (but prefer `but diff` — it supports CLI IDs and `--json`)
 - `git show` - View commits
 - `git blame` - See line history
 - `git reflog` - View reference log
 
-**Unsafe (modifying):**
+**Don't use in a GitButler workspace:**
 
-- `git status` - Shows merged workspace, not individual stacks
-- `git commit` - Commits to wrong place
+- `git status` - Misleading: shows merged workspace state, not individual stacks; missing CLI IDs that agents need
+- `git commit` - Commits to wrong place (bypasses branch assignment)
 - `git checkout` - Breaks workspace model
 - `git rebase` - Conflicts with GitButler's management
 - `git merge` - Use `but merge` instead

@@ -117,7 +117,7 @@ Adjust options based on PR state:
 - Hide "Merge PR" if not mergeable or has blockers
 - Hide "Fix conflicts" if no conflicts
 - Hide "Resolve feedback" if no unresolved comments
-- Only show "Run CodeRabbit review" if the PR author is NOT `narthur` (i.e., it's someone else's code)
+- Only show "Run CodeRabbit review" if the PR author is NOT the current user (check with `gh api user -q .login`; i.e., it's someone else's code)
 
 ### Step 5: Execute Selected Action
 
@@ -157,9 +157,13 @@ git branch --show-current
 **If on a regular git branch (standard git mode):**
 
 1. Checkout the PR branch: `gh pr checkout <number>` (see "Handling Git Worktrees" section if checkout fails)
-2. Fetch and rebase onto `origin/<base-branch>` (always use the remote base branch, never the local one, to avoid stale state): `git fetch origin <base-branch> && git rebase origin/<base-branch>`
-3. Resolve conflicts
-4. Push updated branch: `git push --force-with-lease`
+2. Determine the PR's actual base branch from the PR metadata — **never assume `main`**:
+   ```bash
+   gh pr view <number> --json baseRefName -q '.baseRefName'
+   ```
+3. Fetch and rebase onto `origin/<base-branch>` (always use the remote base branch, never the local one, to avoid stale state): `git fetch origin <base-branch> && git rebase origin/<base-branch>`
+4. Resolve conflicts
+5. Push updated branch: `git push --force-with-lease`
 
 **Option 4 - Request review:**
 

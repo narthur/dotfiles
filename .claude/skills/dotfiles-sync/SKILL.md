@@ -44,102 +44,143 @@ List all skill files tracked in dotfiles:
 dotfiles ls-tree -r --name-only HEAD -- .claude/skills/
 ```
 
-### Step 2: Compare
-
-For each skill directory on disk, check whether it has **any** files tracked in the dotfiles repo. Categorize each skill as:
-
-- **Untracked** — the skill directory exists on disk but has zero files in the dotfiles repo
-- **Partially tracked** — some files in the skill are tracked, but new files on disk aren't
-- **Fully tracked** — all files on disk are tracked
-
-Also check for **uncommitted changes** in tracked files:
+Check for uncommitted changes in tracked files:
 
 ```bash
 dotfiles status -- .claude/skills/
 ```
 
-### Step 3: Scan for Personal Data
+### Step 2: Categorize
 
-For each **untracked** or **partially tracked** skill, read all files and scan for personal data that could be sensitive if pushed to a public repo. Flag any occurrences of:
+For each skill directory on disk, categorize it as:
 
-- **People's names** — full names of real people (e.g. clients, coworkers, contacts)
-- **Usernames** — GitHub handles, Slack usernames, npm usernames, email local-parts
-- **Email addresses and phone numbers**
-- **Organization/client names** — company names, project names tied to specific clients
-- **Absolute paths** containing usernames (e.g. `/home/alice/`)
-- **API keys, tokens, secrets** — anything resembling a credential
-- **URLs** — to private repos, internal dashboards, or services that reveal org structure
-- **IP addresses** — especially if labeled with a person's name or location
-- **Slack webhook URLs, channel IDs**
-- **User IDs, account IDs** — from third-party APIs
+- **Untracked** — exists on disk but has zero files in the dotfiles repo
+- **Partially tracked** — some files tracked, but new files on disk aren't
+- **Modified** — all files tracked, but some have uncommitted changes
+- **Fully tracked** — all files tracked, no changes
 
-For each skill, list the specific findings with file and line context:
+### Step 3: Show Summary
+
+Print a one-line-per-skill overview so the user sees the full picture before diving in:
 
 ```
-Personal data found in untracked skills:
+=== Dotfiles Sync — {N} skills need attention ===
 
-  crm/SKILL.md:
+Untracked:        crm, daily-standup, fix-ci
+Partially tracked: client-report (missing: fetch-data.sh)
+Modified:         grooming/SKILL.md
+Fully tracked:    pr-triage, split-pr, resolve-pr-feedback (skipping)
+```
+
+Then proceed to present each unsynced skill one at a time.
+
+### Step 4: Interactive Loop — One Skill at a Time
+
+Process each **untracked**, **partially tracked**, or **modified** skill one by one. For each skill:
+
+#### 4a: Present the Skill
+
+Show the skill name, tracking status, and file list:
+
+```
+--- [1/8] crm/ (untracked) ---
+Files: SKILL.md
+```
+
+#### 4b: Scan for Personal Data
+
+**You MUST use the Read tool on every untracked/changed file in the skill during this step.** Do not rely on earlier reads, cached summaries, or memory from previous conversation turns. Read each file fresh, right now, before reporting findings.
+
+After reading, scan for personal data that could be sensitive if pushed to a public repo:
+
+- People's names, usernames, email addresses, phone numbers
+- Organization/client names
+- Absolute paths containing usernames (e.g. `/home/alice/`)
+- API keys, tokens, secrets
+- URLs to private repos, internal dashboards, or services that reveal org structure
+- Deployment URLs and domains (e.g. surge domains, Heroku app names)
+- Slack webhook URLs, channel IDs
+- User IDs, account IDs from third-party APIs
+- Project-specific references that reveal client relationships
+
+If found, list findings with file and line context:
+
+```
+Personal data found:
+  SKILL.md:
     - Line 25: absolute path "/home/alice/vaults/Notes/"
-    - Line 54: references "Jane Smith", "Bob Jones" by name
-
-  daily-standup/SKILL.md:
-    - Line 23: GitHub usernames "alice", "bob", "carol"
-    - Line 25: internal user IDs
-    - Line 31: org names "acme-corp", "client-co"
-    - Line 148: goal slugs tied to specific clients
-
-  daily-standup/fetch-data.sh:
-    - Line 12: internal API base URL
-    - Line 45: Slack webhook URL
+    - Line 54: organization name "Acme Corp"
+    - Line 72: surge domain "my-report.surge.sh"
 ```
 
-This helps the user decide whether to:
+If nothing found, note: `No personal data detected.`
 
-- Commit as-is (if the repo is private)
-- Redact/parameterize sensitive values before committing
-- Skip committing certain skills entirely
+#### 4c: Ask for Action
 
-### Step 4: Report
-
-Print a combined summary with both the tracking status and personal data findings:
+Present a numbered menu:
 
 ```
-=== Dotfiles Sync — Skills Audit ===
-
-Untracked skills (not in dotfiles):
-- crm/ — ⚠ personal data found (see below)
-- daily-standup/ — ⚠ personal data found (see below)
-- fix-ci/
-
-Partially tracked (new files on disk):
-- client-report/ — missing: fetch-data.sh
-
-Modified (uncommitted changes):
-- grooming/SKILL.md
-
-Fully tracked:
-- pr-triage/
-- split-pr/
-- resolve-pr-feedback/
-
---- Personal Data Scan ---
-
-  crm/SKILL.md:
-    - Line 25: absolute path "/home/alice/vaults/Notes/"
-    ...
+What would you like to do?
+1. Add — stage all files in this skill (dotfiles add ~/.claude/skills/crm/)
+2. Skip — move on without staging
+3. Inspect — read a file before deciding
+4. Done — stop processing remaining skills
 ```
 
-Omit empty categories. Omit the personal data section if nothing was found.
+- **Add**: If personal data was detected in step 4b, warn the user and ask for explicit confirmation before staging:
+  ```
+  ⚠ This skill contains personal data (see above). Are you sure you want to stage it? (yes / no)
+  ```
+  Only proceed with `dotfiles add` if the user confirms. Then advance.
+- **Skip**: advance to the next skill
+- **Inspect**: show the requested file, then re-present the menu
+- **Done**: stop the loop entirely
 
-### Step 5: Suggest Commands
+After each action, immediately advance to the next unsynced skill.
 
-For each untracked or partially tracked skill, suggest the `git add` command:
+### Step 5: Final Personal Data Review
 
-```bash
-dotfiles add ~/.claude/skills/{skill-name}/
+Before offering to commit, do a fresh scan of **everything that is staged**. This catches personal data that was missed during the per-skill scan or that was already staged before this session.
+
+1. Get the full list of staged files:
+   ```bash
+   dotfiles diff --cached --name-only -- .claude/skills/
+   ```
+2. **Read every staged file** using the Read tool (do not skip or rely on earlier reads).
+3. Scan for the same personal data categories listed in step 4b.
+4. If any personal data is found, present the findings and ask:
+   ```
+   ⚠ Personal data found in staged changes (see above).
+   
+   1. Continue — commit anyway
+   2. Unstage — remove specific files before committing (list which ones)
+   3. Abort — unstage everything and stop
+   ```
+   Wait for the user's choice before proceeding.
+
+### Step 6: Wrap Up
+
+After all skills are processed (or the user chose "Done"), show a summary:
+
+```
+=== Session Summary ===
+Added:   crm/, fix-ci/
+Skipped: daily-standup/
+Remaining: 5 unsynced skills
+
+Staged changes (not yet committed):
+  {output of: dotfiles status -- .claude/skills/}
 ```
 
-Do **not** run these commands — just print them for the user to review.
+If anything was staged (and step 5 passed), ask:
+
+```
+Commit and push these changes? (yes / no)
+```
+
+If yes:
+1. Create a commit with a descriptive message via `dotfiles commit`
+2. Push with `dotfiles push`
 
 ## Tips
 

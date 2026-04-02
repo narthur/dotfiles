@@ -85,6 +85,9 @@ if [[ "$DEBUG" == true ]]; then
   echo "Debug: Repository: $OWNER/$REPO" >&2
 fi
 
+# Get current user login (used for snooze auto-unsnooze logic)
+ME=$(gh api user --jq '.login' 2>/dev/null || echo "")
+
 # Function to fetch review threads with pagination, stopping early if limit is reached
 # Parameters: show_all (true/false), limit (0 = no limit)
 fetch_threads_with_limit() {
@@ -112,6 +115,7 @@ fetch_threads_with_limit() {
               id
               isResolved
               isOutdated
+              isCollapsed
               comments(first: 100) {
                 pageInfo {
                   hasNextPage
@@ -194,16 +198,20 @@ fetch_threads_with_limit() {
       
       local thread_id=$(echo "$thread" | jq -r '.id')
       local is_resolved=$(echo "$thread" | jq -r '.isResolved')
-      local is_outdated=$(echo "$thread" | jq -r '.isOutdated')
-      
+      local is_collapsed=$(echo "$thread" | jq -r '.isCollapsed')
+
       # Skip threads based on filters
-      if [[ "$is_outdated" == "true" ]]; then
+      if [[ "$is_collapsed" == "true" ]]; then
         continue
       fi
       if [[ "$show_all" != "true" ]] && [[ "$is_resolved" == "true" ]]; then
         continue
       fi
-      
+      # Skip snoozed threads (unless --all is passed)
+      if [[ "$show_all" != "true" ]] && check_thread_snoozed "$thread_id" "$thread" "$ME"; then
+        continue
+      fi
+
       local comment_has_next=$(echo "$thread" | jq -r '.comments.pageInfo.hasNextPage // false')
       local comment_cursor=$(echo "$thread" | jq -r '.comments.pageInfo.endCursor // ""')
       # Handle null cursor
@@ -227,6 +235,7 @@ fetch_threads_with_limit() {
         # Extract comment data
         local comment_data=$(echo "$comment" | jq --arg thread_id "$thread_id" --arg is_resolved "$is_resolved" '{
           id: .id,
+          type: "review_thread",
           threadId: $thread_id,
           body: .body,
           author: .author.login,
@@ -237,11 +246,11 @@ fetch_threads_with_limit() {
           url: .url,
           isResolved: ($is_resolved == "true")
         }')
-        
+
         all_comments=$(echo "$all_comments" | jq --argjson comment "$comment_data" '. + [$comment]')
         comment_count=$((comment_count + 1))
       done <<< "$thread_comments"
-      
+
       # Stop processing this thread if we've reached the limit
       if [[ "$limit" -gt 0 ]] && [[ "$comment_count" -ge "$limit" ]]; then
         break
@@ -323,6 +332,7 @@ fetch_threads_with_limit() {
             # Extract comment data
             local comment_data=$(echo "$comment" | jq --arg thread_id "$thread_id" --arg is_resolved "$is_resolved" '{
               id: .id,
+              type: "review_thread",
               threadId: $thread_id,
               body: .body,
               author: .author.login,
@@ -356,11 +366,158 @@ fetch_threads_with_limit() {
   echo "$all_comments"
 }
 
+# Function to fetch issue comments (generic PR comments) with pagination
+# Parameters: show_all (true/false), limit (0 = no limit)
+fetch_issue_comments_with_limit() {
+  local show_all="$1"
+  local limit="$2"
+  local all_comments="[]"
+  local cursor=""
+  local has_next_page=true
+  local comment_count=0
+
+  while [[ "$has_next_page" == true ]]; do
+    if [[ "$limit" -gt 0 ]] && [[ "$comment_count" -ge "$limit" ]]; then
+      break
+    fi
+
+    local query='query($owner: String!, $repo: String!, $prNumber: Int!, $cursor: String) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $prNumber) {
+          comments(first: 100, after: $cursor) {
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+            nodes {
+              id
+              body
+              author {
+                login
+              }
+              createdAt
+              url
+              isMinimized
+            }
+          }
+        }
+      }
+    }'
+
+    local response
+    if [[ -n "$cursor" ]]; then
+      response=$(gh api graphql -f query="$query" \
+        -f owner="$OWNER" \
+        -f repo="$REPO" \
+        -F prNumber="$PR_NUMBER" \
+        -f cursor="$cursor" 2>&1) || {
+        if [[ "$DEBUG" == true ]]; then
+          echo "Debug: Failed to fetch issue comments: $response" >&2
+        fi
+        break
+      }
+    else
+      response=$(gh api graphql -f query="$query" \
+        -f owner="$OWNER" \
+        -f repo="$REPO" \
+        -F prNumber="$PR_NUMBER" 2>&1) || {
+        if [[ "$DEBUG" == true ]]; then
+          echo "Debug: Failed to fetch issue comments: $response" >&2
+        fi
+        break
+      }
+    fi
+
+    has_next_page=$(echo "$response" | jq -r '.data.repository.pullRequest.comments.pageInfo.hasNextPage // false')
+    if [[ "$has_next_page" != "true" ]]; then
+      has_next_page=false
+    fi
+    cursor=$(echo "$response" | jq -r '.data.repository.pullRequest.comments.pageInfo.endCursor // ""')
+    if [[ "$cursor" == "null" ]] || [[ -z "$cursor" ]]; then
+      cursor=""
+      if [[ "$has_next_page" == true ]]; then
+        has_next_page=false
+      fi
+    fi
+
+    local nodes
+    nodes=$(echo "$response" | jq -c '.data.repository.pullRequest.comments.nodes[]' 2>/dev/null) || nodes=""
+
+    [[ -z "$nodes" ]] && continue
+
+    while IFS= read -r comment; do
+      if [[ "$limit" -gt 0 ]] && [[ "$comment_count" -ge "$limit" ]]; then
+        break
+      fi
+
+      local is_minimized=$(echo "$comment" | jq -r '.isMinimized')
+      if [[ "$is_minimized" == "true" ]]; then
+        continue
+      fi
+
+      local comment_id=$(echo "$comment" | jq -r '.id')
+
+      # Skip dismissed or snoozed comments (unless --all)
+      if [[ "$show_all" != "true" ]]; then
+        if is_comment_dismissed "$comment_id" || check_comment_snoozed "$comment_id"; then
+          continue
+        fi
+      fi
+
+      local body=$(echo "$comment" | jq -r '.body // ""')
+      if [[ -z "$body" ]] || [[ "$body" == "null" ]]; then
+        continue
+      fi
+
+      local comment_data=$(echo "$comment" | jq '{
+        id: .id,
+        commentId: .id,
+        type: "issue_comment",
+        body: .body,
+        author: .author.login,
+        createdAt: .createdAt,
+        url: .url,
+        path: "general",
+        line: null,
+        diffHunk: null,
+        threadId: null,
+        isResolved: false
+      }')
+
+      all_comments=$(echo "$all_comments" | jq --argjson comment "$comment_data" '. + [$comment]')
+      comment_count=$((comment_count + 1))
+    done <<< "$nodes"
+
+    if [[ "$limit" -gt 0 ]] && [[ "$comment_count" -ge "$limit" ]]; then
+      has_next_page=false
+    fi
+  done
+
+  echo "$all_comments"
+}
+
 # Get review comments using GraphQL with pagination, stopping early if limit is reached
 # The function already filters and applies the limit, so we get the final result directly
 FILTERED_COMMENTS=$(fetch_threads_with_limit "$SHOW_ALL" "$LIMIT")
 
-# Count comments - handle empty arrays and null
+# Count review thread results
+REVIEW_THREAD_COUNT=$(echo "$FILTERED_COMMENTS" | jq 'if . == null or . == [] then 0 elif type == "array" then length else 0 end')
+
+# Also fetch issue comments (generic PR comments)
+REMAINING_LIMIT=0
+if [[ "$LIMIT" -gt 0 ]]; then
+  REMAINING_LIMIT=$((LIMIT - REVIEW_THREAD_COUNT))
+fi
+
+if [[ "$LIMIT" -eq 0 ]] || [[ "$REMAINING_LIMIT" -gt 0 ]]; then
+  ISSUE_COMMENTS=$(fetch_issue_comments_with_limit "$SHOW_ALL" "$REMAINING_LIMIT")
+  ISSUE_COUNT=$(echo "$ISSUE_COMMENTS" | jq 'length')
+  if [[ "$ISSUE_COUNT" -gt 0 ]]; then
+    FILTERED_COMMENTS=$(echo "$FILTERED_COMMENTS" | jq --argjson new "$ISSUE_COMMENTS" '. + $new')
+  fi
+fi
+
+# Count all feedback items
 COMMENT_COUNT=$(echo "$FILTERED_COMMENTS" | jq 'if . == null or . == [] then 0 elif type == "array" then length else 0 end')
 
 # Function to calculate relative time
@@ -393,19 +550,19 @@ else
   
   if [[ "$COMMENT_COUNT" -eq 0 ]]; then
     if [[ "$SHOW_ALL" == true ]]; then
-      echo "No review comments found."
+      echo "No feedback found."
     else
-      echo "No unresolved review comments found."
+      echo "No unresolved feedback found."
       echo ""
-      echo "Use --all to show all comments including resolved ones."
+      echo "Use --all to show all feedback including resolved and dismissed."
     fi
     exit 0
   fi
-  
+
   if [[ "$LIMIT" -gt 0 ]]; then
-    echo "Found $COMMENT_COUNT resolvable review comment(s) (showing up to $LIMIT):"
+    echo "Found $COMMENT_COUNT feedback item(s) (showing up to $LIMIT):"
   else
-    echo "Found $COMMENT_COUNT resolvable review comment(s):"
+    echo "Found $COMMENT_COUNT feedback item(s):"
   fi
   echo ""
   
@@ -415,6 +572,7 @@ else
   # Print comments - process each comment as JSON to handle special characters
   echo "$FILTERED_COMMENTS" | jq -c '.[]' | while IFS= read -r comment_json; do
     id=$(echo "$comment_json" | jq -r '.id')
+    type=$(echo "$comment_json" | jq -r '.type // "review_thread"')
     thread_id=$(echo "$comment_json" | jq -r '.threadId // .id')
     author=$(echo "$comment_json" | jq -r '.author')
     created=$(echo "$comment_json" | jq -r '.createdAt')
@@ -422,17 +580,21 @@ else
     line=$(echo "$comment_json" | jq -r '.line // "N/A"')
     body=$(echo "$comment_json" | jq -r '.body')
     url=$(echo "$comment_json" | jq -r '.url')
-    
+
     relative=$(relative_time "$created")
-    
+
     # Color formatting
     color_reset=$'\033[0m'
     color_author=$'\033[36m'  # Cyan
     color_path=$'\033[33m'   # Yellow
     color_line=$'\033[90m'   # Gray
     color_id=$'\033[35m'    # Magenta
-    
-    echo -e "${color_id}[Thread: ${thread_id}]${color_reset} ${color_author}@${author}${color_reset} ${color_path}${path}${color_reset}:${color_line}${line}${color_reset} (${relative})"
+
+    if [[ "$type" == "issue_comment" ]]; then
+      echo -e "${color_id}[Comment: ${id}]${color_reset} ${color_author}@${author}${color_reset} (${relative})"
+    else
+      echo -e "${color_id}[Thread: ${thread_id}]${color_reset} ${color_author}@${author}${color_reset} ${color_path}${path}${color_reset}:${color_line}${line}${color_reset} (${relative})"
+    fi
     echo ""
     
     # Format body with word wrapping

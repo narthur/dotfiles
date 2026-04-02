@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# List Claude worktrees in .claude/worktrees/ with merge status
+# Usage: list-worktrees [repo-path]
+#   repo-path defaults to current directory
+
+REPO="${1:-.}"
+
+if ! git -C "$REPO" rev-parse --git-dir &>/dev/null; then
+  echo "ERROR: Not a git repository: $REPO" >&2
+  exit 1
+fi
+
+WORKTREES_DIR="$REPO/.claude/worktrees"
+
+if [[ ! -d "$WORKTREES_DIR" ]]; then
+  echo "NO_WORKTREES_DIR"
+  exit 0
+fi
+
+WORKTREES_ABS=$(realpath "$WORKTREES_DIR")
+
+# Detect default branch
+DEFAULT_BRANCH=$(git -C "$REPO" remote show origin 2>/dev/null \
+  | awk '/HEAD branch/ {print $NF}') || true
+
+if [[ -z "$DEFAULT_BRANCH" ]]; then
+  if git -C "$REPO" show-ref --verify --quiet refs/heads/main 2>/dev/null; then
+    DEFAULT_BRANCH="main"
+  elif git -C "$REPO" show-ref --verify --quiet refs/heads/master 2>/dev/null; then
+    DEFAULT_BRANCH="master"
+  else
+    DEFAULT_BRANCH="main"
+  fi
+fi
+
+echo "DEFAULT_BRANCH=$DEFAULT_BRANCH"
+echo ""
+
+# Collect worktrees from git
+# porcelain format: groups of lines separated by blank lines
+# Each group: "worktree <path>\nHEAD <sha>\nbranch <ref>" (or "detached")
+tmpfile=$(mktemp)
+git -C "$REPO" worktree list --porcelain > "$tmpfile"
+
+found_any=false
+
+# Parse using awk to extract path/branch/head tuples
+while IFS='|' read -r wt_path wt_branch wt_head; do
+  [[ -z "$wt_path" ]] && continue
+
+  # Only process worktrees under .claude/worktrees/
+  wt_abs=$(realpath "$wt_path" 2>/dev/null || echo "$wt_path")
+  if [[ "$wt_abs" != "$WORKTREES_ABS"/* ]]; then
+    continue
+  fi
+
+  found_any=true
+  echo "--- WORKTREE ---"
+  echo "PATH=$wt_path"
+  echo "BRANCH=$wt_branch"
+  echo "HEAD=$wt_head"
+
+  # Check if worktree directory still exists
+  if [[ ! -d "$wt_path" ]]; then
+    echo "EXISTS=false"
+    echo "UNMERGED_COMMITS=unknown"
+    echo "UNCOMMITTED_CHANGES=0"
+    echo "LAST_COMMIT=unknown"
+    continue
+  fi
+
+  echo "EXISTS=true"
+
+  # Count unmerged commits relative to default branch
+  if [[ "$wt_branch" == "detached" ]]; then
+    unmerged="detached"
+  else
+    unmerged=$(git -C "$REPO" log "origin/${DEFAULT_BRANCH}..${wt_branch}" \
+      --oneline 2>/dev/null | wc -l | tr -d ' ') || unmerged="unknown"
+  fi
+  echo "UNMERGED_COMMITS=$unmerged"
+
+  # Count uncommitted changes in the worktree
+  uncommitted=$(git -C "$wt_path" status --porcelain 2>/dev/null | wc -l | tr -d ' ') || uncommitted=0
+  echo "UNCOMMITTED_CHANGES=$uncommitted"
+
+  # Last commit info
+  if [[ "$wt_branch" == "detached" ]]; then
+    last_commit=$(git -C "$REPO" log -1 --format="%ar by %an: %s" "$wt_head" 2>/dev/null) || last_commit="unknown"
+  else
+    last_commit=$(git -C "$REPO" log -1 --format="%ar by %an: %s" "$wt_branch" 2>/dev/null) || last_commit="unknown"
+  fi
+  echo "LAST_COMMIT=$last_commit"
+
+done < <(awk '
+  /^worktree / { path=substr($0, 10) }
+  /^HEAD /     { head=substr($0, 6) }
+  /^branch /   { branch=substr($0, 15) }
+  /^detached/  { branch="detached" }
+  /^$/         { if (path != "") print path "|" branch "|" head; path=""; branch=""; head="" }
+  END          { if (path != "") print path "|" branch "|" head }
+' "$tmpfile")
+
+rm -f "$tmpfile"
+
+if [[ "$found_any" == "false" ]]; then
+  echo "NO_CLAUDE_WORKTREES"
+fi

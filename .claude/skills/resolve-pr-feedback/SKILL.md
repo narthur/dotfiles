@@ -79,16 +79,21 @@ Run the appropriate command based on workspace type:
 
 If no unresolved feedback remains, inform the user and stop.
 
-**The output provides the thread ID** which you'll need later to resolve the feedback. Without this, you cannot properly mark feedback as resolved.
+The output includes two types of feedback:
+- **Review threads** (`[Thread: ...]`) — inline code review comments attached to specific files/lines. These have a thread ID for resolution.
+- **Generic PR comments** (`[Comment: ...]`) — top-level PR conversation comments (e.g., CodeRabbit summaries, human feedback not tied to a specific line). These have a comment ID for dismissal.
+
+**The output provides the thread ID or comment ID** which you'll need later to resolve/dismiss the feedback.
 
 ### Step 2: Summarize Feedback
 
 Before analyzing or taking action, present a brief summary of the feedback to the user. This ensures the user understands what the reviewer is asking for before being presented with options.
 
 Include:
-- Who left the feedback
 - Which file/line it references
 - A plain-language summary of what the reviewer is requesting or pointing out
+
+**Do NOT mention or comment on whether the feedback came from an automated reviewer, bot, or human.** Judge all feedback purely on its technical merits.
 
 ### Step 3: Validate Feedback
 
@@ -97,6 +102,8 @@ Analyze the feedback by:
 1. Reading the referenced code
 2. Understanding the reviewer's concern
 3. Determining if the feedback is valid
+
+**Judge feedback solely on its technical merits.** Never factor in whether the reviewer is a bot, automated tool, or human — evaluate the substance of the concern itself.
 
 **If clearly valid**: Proceed to offer options
 **If clearly invalid**: Explain why and offer to resolve without changes
@@ -110,22 +117,25 @@ Always present numbered options for next steps:
 
 ```
 Next steps:
-1. Fix, resolve, and commit - Implement the fix, resolve the thread, and create a commit
-2. Fix only - Implement the fix without resolving or committing
-3. Resolve without fix - Mark as resolved (feedback is invalid or already addressed)
+1. Fix, resolve/dismiss, and commit - Implement the fix, mark as addressed, and create a commit
+2. Fix only - Implement the fix without resolving/dismissing or committing
+3. Resolve/dismiss without fix - Mark as addressed (feedback is invalid or already addressed)
 4. Create follow-up issue - Create a GitHub issue to address this later
-5. Skip - Move to the next feedback item
-6. Stop - End the feedback review session
+5. Snooze - Temporarily hide this feedback item and revisit later (e.g. 1h, 1d, 1w)
+6. Skip - Move to the next feedback item
+7. Stop - End the feedback review session
 ```
 
 Adjust options based on context (e.g., offer "Create follow-up issue" when the fix is out of scope or requires broader changes).
 
 ### Step 5: Execute Selected Action
 
-**Option 1 - Fix, resolve, and commit:**
+**Option 1 - Fix, resolve/dismiss, and commit:**
 
 1. Implement the code fix
-2. Run `~/.claude/skills/resolve-pr-feedback/resolve-feedback <thread-id>`
+2. Mark the feedback as addressed:
+   - For review threads: `~/.claude/skills/resolve-pr-feedback/resolve-feedback <thread-id>`
+   - For generic PR comments: `~/.claude/skills/resolve-pr-feedback/dismiss-comment <comment-id>`
 3. Stage and commit changes **locally** using conventional commit format (see below):
    - **GitButler workspace**:
      1. Run `but status` to see virtual branches and identify the one associated with the PR
@@ -135,13 +145,35 @@ Adjust options based on context (e.g., offer "Create follow-up issue" when the f
 4. **DO NOT push yet** - commits should accumulate locally
 5. Return to Step 1 for next feedback item
 
+**Option 3 - Resolve/dismiss without fix:**
+
+1. Compose a brief justification explaining why no code change is needed (e.g., the concern doesn't apply, it's already handled elsewhere, the existing behavior is intentional)
+2. Reply with the justification and mark as addressed:
+   - For review threads:
+     1. Reply: `~/.claude/skills/resolve-pr-feedback/pr-comment <thread-id> "<justification>"`
+     2. Resolve: `~/.claude/skills/resolve-pr-feedback/resolve-feedback <thread-id>`
+   - For generic PR comments:
+     1. Dismiss: `~/.claude/skills/resolve-pr-feedback/dismiss-comment <comment-id>`
+3. Return to Step 1 for next feedback item
+
 **Option 4 - Create follow-up issue:**
 
 1. Create issue: `gh issue create --title "<title>" --body "<description>"`
 2. Capture the issue number from output
-3. Reply to thread: `~/.claude/skills/resolve-pr-feedback/pr-comment <thread-id> "Created follow-up issue #<number> to address this feedback"`
-4. Resolve the thread: `~/.claude/skills/resolve-pr-feedback/resolve-feedback <thread-id>`
+3. Reply with the issue reference:
+   - For review threads: `~/.claude/skills/resolve-pr-feedback/pr-comment <thread-id> "Created follow-up issue #<number> to address this feedback"`
+   - For generic PR comments: `gh pr comment --body "Created follow-up issue #<number> to address feedback from this comment"`
+4. Mark as addressed:
+   - For review threads: `~/.claude/skills/resolve-pr-feedback/resolve-feedback <thread-id>`
+   - For generic PR comments: `~/.claude/skills/resolve-pr-feedback/dismiss-comment <comment-id>`
 5. Return to Step 1 for next feedback item
+
+**Option 5 - Snooze:**
+
+1. Ask the user how long to snooze (e.g. 1h, 4h, 1d, 3d, 1w), or accept inline if already specified
+2. Run: `~/.claude/skills/resolve-pr-feedback/snooze-feedback <id> <duration>` (works with both thread IDs and comment IDs)
+3. The item will be hidden from feedback retrieval until the snooze expires. For review threads, it also auto-unsnoozes if a new comment from someone else is added.
+4. Return to Step 1 for next feedback item
 
 ### Step 6: Continue Loop
 
@@ -198,13 +230,29 @@ test(handlers): add coverage for edge cases
 
 The scope should reflect the area of code changed (e.g., module name, feature area).
 
+## Handling Generic PR Comments
+
+Generic PR comments (`[Comment: ...]`) may contain **multiple feedback items** within a single comment. For example, CodeRabbit summary comments often list several issues across different files.
+
+When processing a generic PR comment with multiple items:
+
+1. Read the entire comment and identify all distinct feedback items
+2. Check whether any items duplicate feedback already handled via inline review threads — skip those
+3. Work through each remaining actionable item: analyze, present options, implement fixes, and commit
+4. Only dismiss the comment (with `dismiss-comment`) **after all items have been addressed**
+
+**Note**: Unlike review threads, generic PR comments cannot be "resolved" on GitHub. The `dismiss-comment` command tracks them as addressed in local state. They will remain visible in the PR conversation on GitHub.
+
 ## Commands Reference
 
 | Command                                      | Purpose                                            |
 | -------------------------------------------- | -------------------------------------------------- |
 | `but-feedback [--limit N] [--all]`           | Retrieve GitButler workspace feedback              |
 | `pr-feedback [--limit N] [--all]`            | Retrieve standard PR feedback                      |
-| `resolve-feedback <thread-id>`               | Mark a feedback thread as resolved                 |
+| `resolve-feedback <thread-id>`               | Mark a review thread as resolved                   |
+| `dismiss-comment <comment-id>`               | Mark a generic PR comment as addressed (local)     |
+| `dismiss-comment <comment-id> --undismiss`   | Undo dismissal of a generic PR comment             |
+| `snooze-feedback <id> <duration>`             | Snooze any feedback item (e.g. 1h, 1d, 1w)        |
 | `gh issue create --title "..." --body "..."` | Create a follow-up GitHub issue                    |
 | `pr-comment <thread-id> <comment-text>`      | Reply to a specific PR review thread               |
 | `pr-comment <thread-id>`                     | Reply to a thread (prompts for comment in $EDITOR) |
