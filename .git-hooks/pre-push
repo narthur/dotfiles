@@ -39,6 +39,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
             | grep -v "^$" \
             | tr '[:upper:]' '[:lower:]' \
             | grep -v "$MY_EMAIL" \
+            | grep -vi "copilot" \
             | sort -u)
 
         if [[ -n "$foreign_authors" ]]; then
@@ -62,7 +63,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         if [[ "$is_github" == "true" ]]; then
             pr_row=$(gh pr list --head "$branch_name" --state open \
                 --json number,title,assignees,author --limit 1 \
-                --jq '.[0] | "\(.number)\t\(.title)\t\(.assignees[0].login // "")\t\(.author.login)"' \
+                --jq 'if length > 0 then .[0] | "\(.number)\t\(.title)\t\(.assignees[0].login // "")\t\(.author.login)" else "" end' \
                 2>/dev/null)
 
             if [[ -n "$pr_row" ]]; then
@@ -89,25 +90,30 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         fi
 
         if [[ -n "$branch_owner" ]]; then
-            echo -e "\n${RED}${BOLD}!! WARNING: FORCE PUSH TO SOMEONE ELSE'S BRANCH !!${NC}" >&2
-            echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}" >&2
-            echo -e "  Branch : ${YELLOW}${branch_name}${NC}" >&2
-            echo -e "  Owner  : ${YELLOW}${branch_owner}${NC} (${owner_reason})" >&2
-            [[ -n "$pr_display" ]] && echo -e "$pr_display" >&2
-            echo -e "  You    : ${YELLOW}${MY_NAME} <${MY_EMAIL}>${NC}" >&2
-            echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}" >&2
-            echo -e "${YELLOW}Force pushing rewrites history and can permanently destroy their work.${NC}\n" >&2
+            # Allow bypass via FORCE_PUSH_FOREIGN=1
+            if [[ "$FORCE_PUSH_FOREIGN" == "1" ]]; then
+                echo -e "${YELLOW}Bypassing foreign branch force-push check (FORCE_PUSH_FOREIGN=1)${NC}" >&2
+            else
+                echo -e "\n${RED}${BOLD}!! WARNING: FORCE PUSH TO SOMEONE ELSE'S BRANCH !!${NC}" >&2
+                echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}" >&2
+                echo -e "  Branch : ${YELLOW}${branch_name}${NC}" >&2
+                echo -e "  Owner  : ${YELLOW}${branch_owner}${NC} (${owner_reason})" >&2
+                [[ -n "$pr_display" ]] && echo -e "$pr_display" >&2
+                echo -e "  You    : ${YELLOW}${MY_NAME} <${MY_EMAIL}>${NC}" >&2
+                echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}" >&2
+                echo -e "${YELLOW}Force pushing rewrites history and can permanently destroy their work.${NC}\n" >&2
 
-            if [[ ! -t 1 ]]; then
-                echo "Non-interactive: force push to foreign branch blocked." >&2
-                exit 1
-            fi
+                if [[ ! -t 1 ]]; then
+                    echo "Non-interactive: force push to foreign branch blocked. Set FORCE_PUSH_FOREIGN=1 to bypass." >&2
+                    exit 1
+                fi
 
-            read -r -p "$(echo -e "${BOLD}Type YES to force push anyway, or anything else to abort: ${NC}")" reply </dev/tty
-            echo >&2
-            if [[ "$reply" != "YES" ]]; then
-                echo "Push aborted." >&2
-                exit 1
+                read -r -p "$(echo -e "${BOLD}Type YES to force push anyway, or anything else to abort: ${NC}")" reply </dev/tty
+                echo >&2
+                if [[ "$reply" != "YES" ]]; then
+                    echo "Push aborted." >&2
+                    exit 1
+                fi
             fi
         fi
     fi

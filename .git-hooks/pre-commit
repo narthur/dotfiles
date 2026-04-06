@@ -9,9 +9,9 @@ NC='\033[0m' # No Color
 # Blacklist string checker (dotfiles repo only)
 # ============================================================================
 
-# Only run blacklist check in dotfiles repo
-repo_root=$(git rev-parse --show-toplevel 2>/dev/null)
-if [[ "$repo_root" != "$HOME" ]]; then
+# Only run blacklist check in the public dotfiles repo (~/.dotfiles)
+git_dir=$(git rev-parse --git-dir 2>/dev/null)
+if [[ "$git_dir" != "$HOME/.dotfiles" ]]; then
     exit 0
 fi
 
