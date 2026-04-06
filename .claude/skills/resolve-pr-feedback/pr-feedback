@@ -496,6 +496,138 @@ fetch_issue_comments_with_limit() {
   echo "$all_comments"
 }
 
+# Function to fetch review summaries (top-level review body comments) with pagination
+# Parameters: show_all (true/false), limit (0 = no limit)
+fetch_reviews_with_limit() {
+  local show_all="$1"
+  local limit="$2"
+  local all_comments="[]"
+  local cursor=""
+  local has_next_page=true
+  local comment_count=0
+
+  while [[ "$has_next_page" == true ]]; do
+    if [[ "$limit" -gt 0 ]] && [[ "$comment_count" -ge "$limit" ]]; then
+      break
+    fi
+
+    local query='query($owner: String!, $repo: String!, $prNumber: Int!, $cursor: String) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $prNumber) {
+          reviews(first: 100, after: $cursor) {
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+            nodes {
+              id
+              state
+              body
+              author {
+                login
+              }
+              createdAt
+              url
+            }
+          }
+        }
+      }
+    }'
+
+    local response
+    if [[ -n "$cursor" ]]; then
+      response=$(gh api graphql -f query="$query" \
+        -f owner="$OWNER" \
+        -f repo="$REPO" \
+        -F prNumber="$PR_NUMBER" \
+        -f cursor="$cursor" 2>&1) || {
+        if [[ "$DEBUG" == true ]]; then
+          echo "Debug: Failed to fetch reviews: $response" >&2
+        fi
+        break
+      }
+    else
+      response=$(gh api graphql -f query="$query" \
+        -f owner="$OWNER" \
+        -f repo="$REPO" \
+        -F prNumber="$PR_NUMBER" 2>&1) || {
+        if [[ "$DEBUG" == true ]]; then
+          echo "Debug: Failed to fetch reviews: $response" >&2
+        fi
+        break
+      }
+    fi
+
+    has_next_page=$(echo "$response" | jq -r '.data.repository.pullRequest.reviews.pageInfo.hasNextPage // false')
+    if [[ "$has_next_page" != "true" ]]; then
+      has_next_page=false
+    fi
+    cursor=$(echo "$response" | jq -r '.data.repository.pullRequest.reviews.pageInfo.endCursor // ""')
+    if [[ "$cursor" == "null" ]] || [[ -z "$cursor" ]]; then
+      cursor=""
+      if [[ "$has_next_page" == true ]]; then
+        has_next_page=false
+      fi
+    fi
+
+    local nodes
+    nodes=$(echo "$response" | jq -c '.data.repository.pullRequest.reviews.nodes[]' 2>/dev/null) || nodes=""
+
+    [[ -z "$nodes" ]] && continue
+
+    while IFS= read -r review; do
+      if [[ "$limit" -gt 0 ]] && [[ "$comment_count" -ge "$limit" ]]; then
+        break
+      fi
+
+      local body=$(echo "$review" | jq -r '.body // ""')
+      if [[ -z "$body" ]] || [[ "$body" == "null" ]]; then
+        continue
+      fi
+
+      local state=$(echo "$review" | jq -r '.state')
+      # Skip pending (draft) reviews
+      if [[ "$state" == "PENDING" ]]; then
+        continue
+      fi
+
+      local review_id=$(echo "$review" | jq -r '.id')
+
+      # Skip dismissed or snoozed reviews (unless --all)
+      if [[ "$show_all" != "true" ]]; then
+        if is_comment_dismissed "$review_id" || check_comment_snoozed "$review_id"; then
+          continue
+        fi
+      fi
+
+      local comment_data=$(echo "$review" | jq --arg state "$state" '{
+        id: .id,
+        commentId: .id,
+        type: "review_comment",
+        body: .body,
+        author: .author.login,
+        createdAt: .createdAt,
+        url: .url,
+        state: $state,
+        path: "general",
+        line: null,
+        diffHunk: null,
+        threadId: null,
+        isResolved: false
+      }')
+
+      all_comments=$(echo "$all_comments" | jq --argjson comment "$comment_data" '. + [$comment]')
+      comment_count=$((comment_count + 1))
+    done <<< "$nodes"
+
+    if [[ "$limit" -gt 0 ]] && [[ "$comment_count" -ge "$limit" ]]; then
+      has_next_page=false
+    fi
+  done
+
+  echo "$all_comments"
+}
+
 # Get review comments using GraphQL with pagination, stopping early if limit is reached
 # The function already filters and applies the limit, so we get the final result directly
 FILTERED_COMMENTS=$(fetch_threads_with_limit "$SHOW_ALL" "$LIMIT")
@@ -514,6 +646,21 @@ if [[ "$LIMIT" -eq 0 ]] || [[ "$REMAINING_LIMIT" -gt 0 ]]; then
   ISSUE_COUNT=$(echo "$ISSUE_COMMENTS" | jq 'length')
   if [[ "$ISSUE_COUNT" -gt 0 ]]; then
     FILTERED_COMMENTS=$(echo "$FILTERED_COMMENTS" | jq --argjson new "$ISSUE_COMMENTS" '. + $new')
+  fi
+fi
+
+# Also fetch review summaries (top-level review body comments)
+CURRENT_COUNT=$(echo "$FILTERED_COMMENTS" | jq 'length')
+REMAINING_LIMIT=0
+if [[ "$LIMIT" -gt 0 ]]; then
+  REMAINING_LIMIT=$((LIMIT - CURRENT_COUNT))
+fi
+
+if [[ "$LIMIT" -eq 0 ]] || [[ "$REMAINING_LIMIT" -gt 0 ]]; then
+  REVIEW_COMMENTS=$(fetch_reviews_with_limit "$SHOW_ALL" "$REMAINING_LIMIT")
+  REVIEW_CMT_COUNT=$(echo "$REVIEW_COMMENTS" | jq 'length')
+  if [[ "$REVIEW_CMT_COUNT" -gt 0 ]]; then
+    FILTERED_COMMENTS=$(echo "$FILTERED_COMMENTS" | jq --argjson new "$REVIEW_COMMENTS" '. + $new')
   fi
 fi
 
@@ -592,11 +739,14 @@ else
 
     if [[ "$type" == "issue_comment" ]]; then
       echo -e "${color_id}[Comment: ${id}]${color_reset} ${color_author}@${author}${color_reset} (${relative})"
+    elif [[ "$type" == "review_comment" ]]; then
+      review_state=$(echo "$comment_json" | jq -r '.state // ""')
+      echo -e "${color_id}[Review: ${id}]${color_reset} ${color_author}@${author}${color_reset} ${color_path}${review_state}${color_reset} (${relative})"
     else
       echo -e "${color_id}[Thread: ${thread_id}]${color_reset} ${color_author}@${author}${color_reset} ${color_path}${path}${color_reset}:${color_line}${line}${color_reset} (${relative})"
     fi
     echo ""
-    
+
     # Format body with word wrapping
     echo "$body" | fold -w $((TERM_WIDTH - 2)) -s | sed 's/^/  /'
     echo ""

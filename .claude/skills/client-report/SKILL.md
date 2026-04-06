@@ -76,6 +76,7 @@ The script outputs labeled sections to stdout:
 - `=== <user> OPEN PRS ===` — one JSON object per line (open PRs authored by user in the org)
 - `=== <user> MERGED PRS ===` — one JSON object per line (PRs merged within the period)
 - `=== <user> ASSIGNED ISSUES ===` — one JSON object per line (open issues assigned to user)
+- `=== <user> ISSUE EDITS ===` — one JSON object per line (issues whose body was edited by the user during the period, detected via GraphQL `userContentEdits`). Each object has `{repo, number, title, url, lastEditedAt, edits: [{editedAt, editor}]}`.
 - `=== <user> TIME ===` — JSON array of `{taskName, projectName, clientName, hours, notes, date}` objects, or `[]`
 
 **Interpreting event types** (same logic as daily-standup):
@@ -85,7 +86,10 @@ The script outputs labeled sections to stdout:
 - `PullRequestReviewCommentEvent` → user left a review comment
 - `IssuesEvent` + `action: "opened"` → user filed an issue
 - `IssuesEvent` + `action: "closed"` → user closed an issue
+- `IssuesEvent` + `action: "labeled"` / `"assigned"` / `"unlabeled"` → triage activity
 - `IssueCommentEvent` → user commented on an issue or PR
+
+**Note:** Issue body/title edits do NOT appear in the Events API. Instead, the fetch script detects them separately via GraphQL `userContentEdits` and outputs them in the `ISSUE EDITS` section. Use that section (not events) to identify issue-editing work.
 - `PushEvent` → user pushed commits (see `commits[]` for messages, `ref` for branch)
 - `CreateEvent` → user created a branch or tag
 
@@ -183,9 +187,11 @@ Look across all data sources and identify distinct pieces of work:
 - **Events are the primary source of truth** for what the user actually did. Use `type` and `action` to understand each action (see Step 2 for the mapping).
 - Cross-reference MERGED PRS with events — a merged PR may not have a `PullRequestEvent` in the window if it was opened earlier.
 - Cross-reference ASSIGNED ISSUES with events — if the member commented or closed an assigned issue, note it.
-- Match time entry `notes` and `projectName` to GitHub repos, PR numbers, or issue titles where the connection is clear. Do **not** force matches.
+- Cross-reference ISSUE EDITS with time entries — if the user edited issue bodies on the same date as a time entry, those edits are likely what the time entry describes. Group bulk edits to the same repo (e.g. 45 issues in `integrations` edited on one day) into a single theme.
+- **Split time entry notes first.** Before correlating, split each time entry's `notes` field on semicolons and commas into individual sub-activities. Treat each sub-activity as its own work item to cross-reference independently against PRs, issues, and events.
+- Match each sub-activity (and whole-entry `projectName`) to GitHub repos, PR numbers, or issue titles where the connection is clear. Do **not** force matches.
 - Group related PRs into themes (e.g. "auth hardening", "onboarding improvements").
-- If a time entry mentions multiple distinct activities, treat them as separate bullets (do not roll all hours into one item).
+- **Every sub-activity must appear in the report.** If a sub-activity matches a PR or event, include it in the relevant theme. If it does not match anything, it must appear as a standalone item — either in "Other tracked work" or (if it warrants a dedicated theme) as its own theme. Do not silently absorb unmatched sub-activities into an adjacent theme.
 
 #### 4b: Look up missing PR/issue titles
 
@@ -197,6 +203,27 @@ gh issue view {number} --repo {org}/{repo} --json title -q .title
 ```
 
 Run these lookups in parallel where possible.
+
+#### 4b.ii: Enrich vague time entries using issue edits, events, and GitHub search
+
+For any time entry whose `notes` field contains **no explicit PR or issue number** (i.e., no `#NNN`) and does **not** clearly match an already-fetched PR title or issue title:
+
+**Step 1 — check ISSUE EDITS first.** Look through the `ISSUE EDITS` section for edits on the same date as the time entry. If found, the time entry likely describes that editing work. For bulk edits (many issues in the same repo on the same day), summarize as a single theme (e.g. "Edited 45 integration issues in beeminder/integrations — added spoiler formatting").
+
+**Step 2 — scan already-fetched events.** Look through the `GITHUB EVENTS` data for events on the same date. An `IssueCommentEvent`, `PushEvent`, `IssuesEvent`, or `PullRequestReviewEvent` on that date is likely what the person was doing. Use the event's `title`, `html_url`, and `number` to annotate the time entry.
+
+**Step 3 — fall back to GitHub search only if neither resolves it.** Extract meaningful keywords from the note (skip generic words like "fix", "work on", "update", "programming") and search:
+```bash
+gh api search/issues -X GET \
+  -f q="<keywords> org:<GITHUB_ORG>" \
+  -f per_page=5 \
+  --jq '.items[] | {number, title, html_url, state, repository_url}'
+```
+If a clear match is found (result title substantially overlaps with note text), annotate with the issue/PR link and title.
+
+**Step 4 — if still unresolved**, report the note as-is. Do not fabricate a description.
+
+Run all searches in parallel where there are multiple vague entries.
 
 #### 4c: Write the per-person summary
 
@@ -216,7 +243,7 @@ If the person has `PullRequestReviewEvent` or `PullRequestReviewCommentEvent` ev
 **Time tracking context (if available):**
 - Calculate total hours tracked for this client in the period and note in the section header (e.g. "12.5h tracked").
 - Annotate themes with hours where the match is clear.
-- List unmatched time entries briefly as "Other tracked work."
+- List unmatched sub-activities (and whole entries with no match) briefly as "Other tracked work." Every tracked sub-activity must appear somewhere in the report — never drop one silently.
 - If time data was unavailable, note it (e.g. "Time tracking unavailable").
 
 **Important — do not infer stack completeness:**

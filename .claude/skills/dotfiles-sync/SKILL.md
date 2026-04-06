@@ -19,14 +19,14 @@ You are a dotfiles audit assistant. Your role is to compare what exists on disk 
 - Modify any skill files — this is a read-only audit
 - Track files outside `~/.claude/` unless asked
 
-## Dotfiles Repo
+## Dotfiles Repos
 
-The dotfiles repo is a bare git repo:
+There are two bare git repos, both with `~` as the work tree:
 
-- **Git dir:** `~/.dotfiles`
-- **Work tree:** `~` (`/home/alice/`)
-- **Shell alias:** `dotfiles` is defined in `~/.bash_aliases` as `git --git-dir=$HOME/.dotfiles --work-tree=$HOME`
-- Use `dotfiles` in all commands and suggestions
+- **`dotfiles`** — `~/.dotfiles` → `github.com/narthur/dotfiles` (**public**)
+- **`dotprivate`** — `~/.dotfiles-private` → `github.com/narthur/dotprivate` (**private**)
+
+Both aliases are defined in `~/.bash_aliases`. Use the appropriate repo depending on the sensitivity of the file.
 
 ## Workflow
 
@@ -38,24 +38,28 @@ List all skill directories on disk:
 ls -d ~/.claude/skills/*/
 ```
 
-List all skill files tracked in dotfiles:
+List all skill files tracked in each repo:
 
 ```bash
 dotfiles ls-tree -r --name-only HEAD -- .claude/skills/
+dotprivate ls-tree -r --name-only HEAD -- .claude/skills/
 ```
+
+(If a repo has no commits yet, `ls-tree` will fail — treat it as empty.)
 
 Check for uncommitted changes in tracked files:
 
 ```bash
 dotfiles status -- .claude/skills/
+dotprivate status -- .claude/skills/
 ```
 
 ### Step 2: Categorize
 
-For each skill directory on disk, categorize it as:
+For each skill directory on disk, note which repo tracks it (if any), and categorize it as:
 
-- **Untracked** — exists on disk but has zero files in the dotfiles repo
-- **Partially tracked** — some files tracked, but new files on disk aren't
+- **Untracked** — exists on disk but has zero files in either repo
+- **Partially tracked** — some files tracked (in one repo), but new files on disk aren't
 - **Modified** — all files tracked, but some have uncommitted changes
 - **Fully tracked** — all files tracked, no changes
 
@@ -66,10 +70,10 @@ Print a one-line-per-skill overview so the user sees the full picture before div
 ```
 === Dotfiles Sync — {N} skills need attention ===
 
-Untracked:        crm, daily-standup, fix-ci
-Partially tracked: client-report (missing: fetch-data.sh)
-Modified:         grooming/SKILL.md
-Fully tracked:    pr-triage, split-pr, resolve-pr-feedback (skipping)
+Untracked:         crm, daily-standup, fix-ci
+Partially tracked: client-report [dotprivate] (missing: fetch-data.sh)
+Modified:          grooming/SKILL.md [dotfiles]
+Fully tracked:     pr-triage [dotfiles], split-pr [dotfiles], resolve-pr-feedback [dotprivate] (skipping)
 ```
 
 Then proceed to present each unsynced skill one at a time.
@@ -117,21 +121,24 @@ If nothing found, note: `No personal data detected.`
 
 #### 4c: Ask for Action
 
-Present a numbered menu:
+Present a numbered menu. If personal data was detected in step 4b, pre-select and recommend option 2:
 
 ```
 What would you like to do?
-1. Add — stage all files in this skill (dotfiles add ~/.claude/skills/crm/)
-2. Skip — move on without staging
-3. Inspect — read a file before deciding
-4. Done — stop processing remaining skills
+1. Add to dotfiles (public)  — dotfiles add ~/.claude/skills/crm/
+2. Add to dotprivate (private) — dotprivate add ~/.claude/skills/crm/
+3. Skip — move on without staging
+4. Inspect — read a file before deciding
+5. Done — stop processing remaining skills
 ```
 
-- **Add**: If personal data was detected in step 4b, warn the user and ask for explicit confirmation before staging:
-  ```
-  ⚠ This skill contains personal data (see above). Are you sure you want to stage it? (yes / no)
-  ```
-  Only proceed with `dotfiles add` if the user confirms. Then advance.
+If personal data was found, add a note before the menu:
+```
+⚠ Personal data detected — option 2 (dotprivate) is recommended.
+```
+
+- **Add to dotfiles**: Stage using `dotfiles add`. Then advance.
+- **Add to dotprivate**: Stage using `dotprivate add`. Then advance.
 - **Skip**: advance to the next skill
 - **Inspect**: show the requested file, then re-present the menu
 - **Done**: stop the loop entirely
@@ -140,9 +147,9 @@ After each action, immediately advance to the next unsynced skill.
 
 ### Step 5: Final Personal Data Review
 
-Before offering to commit, do a fresh scan of **everything that is staged**. This catches personal data that was missed during the per-skill scan or that was already staged before this session.
+Before offering to commit, do a fresh scan of **everything staged in `dotfiles` (public repo)**. This catches personal data that was missed during the per-skill scan or that was already staged before this session. (No need to scan `dotprivate` staged files — that repo is private.)
 
-1. Get the full list of staged files:
+1. Get the full list of staged files in the public repo:
    ```bash
    dotfiles diff --cached --name-only -- .claude/skills/
    ```
@@ -150,11 +157,12 @@ Before offering to commit, do a fresh scan of **everything that is staged**. Thi
 3. Scan for the same personal data categories listed in step 4b.
 4. If any personal data is found, present the findings and ask:
    ```
-   ⚠ Personal data found in staged changes (see above).
+   ⚠ Personal data found in staged changes for dotfiles (public repo).
    
-   1. Continue — commit anyway
-   2. Unstage — remove specific files before committing (list which ones)
-   3. Abort — unstage everything and stop
+   1. Continue — commit to dotfiles anyway
+   2. Move to dotprivate — unstage from dotfiles, re-stage in dotprivate
+   3. Unstage — remove specific files before committing (list which ones)
+   4. Abort — unstage everything and stop
    ```
    Wait for the user's choice before proceeding.
 
@@ -175,15 +183,16 @@ Staged changes (not yet committed):
 If anything was staged (and step 5 passed), ask:
 
 ```
-Commit and push these changes? (yes / no)
+Commit and push staged changes? (yes / no)
 ```
 
-If yes:
-1. Create a commit with a descriptive message via `dotfiles commit`
-2. Push with `dotfiles push`
+If yes, commit and push each repo that has staged changes:
+1. `dotfiles commit -m "..."` then `dotfiles push` (if dotfiles has staged changes)
+2. `dotprivate commit -m "..."` then `dotprivate push` (if dotprivate has staged changes)
 
 ## Tips
 
-- The dotfiles repo likely has a broad gitignore, so `dotfiles status` may not show untracked files by default. Use `dotfiles status -u` or check file-by-file.
-- Some skills may contain secrets or machine-specific config that shouldn't be committed — flag these if you spot them (e.g., files containing API keys, tokens, or absolute paths that only work on this machine).
-- The `dotfiles add` commands can be batched: `dotfiles add ~/.claude/skills/foo/ ~/.claude/skills/bar/`
+- Both repos have broad gitignores, so `status` may not show untracked files by default. Use `dotfiles status -u` / `dotprivate status -u` or check file-by-file.
+- Some skills may contain secrets or machine-specific config that shouldn't be committed to either repo — flag these if you spot them.
+- `add` commands can be batched: `dotprivate add ~/.claude/skills/foo/ ~/.claude/skills/bar/`
+- When in doubt about public vs. private, prefer `dotprivate` — it's easier to move a skill from private to public than to scrub it from git history.

@@ -79,11 +79,12 @@ Run the appropriate command based on workspace type:
 
 If no unresolved feedback remains, inform the user and stop.
 
-The output includes two types of feedback:
+The output includes three types of feedback:
 - **Review threads** (`[Thread: ...]`) — inline code review comments attached to specific files/lines. These have a thread ID for resolution.
-- **Generic PR comments** (`[Comment: ...]`) — top-level PR conversation comments (e.g., CodeRabbit summaries, human feedback not tied to a specific line). These have a comment ID for dismissal.
+- **Review summaries** (`[Review: ...]`) — top-level body comments submitted with a review (e.g., CodeRabbit review summaries with actionable feedback). These have a review ID for dismissal. They may contain multiple feedback items spanning different files.
+- **Generic PR comments** (`[Comment: ...]`) — top-level PR conversation comments (e.g., bot summaries, human feedback not tied to a specific line). These have a comment ID for dismissal.
 
-**The output provides the thread ID or comment ID** which you'll need later to resolve/dismiss the feedback.
+**The output provides the thread ID, review ID, or comment ID** which you'll need later to resolve/dismiss the feedback.
 
 ### Step 2: Summarize Feedback
 
@@ -135,6 +136,7 @@ Adjust options based on context (e.g., offer "Create follow-up issue" when the f
 1. Implement the code fix
 2. Mark the feedback as addressed:
    - For review threads: `~/.claude/skills/resolve-pr-feedback/resolve-feedback <thread-id>`
+   - For review summaries: `~/.claude/skills/resolve-pr-feedback/dismiss-comment <review-id>`
    - For generic PR comments: `~/.claude/skills/resolve-pr-feedback/dismiss-comment <comment-id>`
 3. Stage and commit changes **locally** using conventional commit format (see below):
    - **GitButler workspace**:
@@ -152,6 +154,8 @@ Adjust options based on context (e.g., offer "Create follow-up issue" when the f
    - For review threads:
      1. Reply: `~/.claude/skills/resolve-pr-feedback/pr-comment <thread-id> "<justification>"`
      2. Resolve: `~/.claude/skills/resolve-pr-feedback/resolve-feedback <thread-id>`
+   - For review summaries:
+     1. Dismiss: `~/.claude/skills/resolve-pr-feedback/dismiss-comment <review-id>`
    - For generic PR comments:
      1. Dismiss: `~/.claude/skills/resolve-pr-feedback/dismiss-comment <comment-id>`
 3. Return to Step 1 for next feedback item
@@ -229,6 +233,19 @@ test(handlers): add coverage for edge cases
 ```
 
 The scope should reflect the area of code changed (e.g., module name, feature area).
+
+## Handling Review Summaries
+
+Review summaries (`[Review: ...]`) are the body comments submitted when a reviewer submits a review (approve, request changes, or comment). Like generic PR comments, they may contain **multiple feedback items** across different files.
+
+When processing a review summary with multiple items:
+
+1. Read the entire review body and identify all distinct feedback items
+2. Check whether any items duplicate feedback already handled via inline review threads — skip those
+3. Work through each remaining actionable item: analyze, present options, implement fixes, and commit
+4. Only dismiss the review (with `dismiss-comment`) **after all items have been addressed**
+
+**Note**: Like generic PR comments, review summaries cannot be "resolved" on GitHub. The `dismiss-comment` command tracks them as addressed in local state.
 
 ## Handling Generic PR Comments
 
