@@ -192,6 +192,34 @@ is_comment_dismissed() {
   [[ -n "$entry" ]] && return 0 || return 1
 }
 
+# ──────────────────────────────────────────────
+# Bot command detection for auto-skipping
+# ──────────────────────────────────────────────
+
+BOT_COMMAND_PATTERNS=(
+  '^@coderabbitai\b'
+  '^@dependabot\b'
+  '^@github-actions\b'
+  '^@copilot\b'
+  '^\s*<!-- This is an auto-generated (reply|comment) by CodeRabbit -->'
+)
+
+# Check if a comment body is a bot command (not actionable feedback).
+# Returns: 0 = bot command (skip), 1 = real feedback (include)
+is_bot_command() {
+  local body="$1"
+  local trimmed
+  trimmed=$(echo "$body" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+
+  for pattern in "${BOT_COMMAND_PATTERNS[@]}"; do
+    if echo "$trimmed" | grep -qiP "$pattern"; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 print_pr_tools_help() {
   local color_reset=$'\033[0m'
   local color_header=$'\033[1;36m'  # Bold Cyan

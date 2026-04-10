@@ -469,6 +469,10 @@ fetch_issue_comments_with_limit() {
         continue
       fi
 
+      if [[ "$show_all" != "true" ]] && is_bot_command "$body"; then
+        continue
+      fi
+
       local comment_data=$(echo "$comment" | jq '{
         id: .id,
         commentId: .id,

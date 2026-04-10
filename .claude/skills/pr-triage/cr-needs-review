@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# cr-needs-review — Check whether a PR has commits not yet reviewed by CodeRabbit.
+#
+# Usage: cr-needs-review <pr-number>
+#
+# Exit codes:
+#   0 — PR has unreviewed commits (CodeRabbit review should be requested)
+#   1 — PR is already reviewed by CodeRabbit (no action needed)
+#   2 — Usage error or API failure
+
+set -euo pipefail
+
+if [[ $# -lt 1 ]]; then
+  echo "Usage: cr-needs-review <pr-number>" >&2
+  exit 2
+fi
+
+PR_NUMBER="$1"
+
+# Get the latest commit on the PR
+LATEST_COMMIT=$(gh pr view "$PR_NUMBER" --json commits --jq '.commits[-1].oid' 2>/dev/null) || {
+  echo "error: failed to fetch PR commits" >&2
+  exit 2
+}
+
+if [[ -z "$LATEST_COMMIT" ]]; then
+  echo "error: no commits found on PR #$PR_NUMBER" >&2
+  exit 2
+fi
+
+# Check 1: CodeRabbit status check on the PR
+CR_CHECK=$(gh pr checks "$PR_NUMBER" 2>&1 | grep -i coderabbit || true)
+
+if [[ -n "$CR_CHECK" ]]; then
+  if echo "$CR_CHECK" | grep -qi "review completed\|status carried forward"; then
+    echo "reviewed — CodeRabbit status check indicates review is complete"
+    exit 1
+  fi
+  if echo "$CR_CHECK" | grep -qi "pending\|in_progress"; then
+    echo "reviewed — CodeRabbit review is currently in progress"
+    exit 1
+  fi
+fi
+
+# Check 2: Compare the last CodeRabbit review commit to the PR head
+LAST_CR_COMMIT=$(gh pr view "$PR_NUMBER" --json reviews \
+  --jq '[.reviews[] | select(.author.login == "coderabbitai")] | last | .commit.oid // empty' 2>/dev/null) || true
+
+if [[ -n "$LAST_CR_COMMIT" && "$LAST_CR_COMMIT" == "$LATEST_COMMIT" ]]; then
+  echo "reviewed — CodeRabbit's last review is on the latest commit ($LATEST_COMMIT)"
+  exit 1
+fi
+
+# If we get here, there are unreviewed commits
+if [[ -z "$LAST_CR_COMMIT" ]]; then
+  echo "needs-review — no CodeRabbit review found on PR #$PR_NUMBER"
+else
+  echo "needs-review — latest commit $LATEST_COMMIT is newer than last reviewed commit $LAST_CR_COMMIT"
+fi
+exit 0

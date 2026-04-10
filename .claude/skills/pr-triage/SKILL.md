@@ -38,6 +38,24 @@ The session commands track state across the triage session. Using `gh` directly 
 - `gh pr ready` - OK (no session equivalent)
 - `gh pr edit --add-reviewer` - OK (no session equivalent)
 
+### Playwright browser for PR pages
+
+`pr-review-session` opens the PR in **Playwright** via `playwright-cli` (see the `playwright` skill) when the CLI is available. Otherwise it falls back to Firefox.
+
+- **One tab per repo triage session:** Session name is `pr-triage-<owner>-<repo>` (slashes in `owner/repo` become hyphens). Each `view` / `next` navigates that session with `goto`, so you do not accumulate tabs while stepping through PRs in one repository.
+- **Multiple repos at once:** Each repo gets its own named Playwright session (separate browser context / window), so parallel triage in different clones stays isolated.
+- **GitHub login:** Playwright does not use your system browser profile. Save auth once, then reuse it:
+  1. `mkdir -p ~/.playwright-auth`
+  2. `playwright-cli open --headed -s=github-auth`
+  3. Sign in to GitHub in the window, then confirm with the user when done.
+  4. `playwright-cli state-save ~/.playwright-auth/github.json -s=github-auth`
+  5. `playwright-cli close -s=github-auth`
+  The triage script loads `~/.playwright-auth/github.json` into each new `pr-triage-*` session the first time that session is created. If the file is missing, the PR page may show GitHub’s sign-in UI until you complete this setup.
+- **Watch the browser:** `playwright-cli show`
+- **Overrides:** `PR_REVIEW_NO_PLAYWRIGHT=1` forces the legacy Firefox new-tab behavior. `PLAYWRIGHT_CLI` sets the path to `playwright-cli` (default `~/.local/bin/playwright-cli`, then `PATH`).
+
+The `view … --web` flag still uses `gh pr view --web` (system default browser), not Playwright.
+
 ---
 
 # PR Triage Session Workflow
@@ -81,7 +99,7 @@ Optional: check session state first:
 
 ### Step 3: Assess PR Status
 
-`pr-review-session view` (and `next`) already prints a summary: branch, author, status, URL, size, mergeable, CI status, reviews, and unresolved feedback count, then runs `gh pr view` for the full body. The PR is automatically opened in Firefox.
+`pr-review-session view` (and `next`) already prints a summary: branch, author, status, URL, size, mergeable, CI status, reviews, and unresolved feedback count, then runs `gh pr view` for the full body. The PR is automatically opened in Playwright (named session per repo, single tab reused) when `playwright-cli` is available; otherwise Firefox. See **Playwright browser for PR pages** above.
 
 Use that output as the assessment. If you need to re-display or analyze further, the same summary is produced by:
 
@@ -105,10 +123,11 @@ What would you like to do?
 6. Merge PR - Merge the pull request
 7. Close PR - Close without merging
 8. Run CodeRabbit review - Run a local AI code review on this PR's changes
-9. View PR in browser - Open the PR URL
-10. Snooze - Temporarily hide this PR and revisit later (e.g. 1h, 1d, 1w)
-11. Next - Mark reviewed and move to next unreviewed (`pr-review-session next`)
-12. Reset - Reset the triage session (`pr-review-session reset`)
+9. Request CodeRabbit review - Trigger a remote CodeRabbit review via PR comment
+10. View PR in browser - Open the PR URL
+11. Snooze - Temporarily hide this PR and revisit later (e.g. 1h, 1d, 1w)
+12. Next - Mark reviewed and move to next unreviewed (`pr-review-session next`)
+13. Reset - Reset the triage session (`pr-review-session reset`)
 ```
 
 Adjust options based on PR state:
@@ -118,6 +137,12 @@ Adjust options based on PR state:
 - Hide "Fix conflicts" if no conflicts
 - Hide "Resolve feedback" if no unresolved comments
 - Only show "Run CodeRabbit review" if the PR author is NOT the current user (check with `gh api user -q .login`; i.e., it's someone else's code)
+- Only show "Request CodeRabbit review" when (1) PR author IS the current user, and (2) the `cr-needs-review` script confirms unreviewed commits exist. **Always run this check** when presenting options for the user's own PRs:
+  ```bash
+  ~/.claude/skills/pr-triage/cr-needs-review <number>
+  # Exit 0 → needs review, SHOW the option
+  # Exit 1 → already reviewed, HIDE the option
+  ```
 
 ### Step 5: Execute Selected Action
 
@@ -204,13 +229,28 @@ gh pr close <number>
 4. Present findings and offer to act on them.
 5. Return to PR assessment.
 
-**Option 8 - View in browser:**
+**Option 9 - Request CodeRabbit review:**
 
-```bash
-gh pr view <number> --web
-```
+1. Comment on the PR to trigger a remote CodeRabbit review:
+   ```bash
+   gh pr comment <number> --body "@coderabbitai review"
+   ```
+2. Inform the user that CodeRabbit will process the review asynchronously and results will appear as PR comments.
+3. Return to PR assessment or move to next PR.
 
-**Option 9 - Snooze:**
+**Option 10 - View in browser:**
+
+- **Playwright (same window as triage):** from the repo root, session name is `pr-triage-$(gh repo view --json nameWithOwner -q .nameWithOwner | tr / -)`:
+
+  ```bash
+  playwright-cli goto "$(gh pr view <number> --json url -q .url)" -s=pr-triage-$(gh repo view --json nameWithOwner -q .nameWithOwner | tr / -)
+  ```
+
+  Or run `~/.claude/skills/pr-triage/pr-review-session view <number>` again to open the current PR in that session.
+
+- **System browser:** `gh pr view <number> --web`
+
+**Option 11 - Snooze:**
 
 1. Ask the user how long to snooze (e.g. 1h, 4h, 1d, 3d, 1w), or accept inline if already specified
 2. Run: `~/.claude/skills/pr-triage/pr-review-session snooze <number> <duration>`
@@ -275,12 +315,16 @@ This applies to all actions that require checking out a branch (Fix CI, Resolve 
 | `gh pr merge <number>`                      | Merge the PR                                              |
 | `gh pr close <number>`                      | Close without merging                                     |
 | `gh pr edit <number> --add-reviewer <user>` | Add reviewer                                              |
+| `cr-needs-review <number>`                  | Check if PR has commits not yet reviewed by CodeRabbit    |
 | `failing-actions`                           | List all failing actions across PRs                       |
+| `playwright-cli show`                       | Open Playwright dashboard (watch PR browser)              |
+| `playwright-cli goto <url> -s=pr-triage-…`  | Open a PR in the repo’s triage Playwright session         |
 
-All `pr-review-session` commands should be prefixed with the full path: `~/.claude/skills/pr-triage/pr-review-session`
+All `pr-review-session` and `cr-needs-review` commands should be prefixed with the full path: `~/.claude/skills/pr-triage/`
 
 ## Tips
 
+- **Playwright PR window**: Use `playwright-cli show` if you need to see the headed browser; triage still drives navigation via `goto` in the background.
 - **Actionable only**: The session only shows PRs where you have something to do. Non-actionable PRs (e.g., waiting on someone else, no review requested from you) are automatically excluded.
 - **Priority order**: PRs are automatically sorted by action priority: review > resolve conflicts > fix ci > respond > merge > add reviewers > work on. `next` always picks the highest-priority unreviewed PR.
 - **Batch triage**: Use `pr-review-session next` repeatedly to work through all actionable PRs in priority order (session tracks progress)
