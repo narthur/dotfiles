@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "hooks": {
+    "stop": [
+      {
+        "command": "~/.cursor/hooks/narthbugz-session.sh"
+      }
+    ],
+    "beforeShellExecution": [
+      {
+        "command": "./hooks/heroku-guard.sh",
+        "matcher": "heroku",
+        "failClosed": true
+      }
+    ]
+  }
+}
