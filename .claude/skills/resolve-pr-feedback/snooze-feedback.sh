@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 
-# snooze-feedback - Snooze a PR feedback thread for a duration
-# Usage: snooze-feedback <thread-id> <duration>
+# snooze-feedback.sh - Snooze a PR feedback thread for a duration
+# Usage: snooze-feedback.sh <thread-id> <duration>
 #   duration: e.g. 1h, 4h, 1d, 3d, 1w
 #
-# The thread will be hidden from pr-feedback / but-feedback output until:
+# The thread will be hidden from pr-feedback.sh / but-feedback.sh output until:
 #   - The duration expires, OR
 #   - A new comment (not authored by you) is added to the thread
 
@@ -15,7 +15,7 @@ source "$SOURCE_DIR/pr-feedback-common.sh"
 
 if [[ $# -lt 2 ]]; then
   echo "Usage: $0 <id> <duration>" >&2
-  echo "  id: thread ID or comment ID (from pr-feedback output)" >&2
+  echo "  id: thread ID or comment ID (from pr-feedback.sh output)" >&2
   echo "  duration: e.g. 1h, 4h, 1d, 3d, 1w" >&2
   exit 1
 fi

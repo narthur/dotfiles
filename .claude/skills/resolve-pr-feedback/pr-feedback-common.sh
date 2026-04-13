@@ -232,27 +232,33 @@ ${color_header}━━━━━━━━━━━━━━━━━━━━━�
 ${color_header}PR Feedback Tools${color_reset}
 ${color_header}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${color_reset}
 
-${color_cmd}pr-feedback${color_reset} [--json] [--all] [--limit N]
+${color_cmd}pr-feedback.sh${color_reset} [--json] [--all] [--limit N]
   ${color_desc}List review comments on the current PR${color_reset}
   ${color_desc}--json: Output as JSON${color_reset}
   ${color_desc}--all: Show resolved comments too${color_reset}
   ${color_desc}--limit N: Limit number of results${color_reset}
 
-${color_cmd}pr-comment${color_reset} <thread-id> [comment-text]
+${color_cmd}pr-comment.sh${color_reset} <thread-id> [comment-text]
   ${color_desc}Reply to a review comment thread${color_reset}
   ${color_desc}Omit comment-text to open \$EDITOR${color_reset}
 
-${color_cmd}resolve-feedback${color_reset} <thread-id> [--unresolve]
+${color_cmd}resolve-feedback.sh${color_reset} <thread-id> [--unresolve]
   ${color_desc}Mark a review thread as resolved${color_reset}
   ${color_desc}--unresolve: Mark as unresolved instead${color_reset}
 
-${color_cmd}snooze-feedback${color_reset} <thread-id> <duration>
+${color_cmd}snooze-feedback.sh${color_reset} <thread-id> <duration>
   ${color_desc}Snooze a feedback thread (hide until duration expires or new comments appear)${color_reset}
   ${color_desc}duration: e.g. 1h, 4h, 1d, 3d, 1w${color_reset}
 
-${color_cmd}dismiss-comment${color_reset} <comment-id> [--undismiss]
+${color_cmd}dismiss-comment.sh${color_reset} <comment-id> [--undismiss]
   ${color_desc}Dismiss a generic PR comment (mark as addressed locally)${color_reset}
   ${color_desc}--undismiss: Undo dismissal${color_reset}
+
+${color_cmd}wait-for-review.sh${color_reset} [--workspace-type TYPE]
+  ${color_desc}Wait for CodeRabbit review after pushing (handles settle, draft, polling, rate limits)${color_reset}
+
+${color_cmd}coderabbit-status.sh${color_reset} [--json]
+  ${color_desc}Check CodeRabbit's current review status (combines check + comment signals)${color_reset}
 
 ${color_header}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${color_reset}
 EOF

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
-# pr-feedback - Show resolvable PR feedback on the currently checked out PR
+# pr-feedback.sh - Show resolvable PR feedback on the currently checked out PR
 # Usage:
-#   bash pr-feedback [--json] [--human] [--all]
+#   bash pr-feedback.sh [--json] [--human] [--all]
 
 set -euo pipefail
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
-# but-feedback - Show resolvable PR feedback for GitButler branches
+# but-feedback.sh - Show resolvable PR feedback for GitButler branches
 # Usage:
-#   bash but-feedback [--json] [--human] [--all] [--branch <branch-cli-id>]
+#   bash but-feedback.sh [--json] [--human] [--all] [--branch <branch-cli-id>]
 
 set -euo pipefail
 

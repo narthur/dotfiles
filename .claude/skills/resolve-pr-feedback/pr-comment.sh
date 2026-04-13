@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
-# pr-comment - Reply to a PR review comment by thread ID
+# pr-comment.sh - Reply to a PR review comment by thread ID
 # Usage:
-#   pr-comment <thread-id> <comment-text>
-#   pr-comment <thread-id>  (will prompt for comment in $EDITOR)
+#   pr-comment.sh <thread-id> <comment-text>
+#   pr-comment.sh <thread-id>  (will prompt for comment in $EDITOR)
 
 set -euo pipefail
 
@@ -23,7 +23,7 @@ if [[ $# -lt 1 ]]; then
 Usage: $0 <thread-id> [comment-text]
 
 Arguments:
-  <thread-id>      The thread ID to reply to (from pr-feedback output)
+  <thread-id>      The thread ID to reply to (from pr-feedback.sh output)
   [comment-text]   The comment to post. If omitted, will open \$EDITOR
 
 Examples:

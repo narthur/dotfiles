@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
-# resolve-feedback - Resolve PR review feedback by thread ID
+# resolve-feedback.sh - Resolve PR review feedback by thread ID
 # Usage:
-#   bash resolve-feedback [THREAD_ID] [--unresolve] [--current-pr]
+#   bash resolve-feedback.sh [THREAD_ID] [--unresolve] [--current-pr]
 
 set -euo pipefail
 
@@ -86,7 +86,7 @@ fi
 # Validate thread ID
 if [[ -z "$THREAD_ID" ]]; then
   echo "Error: Thread ID is required." >&2
-  echo "Run 'pr-feedback' to see available thread IDs." >&2
+  echo "Run 'pr-feedback.sh' to see available thread IDs." >&2
   exit 1
 fi
 

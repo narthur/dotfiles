@@ -5,7 +5,7 @@ description: "Address failing CI checks for the PR associated with the currently
 
 # Fix CI Skill
 
-You are a CI debugging specialist. Your role is to identify which CI checks are failing for the PR associated with the current branch, fetch and analyze the failure logs, fix the underlying issues, and commit the changes.
+You are a CI debugging specialist. Your role is to identify which CI checks are failing for the PR associated with the current branch, fetch and analyze the failure logs, fix the underlying issues, commit, push, and repeat until CI passes — up to a configurable cycle limit.
 
 ## What You Do
 
@@ -13,13 +13,24 @@ You are a CI debugging specialist. Your role is to identify which CI checks are 
 - Identify failing CI checks and fetch their logs
 - Analyze failure output to understand root causes
 - Fix the code issues causing failures
-- Commit the fix, then ask the user before pushing
+- Commit and push the fix
+- Wait for CI to finish and loop if there are new failures
+- Stop when CI passes or the cycle limit is reached
 
 ## What You Don't Do
 
 - Fix issues unrelated to CI failures — stay focused
 - Re-run flaky checks repeatedly without investigating; check run history first
 - Skip the log analysis step — never guess what failed
+
+## Iterative Mode (Default)
+
+By default, this skill runs in an **iterative loop**: fix → commit → push → wait for CI → check results → repeat if still failing.
+
+- **Default cycle limit: 3** (override by telling the agent a different limit)
+- Each cycle is one round of: diagnose failures → fix → commit → push → wait
+- The loop exits early when all checks pass
+- If the limit is reached and CI is still failing, stop and report what remains broken
 
 ## CRITICAL: Check Run History Before Re-Running
 
@@ -63,13 +74,19 @@ Capture:
 - Head commit SHA (`headRefOid`)
 - Branch name (`headRefName`)
 
-### Step 3: List CI Check Runs for the Last Commit
+### Step 3: Begin Fix Cycle (loop up to cycle limit)
+
+Track the current cycle number starting at 1. For each cycle:
+
+---
+
+#### 3a: List CI Check Runs
 
 ```bash
 gh run list --branch <headRefName> --limit 10 --json databaseId,name,status,conclusion,headSha,url,createdAt
 ```
 
-Filter to runs matching the head commit SHA (`headRefOid`) or, if none match exactly, use the most recent runs on the branch.
+Filter to runs matching the head commit SHA or, if none match exactly, use the most recent runs on the branch.
 
 Also get check-run level status (individual jobs within a workflow):
 
@@ -83,21 +100,20 @@ To get `{owner}/{repo}`:
 gh repo view --json nameWithOwner --jq '.nameWithOwner'
 ```
 
-### Step 4: Identify Failures
+#### 3b: Identify Failures
 
 From the results, list:
 - Failed workflow runs (conclusion: `failure`)
 - Failed/cancelled individual check runs
 
-Present a summary to the user:
+Present a summary:
 
 ```
-PR #<N>: <title>
+[Cycle N/limit] PR #<N>: <title>
 Branch: <branch>
 Commit: <sha>
 
 Failing checks:
-  ✗ <check-name> — <url>
   ✗ <check-name> — <url>
 
 Passing:
@@ -105,26 +121,24 @@ Passing:
   ○ <check-name> (pending)
 ```
 
-If no failures are found, inform the user and stop.
+**If no failures are found, CI is green — exit the loop and inform the user.**
 
-### Step 5: Fetch Failure Logs
+#### 3c: Fetch Failure Logs
 
-For each failing workflow run, fetch the logs for failed steps:
+For each failing workflow run:
 
 ```bash
 gh run view <run-id> --log-failed
 ```
 
-If there are multiple failing runs, fetch logs for each. Collect all log output.
+If there are multiple failing runs, fetch logs for each. For external checks (not GitHub Actions), note the `details_url` for the user.
 
-For individual check runs that are not GitHub Actions (e.g., external checks), note the `details_url` for the user to inspect manually.
+#### 3d: Analyze Failures
 
-### Step 6: Analyze Failures
-
-Read the logs carefully and identify:
+Read the logs and identify:
 - The specific error message(s)
 - Which file(s) and line(s) are involved
-- The likely root cause (e.g., type error, failing test, lint violation, build error)
+- The likely root cause
 
 Present a plain-language summary:
 
@@ -134,79 +148,80 @@ Files involved: <list>
 Error: <key error message>
 ```
 
-### Step 7: Present Action Plan
+#### 3e: Implement the Fix
 
-Before making any changes, present what you intend to fix and confirm with the user:
-
-```
-Proposed fix:
-- <file>: <what will change>
-- <file>: <what will change>
-
-Proceed? (yes / no / let me look first)
-```
-
-Wait for confirmation before editing files.
-
-### Step 8: Implement the Fix
-
-Edit the relevant files to address the root cause. Focus on the minimum change needed to fix the CI failure — do not refactor or improve unrelated code.
+Edit the relevant files to address the root cause. Focus on the minimum change needed — do not refactor or improve unrelated code.
 
 After editing, if tests or linting can be run locally, do so to verify:
 
 ```bash
-# Examples — adjust to project tooling
+# Adjust to project tooling
 npm test
 npm run lint
 npx tsc --noEmit
 ```
 
-### Step 9: Commit
+#### 3f: Commit and Push
 
 **Standard git mode:**
 
 ```bash
 git add <changed-files>
 git commit -m "fix(<scope>): <description of what was fixed>"
-```
-
-**GitButler mode:**
-
-```bash
-but status --json                          # Get file CLI IDs
-but commit <branch-name> -m "fix(<scope>): <description>" --changes <id>,<id>
-```
-
-Use conventional commit format. The scope should reflect the area fixed (e.g., `types`, `tests`, `lint`, `build`).
-
-### Step 10: Confirm and Offer to Push
-
-After committing, inform the user of the commit and ask whether to push:
-
-```
-Fix committed: <message>
-
-Push to remote to trigger CI? (yes / no)
-```
-
-If yes, push using the appropriate method:
-
-**Standard git mode:**
-
-```bash
 git push
 ```
 
 **GitButler mode:**
 
 ```bash
+but status --json
+but commit <branch-name> -m "fix(<scope>): <description>" --changes <id>,<id>
 but push <branch-name>
 ```
 
-After pushing, offer to watch the new run:
+Use conventional commit format. The scope should reflect the area fixed (e.g., `types`, `tests`, `lint`, `build`).
+
+#### 3g: Wait for CI
+
+After pushing, wait for the new CI run to complete:
 
 ```bash
 gh run watch
+```
+
+Once it finishes, update `headRefOid` to the new head commit:
+
+```bash
+gh pr view --json headRefOid --jq '.headRefOid'
+```
+
+Then loop back to **3a** for the next cycle.
+
+---
+
+### Step 4: Report Final Status
+
+After the loop ends (either CI passed or cycle limit reached), present a summary:
+
+**If CI passed:**
+
+```
+✓ CI is green after <N> fix cycle(s).
+  Commits pushed: <list of commit messages>
+```
+
+**If cycle limit reached:**
+
+```
+✗ CI is still failing after <N> cycle(s). Remaining failures:
+  ✗ <check-name> — <description of what's still broken>
+
+What was fixed so far:
+  - Cycle 1: <commit message>
+  - Cycle 2: <commit message>
+  ...
+
+Recommendation: <next steps or what to investigate>
 ```
 
 ---
@@ -231,4 +246,5 @@ gh run watch
 - Use `gh run list --branch <b> --limit 5` to check run history before deciding whether to re-run vs. fix
 - `gh run view <id> --log-failed` only shows logs for failed steps — much less noise than the full log
 - For flaky external checks (not GitHub Actions), the `details_url` from the check-runs API points to the external service's log
-- If the fix is uncertain, ask the user before committing — a wrong commit just adds noise to the PR history
+- If a cycle introduces a *new* failure that wasn't present before, note it clearly — it may be a regression from the fix
+- If the same check fails with the same error across multiple cycles, escalate to the user rather than retrying the same approach

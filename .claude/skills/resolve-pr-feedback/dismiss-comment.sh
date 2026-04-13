@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
-# dismiss-comment - Mark a generic PR comment as addressed (local tracking)
+# dismiss-comment.sh - Mark a generic PR comment as addressed (local tracking)
 # Usage:
-#   dismiss-comment <comment-id> [--undismiss]
+#   dismiss-comment.sh <comment-id> [--undismiss]
 
 set -euo pipefail
 
@@ -24,7 +24,7 @@ Unlike review threads, generic PR comments cannot be "resolved" on GitHub,
 so this command tracks dismissal in local state.
 
 Arguments:
-  <comment-id>           The comment node ID (from pr-feedback output)
+  <comment-id>           The comment node ID (from pr-feedback.sh output)
 
 Options:
   --undismiss|-u         Undo dismissal
@@ -50,7 +50,7 @@ done
 
 if [[ -z "$COMMENT_ID" ]]; then
   echo "Error: Comment ID is required." >&2
-  echo "Run 'pr-feedback' to see available comment IDs." >&2
+  echo "Run 'pr-feedback.sh' to see available comment IDs." >&2
   exit 1
 fi
 
