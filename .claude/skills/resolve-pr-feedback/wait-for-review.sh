@@ -21,9 +21,9 @@ SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SOURCE_DIR/pr-feedback-common.sh"
 
 WORKSPACE_TYPE=""
-SETTLE_SECONDS=60
-FIRST_POLL_SECONDS=240  # 4 min after settle = ~5 min total
-POLL_INTERVAL_SECONDS=300  # 5 min between subsequent polls
+SETTLE_SECONDS=30
+FIRST_POLL_SECONDS=30   # 30s after settle = ~1 min total
+POLL_INTERVAL_SECONDS=30  # 30s between subsequent polls
 MAX_TOTAL_SECONDS=1200  # 20 min total from start
 
 while [[ $# -gt 0 ]]; do
@@ -83,9 +83,9 @@ request_coderabbit_review() {
 check_for_new_feedback() {
   local count
   if [[ "$WORKSPACE_TYPE" == "gitbutler" ]]; then
-    count=$("$SOURCE_DIR/but-feedback.sh" --limit 1 2>/dev/null | grep -c '^\[Thread:\|^\[Review:\|^\[Comment:') || true
+    count=$("$SOURCE_DIR/but-feedback.sh" --limit 1 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep -c '^\[Thread:\|^\[Review:\|^\[Comment:') || true
   else
-    count=$("$SOURCE_DIR/pr-feedback.sh" --limit 1 2>/dev/null | grep -c '^\[Thread:\|^\[Review:\|^\[Comment:') || true
+    count=$("$SOURCE_DIR/pr-feedback.sh" --limit 1 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep -c '^\[Thread:\|^\[Review:\|^\[Comment:') || true
   fi
   [[ "$count" -gt 0 ]]
 }
@@ -115,16 +115,22 @@ is_draft=$(gh pr view --json isDraft -q '.isDraft' 2>/dev/null) || {
 log "Checking CodeRabbit status..."
 status=$(get_status)
 
+# "paused" is a permanent state meaning auto-reviews are disabled for this PR.
+# CodeRabbit's first comment stays "paused" even after a manually-requested
+# review completes. We request once and then just wait for feedback/completion.
+review_requested=false
+
 case "$status" in
   paused)
-    log "CodeRabbit is paused — requesting review"
+    log "CodeRabbit auto-reviews are paused — requesting manual review"
     request_coderabbit_review
+    review_requested=true
     ;;
   not_started|completed)
     if [[ "$is_draft" == "true" ]]; then
-      # Drafts need explicit review requests; "completed" means the old review
       log "PR is a draft and CodeRabbit is $status — requesting review"
       request_coderabbit_review
+      review_requested=true
     fi
     ;;
   in_progress|starting_up)
@@ -167,21 +173,32 @@ while true; do
       exit 0
       ;;
     rate_limited|timed_out)
-      if [[ "$wait_seconds" -gt 0 ]]; then
-        log "Rate limited — waiting ${wait_seconds}s before retrying..."
-        sleep "$wait_seconds"
-      else
-        log "Rate limited — waiting 180s (default) before retrying..."
-        sleep 180
+      actual_wait=${wait_seconds:-180}
+      if [[ "$actual_wait" -le 0 ]]; then
+        actual_wait=180
       fi
+      # Extend the max timeout to accommodate the rate limit wait
+      rate_limit_end=$((SECONDS - start_time + SETTLE_SECONDS + actual_wait + 600))
+      if [[ "$rate_limit_end" -gt "$MAX_TOTAL_SECONDS" ]]; then
+        log "Extending timeout from ${MAX_TOTAL_SECONDS}s to ${rate_limit_end}s to accommodate rate limit"
+        MAX_TOTAL_SECONDS=$rate_limit_end
+      fi
+      log "Rate limited — waiting ${actual_wait}s before retrying..."
+      sleep "$actual_wait"
       request_coderabbit_review
+      review_requested=true
       ;;
     in_progress|starting_up)
       # Still working — continue polling
       ;;
     paused)
-      log "CodeRabbit is paused — requesting review"
-      request_coderabbit_review
+      if [[ "$review_requested" == false ]]; then
+        log "CodeRabbit auto-reviews are paused — requesting manual review"
+        request_coderabbit_review
+        review_requested=true
+      else
+        log "CodeRabbit still paused (expected — auto-reviews disabled). Waiting for review to complete..."
+      fi
       ;;
     not_started)
       if [[ "$is_draft" == "true" ]]; then
