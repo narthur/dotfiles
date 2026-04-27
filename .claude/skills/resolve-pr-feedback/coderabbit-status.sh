@@ -4,10 +4,12 @@
 # Usage:
 #   coderabbit-status.sh [--json]
 #
-# Consults both the CodeRabbit check status and the latest coderabbitai
-# comment/review to produce a single combined status. These two signals
-# can disagree (e.g. check "completed" while comment says "reviewing"),
-# so both are needed.
+# Consults both the CodeRabbit check status and CodeRabbit's first PR
+# comment to produce a single combined status. CodeRabbit's first comment
+# is a living status document edited in-place as it moves through states
+# (reviewing, paused, rate limited, completed, etc.). Later comments are
+# review-specific replies. These two signals (check + first comment) can
+# disagree, so both are needed.
 #
 # Statuses (stdout):
 #   not_started   - No check and no comment from CodeRabbit
@@ -15,7 +17,7 @@
 #   in_progress   - CodeRabbit is actively reviewing
 #   completed     - Review finished
 #   timed_out     - CodeRabbit timed out
-#   paused        - CodeRabbit review is paused
+#   paused        - Auto-reviews disabled; manual review request needed
 #   rate_limited  - CodeRabbit hit a rate limit
 #
 # With --json, outputs a JSON object with fields:
@@ -38,7 +40,8 @@ while [[ $# -gt 0 ]]; do
 Usage: $0 [--json]
 
 Determines CodeRabbit's current review status by combining the check
-status from \`gh pr checks\` with the latest coderabbitai PR comment.
+status from \`gh pr checks\` with CodeRabbit's first PR comment (a living
+status document that CodeRabbit edits in-place).
 
 Options:
   --json    Output a JSON object instead of a single status word
@@ -50,7 +53,7 @@ Possible statuses:
   in_progress   CodeRabbit is actively reviewing
   completed     Review finished
   timed_out     CodeRabbit timed out
-  paused        CodeRabbit review is paused (needs manual review request)
+  paused        Auto-reviews disabled; manual review request needed
   rate_limited  CodeRabbit hit a rate limit (wait_seconds may be set)
 EOF
       exit 0
@@ -97,70 +100,48 @@ TIMEOUT_PATTERNS='timed out|timeout|timed-out'
 PAUSED_PATTERNS='paused|review paused|reviews are paused|auto-reviews are disabled|auto-review is disabled|reviews are disabled'
 REVIEWING_PATTERNS='<!-- This is an auto-generated comment: summarize by coderabbit.ai -->|Walkthrough|<!-- This is an auto-generated comment: review status by coderabbit.ai -->|<!-- This is an auto-generated comment: raw summary by coderabbit.ai -->'
 
-# Fetch the latest comment or review body from coderabbitai.
-# We check both PR comments and review comments.
-pr_json=$(gh pr view --json 'comments,reviews' 2>/dev/null) || {
+# CodeRabbit's first comment on a PR is a living status document that it
+# edits in-place as it moves through states (reviewing, paused, completed,
+# rate limited, etc.). Later comments are review-specific replies (e.g.
+# "Review triggered"). We read the first comment to get the current status.
+pr_json=$(gh pr view --json 'comments' 2>/dev/null) || {
   echo "Error: Could not fetch PR data. Is there a PR for this branch?" >&2
   exit 1
 }
 
-# Find latest coderabbitai comment (from PR comments)
-latest_comment=$(echo "$pr_json" | jq -r '
+cr_body=$(echo "$pr_json" | jq -r '
   [.comments[]? | select(.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")]
-  | sort_by(.createdAt) | last // empty
+  | sort_by(.createdAt) | first // empty
   | .body // empty
 ')
 
-# Find latest coderabbitai review body
-latest_review=$(echo "$pr_json" | jq -r '
-  [.reviews[]? | select(.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")]
-  | sort_by(.submittedAt) | last // empty
-  | .body // empty
-')
-
-# Pick whichever is more recent (by checking both; prefer the one with content)
-cr_body=""
-if [[ -n "$latest_comment" && -n "$latest_review" ]]; then
-  # Use the comment timestamp vs review timestamp to pick the latest
-  comment_ts=$(echo "$pr_json" | jq -r '
-    [.comments[]? | select(.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")]
-    | sort_by(.createdAt) | last | .createdAt // empty
-  ')
-  review_ts=$(echo "$pr_json" | jq -r '
-    [.reviews[]? | select(.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")]
-    | sort_by(.submittedAt) | last | .submittedAt // empty
-  ')
-  if [[ "$comment_ts" > "$review_ts" ]]; then
-    cr_body="$latest_comment"
-  else
-    cr_body="$latest_review"
-  fi
-elif [[ -n "$latest_comment" ]]; then
-  cr_body="$latest_comment"
-elif [[ -n "$latest_review" ]]; then
-  cr_body="$latest_review"
-fi
+# The first comment has two sections: a status header (paused/reviewing/etc.)
+# followed by a walkthrough describing code changes. The walkthrough can
+# contain arbitrary text (e.g. "10s timeout") that would cause false matches,
+# so we only classify the status header section.
+cr_status_section="${cr_body%%<!-- walkthrough_start -->*}"
 
 if [[ -n "$cr_body" ]]; then
-  # Classify the comment content
-  if echo "$cr_body" | grep -qiP "$RATE_LIMIT_PATTERNS"; then
+  # Classify the status section of the comment
+  if echo "$cr_status_section" | grep -qiP "$RATE_LIMIT_PATTERNS"; then
     comment_state="rate_limited"
-    # Try to extract a wait time like "try again in N minutes"
-    wait_match=$(echo "$cr_body" | grep -oiP '(?:try again in|wait|retry in)\s+(\d+)\s*min' | grep -oP '\d+' | head -1) || true
-    if [[ -n "$wait_match" ]]; then
-      wait_seconds=$((wait_match * 60))
+    # Extract wait time from messages like "wait 45 minutes and 9 seconds"
+    wait_min=$(echo "$cr_status_section" | grep -oiP '(\d+)\s*minutes?' | grep -oP '\d+' | head -1) || true
+    wait_sec=$(echo "$cr_status_section" | grep -oiP '(\d+)\s*seconds?' | grep -oP '\d+' | head -1) || true
+    if [[ -n "$wait_min" || -n "$wait_sec" ]]; then
+      wait_seconds=$(( ${wait_min:-0} * 60 + ${wait_sec:-0} ))
     else
       wait_seconds=180  # default 3 minutes
     fi
-  elif echo "$cr_body" | grep -qiP "$TIMEOUT_PATTERNS"; then
+  elif echo "$cr_status_section" | grep -qiP "$TIMEOUT_PATTERNS"; then
     comment_state="timed_out"
-  elif echo "$cr_body" | grep -qiP "$PAUSED_PATTERNS"; then
+  elif echo "$cr_status_section" | grep -qiP "$PAUSED_PATTERNS"; then
     comment_state="paused"
-  elif echo "$cr_body" | grep -qiP "$REVIEWING_PATTERNS"; then
+  elif echo "$cr_status_section" | grep -qiP "$REVIEWING_PATTERNS"; then
     # Check if this is a completed review (has actionable items or approval)
     # vs still in progress (walkthrough posted but review threads may still be coming)
     # A completed review will have "Actionable comments" or review thread markers
-    if echo "$cr_body" | grep -qiP 'Actionable comments|no issues found|no actionable comments|Changes approved|LGTM'; then
+    if echo "$cr_status_section" | grep -qiP 'Actionable comments|no issues found|no actionable comments|Changes approved|LGTM'; then
       comment_state="completed"
     else
       comment_state="reviewing"
