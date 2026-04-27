@@ -1,6 +1,6 @@
 #!/bin/bash
 
-model="anthropic/claude-3-haiku-20240307"
+model="anthropic/claude-haiku-4-5-20251001"
 
 # Define styles: each entry has a name, abstractness level, and artistic style description
 declare -a styles=(
@@ -105,143 +105,98 @@ else
     article_text=$(sed '/^END$/q' | sed '$d')
 fi
 
-llm keys list
-llm models list | grep $model
-
 script_dir="${Z_EXPERIMENTS_DIR}"
 images_dir="$script_dir/images"
 output_dir="$HOME/Pictures/Illustrations"
 
-echo ""
-echo "=== Extracting key themes and concepts from article ==="
-echo ""
-
 # Extract key themes and concepts from the article
+printf "Analyzing article... "
 extraction_prompt="${extraction_prompt_template//\{ARTICLE\}/$article_text}"
 article_summary=$(llm prompt --model $model "$extraction_prompt")
+echo "done"
 
-echo "Article Summary:"
-echo "$article_summary"
-echo ""
-echo "=== End of Summary ==="
-echo ""
-
-# Array to store all collected prompts
+# Arrays to store collected prompts and their labels
 declare -a all_prompts=()
+declare -a all_labels=()
 
-echo ""
-echo "=== Generating prompts for each style ==="
-echo ""
+total_styles=${#styles[@]}
+style_num=0
 
 # Loop through each style and generate 2 prompts per style
 for style_entry in "${styles[@]}"; do
     IFS=':' read -r abstractness artistic_style <<< "$style_entry"
-    
-    echo "Style: $abstractness - $artistic_style"
-    
-    # Generate 2 prompts for this style
+    style_num=$((style_num + 1))
+
     for prompt_num in 1 2; do
-        # Build the prompt by replacing placeholders
-        # Use parameter expansion to safely build the prompt
+        printf "  [%d/%d] %s - %s (%d/2)... " "$style_num" "$total_styles" "$abstractness" "$artistic_style" "$prompt_num"
+
         prompt="${base_prompt_template//\{ABSTRACTNESS\}/$abstractness}"
         prompt="${prompt//\{ARTISTIC_STYLE\}/$artistic_style}"
         prompt="${prompt//\{SUMMARY\}/$article_summary}"
-        
-        echo "  Generating prompt $prompt_num..."
-        
-        # Call LLM to generate a single prompt
+
         response=$(llm prompt --model $model "$prompt")
-        
-        # Clean the response (remove any headings, explanations, etc.)
+
         cleaned_prompt=$(echo "$response" | \
-            # Remove category headings
             grep -v -iE '^(very|moderately|abstract|concrete)[\s]*:' | \
-            # Remove numbered list items
             grep -v -iE '^[0-9]+\.[\s]*' | \
-            # Remove bullet points
             grep -v -iE '^[-*•][\s]*' | \
-            # Remove meta labels
             grep -v -iE '^(prompt|illustration|image|output|result)[\s]*[0-9]*[\s]*:' | \
-            # Remove lines that are clearly explanatory
             grep -v -iE '^(this (prompt|illustration|image|represents|shows|depicts))' | \
             grep -v -iE '^(the|this) (represents|shows|depicts|captures|illustrates|is meant to)' | \
             grep -v -iE '^(to (represent|show|depict|capture|illustrate|convey|express))' | \
             grep -v -iE '^(in order to|because|since|due to|based on|according to)' | \
-            # Trim whitespace
             sed 's/^[[:space:]]*//' | \
             sed 's/[[:space:]]*$//' | \
-            # Remove empty lines
             grep -v '^$' | \
-            # Filter out very short lines (likely headings or fragments)
             awk 'length > 20' | \
-            # Join multiple lines with spaces (in case prompt spans multiple lines)
             tr '\n' ' ' | \
-            # Trim final whitespace
             sed 's/[[:space:]]*$//')
-        
+
         if [[ -n "$cleaned_prompt" ]]; then
             all_prompts+=("$cleaned_prompt")
-            echo "  ✓ Prompt: $cleaned_prompt"
+            all_labels+=("$abstractness - $artistic_style")
+            echo "✓"
         else
-            echo "  ✗ Warning: No valid prompt extracted from response"
+            echo "✗ (no prompt extracted)"
         fi
-        
-        echo ""
     done
 done
-
-echo ""
-echo "=== All Generated Prompts ==="
-for i in "${!all_prompts[@]}"; do
-    echo "$((i+1)). ${all_prompts[$i]}"
-done
-echo ""
-
-read -p "Press Enter to start image generation, or Ctrl+C to cancel..."
 
 # Create output directory if it doesn't exist
 mkdir -p "$output_dir"
 
 image_width=1024
 image_height=608
-
-echo ""
-echo "=== Generating Images ==="
-echo ""
+total=${#all_prompts[@]}
 
 # Generate images for each collected prompt
 for i in "${!all_prompts[@]}"; do
     prompt_line="${all_prompts[$i]}"
-    
-    if [[ -n "$prompt_line" ]]; then
-        echo "[$((i+1))/${#all_prompts[@]}] Processing: $prompt_line"
-        echo ""
+    label="${all_labels[$i]}"
 
-        # Run image generation locally
+    if [[ -n "$prompt_line" ]]; then
+        printf "[%d/%d] %s... " "$((i+1))" "$total" "$label"
+
+        # Run image generation locally (suppress subprocess output)
         (
             cd "$script_dir"
             source .venv/bin/activate
             python main.py --prompt "$prompt_line" \
                 --width "$image_width" \
                 --height "$image_height"
-        )
+        ) >/dev/null 2>&1
 
         # Get the most recently created image file
         latest_image=$(ls -t "$images_dir"/*.png 2>/dev/null | head -1)
-        
+
         if [[ -n "$latest_image" ]]; then
             filename=$(basename "$latest_image")
-            echo "  ✓ Copied: $filename"
-            
             cp "$latest_image" "$output_dir/$filename"
-            echo "  Saved to: $output_dir/$filename"
+            echo "✓ $filename"
         else
-            echo "  ✗ Warning: No image found in $images_dir"
+            echo "✗ no image found"
         fi
-        
-        echo ""
     fi
 done
 
-echo "=== Image Generation Complete ==="
-echo "All images saved to: $output_dir"
+echo "Done. $total images saved to $output_dir"
