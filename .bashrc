@@ -125,13 +125,13 @@ export EDITOR=nano
 # Add ~/bin to PATH
 export PATH=$PATH:~/bin
 
-export PATH="${ASDF_DATA_DIR:-$HOME/.asdf}/shims:$PATH"
-
 # Created by `pipx` on 2025-12-15 17:43:09
 export PATH="$PATH:$HOME/.local/bin"
 
 eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 . <(asdf completion bash)
+
+export PATH="${ASDF_DATA_DIR:-$HOME/.asdf}/shims:$PATH"
 
 export XDG_DATA_DIRS="/var/lib/flatpak/exports/share:$XDG_DATA_DIRS"
 
@@ -158,5 +158,7 @@ export PATH="$BUN_INSTALL/bin:$PATH"
 # zoxide's warning. I determined this was the issue by running the following command:
 # echo "${PROMPT_COMMAND}"
 export _ZO_DOCTOR=0
+alias cc='claude --enable-auto-mode'
+
 # Zoxide init should be the last thing in .bashrc
 eval "$(zoxide init bash)"
