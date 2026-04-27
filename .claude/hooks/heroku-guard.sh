@@ -2,6 +2,12 @@
 input=$(cat)
 command=$(echo "$input" | jq -r '.tool_input.command // empty')
 
+# If the command doesn't mention heroku, allow it immediately
+if [[ "$command" != *heroku* ]]; then
+  echo '{ "permission": "allow" }'
+  exit 0
+fi
+
 heroku-guard-check "$command"
 rc=$?
 
