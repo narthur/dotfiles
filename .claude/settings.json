@@ -1,5 +1,20 @@
 {
+  "permissions": {
+    "defaultMode": "auto"
+  },
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/heroku-guard.sh",
+            "if": "Bash(heroku *)"
+          }
+        ]
+      }
+    ],
     "SessionEnd": [
       {
         "hooks": [
@@ -15,5 +30,6 @@
     "coderabbit@claude-plugins-official": true,
     "example-skills@anthropic-agent-skills": false
   },
-  "skipDangerousModePermissionPrompt": true
+  "skipDangerousModePermissionPrompt": true,
+  "skipAutoPermissionPrompt": true
 }
