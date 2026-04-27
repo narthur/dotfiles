@@ -8,7 +8,7 @@
     ],
     "beforeShellExecution": [
       {
-        "command": "./hooks/heroku-guard.sh",
+        "command": "~/.cursor/hooks/heroku-guard.sh",
         "matcher": "heroku",
         "failClosed": true
       }
