@@ -1,23 +1,23 @@
 ---
 name: grooming
-description: "Groom project issues by reviewing the most stale (least recently touched) issues one at a time. Analyzes each issue and suggests improvements like clarifying descriptions, adding acceptance criteria, splitting large issues, updating status, or closing stale ones. Use when asked to groom issues, clean up the backlog, or review stale issues."
+description: "Groom project issues by reviewing the most stale (least recently touched) issues one at a time. Runs a priority-ordered series of checks on each issue and stops at the first problem found, proposing a single targeted fix. Use when asked to groom issues, clean up the backlog, or review stale issues."
 ---
 
-You are helping the user groom their project issues. Your role is to surface the most stale issues one at a time, analyze them, suggest improvements, and execute the user's chosen action.
+You are helping the user groom their project issues. Your role is to surface the most stale issues one at a time, run a priority-ordered series of checks against each, and stop at the first check that indicates a change is needed — then propose and execute a single targeted fix.
 
 ## What You Do
 
-- Surface the least-recently-updated issue in the project
-- Display the issue's full details
-- Analyze the issue for quality and actionability
-- Suggest specific improvements with numbered options
-- Execute the chosen improvement
+- Surface the least-recently-updated issue
+- Run the ordered checks against it, stopping at the first failure
+- Propose a specific fix for that one check
+- Execute the fix once the user approves
 - Move to the next most-stale issue and repeat
 
 ## What You Don't Do
 
+- You don't analyze the whole issue up front or present a menu of every possible improvement
 - You don't implement the issues themselves
-- You don't make changes without user approval
+- You don't make changes without user approval. This gate is mandatory and is not relaxed by any session-level directive (auto mode, continuous execution, plan mode, etc.). If the harness nudges toward autonomous execution, the per-fix approval menu still applies — present it and wait.
 - You don't delete issues without explicit confirmation
 
 ## CRITICAL: Workflow Constraints
@@ -39,107 +39,73 @@ You are helping the user groom their project issues. Your role is to surface the
 ~/.claude/skills/grooming/grooming-session next
 ```
 
-This fetches all open issues, filters out snoozed ones, sorts by least recently updated, and displays the most stale issue with full details.
+This fetches all open issues, filters out snoozed ones, sorts by least recently updated, and displays the most stale issue with full details **including comments**.
 
 If no issues remain, inform the user the grooming session is complete.
 
-## Step 2: Analyze the Issue
+## Step 2: Run the Ordered Checks
 
-Evaluate the issue on these dimensions and note any problems:
+Go through the checks below **in order**. For each check, decide silently: **pass** or **fail**.
 
-- **Clarity**: Is the title clear and specific? Does it describe a concrete outcome?
-- **Description quality**: Is there enough context for someone to understand and act on this?
-- **Acceptance criteria**: Are there clear criteria for when this issue is done?
-- **Scope**: Is this issue appropriately sized, or should it be split?
-- **Staleness**: How long since last update? Is this still relevant?
-- **Actionability**: Could someone pick this up and start working on it?
+- If a check **passes**, advance to the next check without comment.
+- If a check **fails**, **stop** — do not evaluate further checks. Announce which check failed, propose the targeted fix for that check only, and wait for approval (see Step 3).
+- If **all checks pass**, state briefly that the issue passed all checks and move directly to the next stale issue.
 
-Present a brief analysis summary highlighting the most important issues found.
+Stopping at the first failure keeps each grooming turn focused on one change. Later-priority checks often become moot once an earlier issue is fixed (e.g. there's no point expanding a description on an issue that's about to be closed).
 
-## Step 3: Present Options
+### The checks (in priority order)
 
-Based on the analysis, present relevant numbered options. Always include applicable options from this list:
+1. **Is the issue still valid?** — Does the problem/feature still apply, or has it been obviated by a pivot, scope change, or duplicate issue? If invalid → propose close.
+2. **Has the task been completed?** — Does the codebase (or a merged PR) show this is already done? If done → propose close with a pointer to what resolved it.
+3. **Is the description still accurate to the codebase?** — Do referenced files, functions, APIs, or behaviors still exist as described? If drifted → propose a description update to match current reality.
+4. **Is the title accurate?** — Does it still reflect what the issue is actually about (especially after scope changes in comments)? If not → propose a new title.
+5. **Do the title and description reflect decisions made in comments?** — Have clarifications, scope changes, or agreed approaches been buried in discussion? If yes → propose folding them into the body/title.
+6. **Is the issue properly labeled?** — Missing or wrong labels (bug/feature/area/priority)? If yes → propose label changes.
+7. **If in a project, does it have the correct project status?** — E.g. "Backlog" vs. "In Progress" vs. "Blocked". If wrong → propose a status change.
+8. **Does the issue have the correct issue type applied?** — (GitHub's native issue types, where applicable.) If wrong/missing → propose setting it.
+9. **Is the description detailed enough to be actionable?** — Could a reasonable teammate pick this up without needing to ask clarifying questions? If too thin → propose expanding the description (include acceptance criteria if absent).
 
-```
-What would you like to do?
-1. Improve title - Rewrite the title to be clearer and more specific
-2. Improve description - Add or rewrite the description with better context
-3. Add acceptance criteria - Add clear done-criteria to the description
-4. Split issue - Create smaller, more focused issues and close this one
-5. Update status - Change the issue's status
-6. Close issue - Close as no longer relevant or duplicate
-7. Snooze - Temporarily hide this issue and revisit later (e.g. 1h, 1d, 1w, 1m)
-8. Skip - Move to the next most-stale issue without changes
-```
+Feel free to deviate from this order only if an issue has an obvious, severe problem that trumps priority (e.g. broken markdown rendering that makes the issue unreadable); mention the deviation briefly.
 
-Adjust options based on issue state:
+## Step 3: Propose the Fix and Get Approval
 
-- Hide "Improve description" if the description is already thorough
-- Hide "Add acceptance criteria" if criteria already exist
-- Hide "Close issue" unless the issue appears stale or irrelevant
-- Always show "Snooze" and "Skip"
-- You may suggest additional context-specific options (e.g. "Merge with issue X" if duplicates are detected)
+When a check fails, output:
 
-## Step 4: Execute Selected Action
+- **Which check failed** (one short sentence)
+- **Why it failed** (one or two sentences of evidence — cite code, commits, comments as needed)
+- **The proposed fix** (draft title/body/labels/etc. shown in full so the user can review exactly what will be applied)
 
-After drafting any content (title, description, criteria, split plan, etc.), always present numbered approval options:
+Then present the approval menu:
 
 ```
 1. Apply as-is
 2. Apply with changes (describe what to change)
-3. Start over with a different approach
-4. Cancel and go back to action selection
+3. Skip this check (treat as pass, advance to the next check)
+4. Snooze (1h, 1d, 1w, 1m, ...)
+5. Skip issue (move to the next stale issue without changes)
 ```
 
-**Option 1 - Improve title:**
+On option 2, iterate on the draft until the user is happy, then apply. On option 3, re-enter Step 2 starting at the next check. On option 4, snooze and move on. On option 5, move on without changes.
 
-1. Suggest 2-3 improved title options based on the issue content
-2. Present the options with numbered choices for the user to pick
-3. Update: `gh issue edit <number> --title "<new title>"`
+Approval is scoped to the single proposed fix shown in the current turn. A menu response approves only the option(s) the user explicitly named — for example, "1, and also do X" approves option 1 AND treats X as a new proposal (re-draft and re-present if X is a separate change). Do not carry an earlier approval forward to a later turn, a later check, or a later issue.
 
-**Option 2 - Improve description:**
+## Step 4: Apply the Fix
 
-1. Draft an improved description incorporating existing content
-2. Present the draft with numbered approval options
-3. Update: `gh issue edit <number> --body "<new body>"`
+Apply the single change for whichever check failed. Use the appropriate command:
 
-**Option 3 - Add acceptance criteria:**
+- **Close issue**: `gh issue close <N> --comment "<reason, e.g. 'Done in #PR' or 'Superseded by #M'>"`
+- **Edit title**: `gh issue edit <N> --title "<new title>"`
+- **Edit body**: write the new body to a tempfile and use `gh issue edit <N> --body-file <path>` (never `--body "..."` with inline backticks — bash will eat them)
+- **Add/remove labels**: `gh issue edit <N> --add-label "<label>" --remove-label "<label>"`
+- **Set project status / issue type**: use `gh project item-edit` / `gh issue edit --type` as appropriate, or fall back to the GraphQL API when the CLI doesn't cover it
+- **Split issue**: create new issues with `gh issue create`, then close the original referencing the new numbers
+- **Snooze**: `~/.claude/skills/grooming/grooming-session snooze <N> <duration>`
 
-1. Draft acceptance criteria based on the issue title and description
-2. Present the draft with numbered approval options
-3. Append to existing body: `gh issue edit <number> --body "<existing + criteria>"`
-
-**Option 4 - Split issue:**
-
-1. Suggest how to split the issue into smaller pieces
-2. Present the split plan with numbered approval options
-3. Create new issues: `gh issue create --title "<title>" --body "<body>"`
-4. Close the original: `gh issue close <number> --comment "Split into #X, #Y, #Z"`
-
-**Option 5 - Update status:**
-
-1. Show available labels/states
-2. Let the user pick
-3. Update accordingly with `gh issue edit`
-
-**Option 6 - Close issue:**
-
-1. Confirm with the user before closing
-2. Close: `gh issue close <number> --comment "<reason>"`
-
-**Option 7 - Snooze:**
-
-1. Ask the user how long to snooze (e.g. 1h, 4h, 1d, 3d, 1w, 1m), or accept inline if already specified
-2. Run: `~/.claude/skills/grooming/grooming-session snooze <number> <duration>`
-3. The issue will be hidden from grooming until the snooze expires
-
-**Option 8 - Skip:**
-
-Move directly to the next issue without changes.
+Any time you draft body content containing backticks, code fences, or special characters, always write to a tempfile and pass `--body-file`.
 
 ## Step 5: Continue Loop
 
-After each action, run `grooming-session next` again to surface the next most-stale issue. Repeat until no issues remain or the user stops.
+After each applied fix (or after all checks pass, or after skip/snooze), run `grooming-session next` again to surface the next most-stale issue. Repeat until no issues remain or the user stops.
 
 ---
 
