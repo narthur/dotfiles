@@ -287,10 +287,10 @@ After pushing, run `wait-for-review.sh` to handle the entire post-push flow:
 
 This script handles all of the following automatically:
 - **Settle period**: Waits 1 minute for CodeRabbit to register the push
-- **Paused / Draft detection**: If CodeRabbit reports its review as paused, requests a new review regardless of PR type. If the PR is a draft, requests a review if CodeRabbit hasn't started (CodeRabbit does not auto-review drafts)
-- **Polling**: Checks for new feedback every 5 minutes, up to ~20 minutes total
-- **Status determination**: Uses `coderabbit-status.sh` to combine the CodeRabbit check status and latest comment into a single status (both signals can disagree, so both are consulted)
-- **Rate limit / timeout handling**: If CodeRabbit is rate-limited or timed out, waits the appropriate duration and re-requests a review
+- **Paused / Draft detection**: "Paused" is a permanent state meaning CodeRabbit has disabled auto-reviews for this PR (e.g., too many commits). The first comment stays "paused" even after a manually-requested review completes. The script requests a review once and then waits for completion without re-requesting. For draft PRs, requests a review if CodeRabbit hasn't started (CodeRabbit does not auto-review drafts)
+- **Polling**: Checks for new feedback every 5 minutes, up to ~20 minutes total (extended automatically for rate limits)
+- **Status determination**: Uses `coderabbit-status.sh` to combine the CodeRabbit check status and CodeRabbit's first PR comment into a single status. CodeRabbit's first comment is a living status document edited in-place as it moves through states (reviewing, paused, rate limited, completed, etc.)
+- **Rate limit / timeout handling**: If CodeRabbit is rate-limited, extracts the wait duration from the first comment (e.g., "45 minutes and 9 seconds"), extends the polling timeout to accommodate it, waits the full duration, and then re-requests a review
 
 **Exit codes**:
 - `0` — Review completed (proceed to retrieve feedback)
