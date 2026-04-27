@@ -43,6 +43,7 @@ for_window [class="discord"] title_format "💬 %title"
 for_window [class="Discord"] title_format "💬 %title"
 for_window [class="Spotify"] title_format "🎵 %title"
 for_window [class="vlc"] title_format "🎬 %title"
+for_window [class="Zenflow"] floating disable
 
 # This font is widely installed, provides lots of unicode glyphs, right-to-left
 # text rendering and scalability on retina/hidpi displays (thanks to pango).
@@ -67,7 +68,7 @@ exec --no-startup-id nm-applet
 exec --no-startup-id blueman-applet
 
 # Set desktop background
-exec --no-startup-id feh --bg-scale /home/narthur/Pictures/backgrounds/wallhaven-z8235j.png
+exec --no-startup-id feh --bg-scale $HOME/Pictures/backgrounds/wallhaven-z8235j.png
 
 # Use amixer to adjust volume in ALSA.
 set $refresh_i3status killall -SIGUSR1 i3status
