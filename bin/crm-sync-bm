@@ -31,8 +31,8 @@ should_update() {
   return 1
 }
 
-# Process the last 7 days
-for i in {0..6}; do
+# Process the last 14 days
+for i in {0..13}; do
   # Calculate date for this iteration (i days ago)
   date_ymd=$(date -d "$i days ago" +%Y-%m-%d)
   date_yyyymmdd=$(date -d "$i days ago" +%Y%m%d)
