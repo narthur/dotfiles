@@ -42,8 +42,4 @@ projects/*/*
 # User-level cursor rules
 !rules/
 !rules/**
-# User-level hooks
-!hooks.json
-!hooks/
-!hooks/**
 # <<< CURSOR MANAGED BLOCK <<<
