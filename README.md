@@ -123,6 +123,24 @@ dotfiles checkout 2>&1 | grep -E "^\s+" | xargs -I{} mv {} ~/.dotfiles-backup/{}
 dotfiles checkout
 ```
 
+### Private Dotfiles
+
+Sensitive files (e.g. private Claude skills) are tracked in a separate private bare repo:
+
+```bash
+# Clone the private bare repo
+git clone --bare git@github.com:narthur/dotprivate.git $HOME/.dotfiles-private
+
+# Define the alias (add to .bash_aliases later)
+alias dotprivate='git --git-dir=$HOME/.dotfiles-private --work-tree=$HOME'
+
+# Don't show untracked files
+dotprivate config --local status.showUntrackedFiles no
+
+# Checkout the files
+dotprivate checkout
+```
+
 ### Post-Setup
 
 1. Install packages: `~/bin/install-packages`
