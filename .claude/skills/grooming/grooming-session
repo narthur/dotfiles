@@ -160,8 +160,18 @@ cmd_next() {
   echo "=== Most Stale Issue ($count open non-snoozed issues remaining) ==="
   echo ""
 
-  # Fetch full details
+  # Fetch issue body
   gh issue view "$num"
+
+  # Fetch comments separately (the --comments flag replaces body output, not appends)
+  local comment_count
+  comment_count=$(gh issue view "$num" --json comments --jq '.comments | length')
+  if (( comment_count > 0 )); then
+    echo ""
+    echo "=== Comments ($comment_count) ==="
+    echo ""
+    gh issue view "$num" --comments
+  fi
 
   # Open in Firefox
   local issue_url
