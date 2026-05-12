@@ -32,11 +32,23 @@ You are helping the user triage their open pull requests. Your role is to assess
 The session commands track state across the triage session. Using `gh` directly bypasses this and breaks the workflow.
 
 **Only use `gh` commands for actions that have no session equivalent:**
-- `gh pr checkout` - OK (no session equivalent)
 - `gh pr merge` - OK (no session equivalent)
 - `gh pr close` - OK (no session equivalent)
 - `gh pr ready` - OK (no session equivalent)
 - `gh pr edit --add-reviewer` - OK (no session equivalent)
+- `gh pr checkout` - only as fallback when `PR_TRIAGE_NO_WORKTREE=1`; otherwise the session auto-checks the PR into the triage worktree.
+
+### Auto-checkout into a per-repo worktree
+
+`pr-review-session view` and `next` automatically check out the PR's branch into a per-repo triage worktree at `${XDG_CACHE_HOME:-~/.cache}/pr-triage-worktrees/<owner>-<repo>`. The summary prints `Worktree: <path>` — use that path for any follow-up action that needs the code on disk (fix CI, resolve feedback, run CodeRabbit, rebase). The same worktree is reused as you step between PRs; the script switches the branch in place.
+
+- **Already checked out elsewhere:** if the PR's branch is already in another worktree (vibe kanban, manual `git worktree add`, or the main repo itself), the script reports that path instead of creating a duplicate.
+- **Dirty worktree:** if the triage worktree has uncommitted changes, the script refuses to switch and just prints the existing path. Resolve the WIP, then re-run `view <N>` to switch.
+- **Disable:** set `PR_TRIAGE_NO_WORKTREE=1` to skip the worktree behavior entirely.
+
+When acting on a PR, prefer running commands in the printed worktree path (`cd "$WORKTREE" && …` or `git -C "$WORKTREE" …`) rather than re-running `gh pr checkout` in the main repo.
+
+**Invoking other skills during triage:** any skill that operates on "the current branch" or cwd's git state (e.g. `/pr-cleanup`, `/lint`, `/jest`, `/ruby-tests`, `/coderabbit:review`) will silently audit/test the wrong code if invoked from the main repo's cwd while the PR lives in the worktree. Before invoking such a skill, `cd` into the printed `Worktree:` path so the subskill's git/test commands resolve against the PR's checkout. If a subskill auto-detects context, brief it explicitly with the worktree path.
 
 ### Playwright browser for PR pages
 
@@ -92,7 +104,7 @@ Optional: check session state first:
 
 ### Step 2: Select PR to Triage
 
-- **Next unreviewed in order**: `~/.claude/skills/pr-triage/pr-review-session next` — marks the current PR as reviewed and shows the next unreviewed (wraps to first when at end).
+- **Next unreviewed in order**: `~/.claude/skills/pr-triage/pr-review-session next` — marks the current PR as reviewed and shows the next unreviewed. When every actionable PR has been reviewed in the current round, the session auto-resets (preserving snoozes) and loops back to the highest-priority PR.
 - **Specific PR by number**: `~/.claude/skills/pr-triage/pr-review-session view <number>` — shows that PR and sets it as current for the next `next`.
 - **Current branch's PR**: `~/.claude/skills/pr-triage/pr-review-session view` (no number).
 - **Open in browser**: `~/.claude/skills/pr-triage/pr-review-session view <number> --web`
@@ -110,6 +122,10 @@ Use that output as the assessment. If you need to re-display or analyze further,
 Infer blockers from the summary (e.g. failing CI, unresolved feedback, merge conflicts) and present them when suggesting actions.
 
 ### Step 4: Present Actions
+
+**MANDATORY — never skip this step.** Even when a PR looks "obviously" ready to merge, close, or otherwise act on, you MUST present the options menu and wait for the user's selection. The action label in the session list (e.g. "action: merge") describes what the PR needs from a human; it is **not** a directive to take that action. The user's intent is captured only when they pick an option from this menu in the current turn.
+
+This applies in auto mode too. Auto mode is not a license to merge, close, or push without an explicit selection.
 
 Based on assessment, present relevant options:
 
@@ -133,7 +149,7 @@ What would you like to do?
 Adjust options based on PR state:
 
 - Hide "Mark ready" if not a draft
-- Hide "Merge PR" if not mergeable or has blockers
+- Hide "Merge PR" unless the summary's `Mergeable` line reads exactly `Yes`. Any other value (`No - has conflicts`, `No - blocked (required reviews / branch protection)`, `No - branch behind base`, `No - draft`, `No - failing/pending checks`, `Unknown (computing...)`) means do NOT offer Merge. The session summary derives this from `mergeable` (`MERGEABLE` / `CONFLICTING` / `UNKNOWN`) AND `mergeStateStatus` (`CLEAN` / `BLOCKED` / `BEHIND` / `DIRTY` / `DRAFT` / `UNSTABLE` / `HAS_HOOKS` / `UNKNOWN`) — both must be green. `mergeable: MERGEABLE` alone is not enough; it only means no file conflicts.
 - Hide "Fix conflicts" if no conflicts
 - Hide "Resolve feedback" if no unresolved comments
 - Only show "Run CodeRabbit review" if the PR author is NOT the current user (check with `gh api user -q .login`; i.e., it's someone else's code)
@@ -149,17 +165,14 @@ Adjust options based on PR state:
 **Option 1 - Fix failing CI:**
 
 1. **Review CI run history first.** Before re-running or fixing anything, check whether the failing check has already been re-run previously. Use `gh run list --branch <branch> --limit 5` to see recent runs. If a check has already failed multiple times across different runs, it's almost certainly a real bug — don't re-run, investigate and fix instead. Only re-run if this is the first failure and it looks transient (e.g. timeout, network error, resource exhaustion).
-2. Determine workspace type (GitButler or standard git)
-3. Checkout the PR branch (see "Handling Git Worktrees" section if checkout fails due to worktree conflict):
-   - **Standard git**: `gh pr checkout <number>`
-   - **GitButler**: Check if branch exists in `but status`, if not create it
-4. Identify failing checks and their logs
-5. Fix the issues directly
-6. After fixes, commit and push
+2. Use the worktree printed by the summary (`Worktree: <path>`) — `view`/`next` already checked the PR out there. For GitButler workspaces, fall back to `but status` and create the branch if needed.
+3. Identify failing checks and their logs.
+4. Fix the issues directly in the worktree.
+5. After fixes, commit and push from the worktree.
 
 **Option 2 - Resolve feedback:**
 
-1. Checkout the PR branch: `gh pr checkout <number>` (see "Handling Git Worktrees" section if checkout fails)
+1. Use the worktree printed by the summary — `view`/`next` already checked the PR out there.
 2. Invoke the `/resolve-pr-feedback` skill to handle the rest. It has its own interactive workflow for retrieving feedback, presenting options, and implementing fixes.
 3. After the skill completes, return to PR assessment.
 
@@ -181,14 +194,17 @@ git branch --show-current
 
 **If on a regular git branch (standard git mode):**
 
-1. Checkout the PR branch: `gh pr checkout <number>` (see "Handling Git Worktrees" section if checkout fails)
+1. Use the worktree printed by the summary (`Worktree: <path>`).
 2. Determine the PR's actual base branch from the PR metadata — **never assume `main`**:
    ```bash
    gh pr view <number> --json baseRefName -q '.baseRefName'
    ```
-3. Fetch and rebase onto `origin/<base-branch>` (always use the remote base branch, never the local one, to avoid stale state): `git fetch origin <base-branch> && git rebase origin/<base-branch>`
-4. Resolve conflicts
-5. Push updated branch: `git push --force-with-lease`
+3. From the worktree, fetch and rebase onto `origin/<base-branch>` (always use the remote base branch, never the local one, to avoid stale state):
+   ```bash
+   cd "<worktree>" && git fetch origin <base-branch> && git rebase origin/<base-branch>
+   ```
+4. Resolve conflicts.
+5. Push updated branch: `git push --force-with-lease`.
 
 **Option 4 - Request review:**
 
@@ -204,6 +220,8 @@ gh pr ready <number>
 
 **Option 6 - Merge PR:**
 
+**Only execute this when the user has explicitly selected "Merge PR" from the Step 4 options menu in the current turn.** Do not infer merge intent from action-category labels, "Next" selections, PR size, or auto mode. If you're about to run `gh pr merge` and you cannot point to the user's most recent message picking the merge option, stop and present the options menu instead.
+
 ```bash
 gh pr merge <number> --squash  # or --merge, --rebase based on repo settings
 ```
@@ -216,7 +234,7 @@ gh pr close <number>
 
 **Option 8 - Run CodeRabbit review:**
 
-1. Checkout the PR branch: `gh pr checkout <number>` (see "Handling Git Worktrees" section if checkout fails)
+1. Use the worktree printed by the summary — `view`/`next` already checked the PR out there.
 2. Run the `/coderabbit:review` skill to perform a local AI code review of the PR's changes.
 3. After the review completes:
    a. Write the findings to `/tmp/cr-review-pr<number>.md` wrapped in a `<details><summary>CodeRabbit Review Notes</summary>` spoiler block. Use real markdown code blocks (triple backticks with language) for any code snippets inside.
@@ -260,7 +278,7 @@ gh pr close <number>
 
 After each action:
 
-- **Move to next unreviewed**: `~/.claude/skills/pr-triage/pr-review-session next` — marks current PR as reviewed and shows the next (wraps to first when at end).
+- **Move to next unreviewed**: `~/.claude/skills/pr-triage/pr-review-session next` — marks current PR as reviewed and shows the next. When every actionable PR has been reviewed in the current round, the session auto-resets (preserving snoozes) and loops back to the highest-priority PR.
 - **Jump to another PR**: `~/.claude/skills/pr-triage/pr-review-session view <number>`
 - **Reset session**: `~/.claude/skills/pr-triage/pr-review-session reset` — clears session state for this repo.
 - Otherwise, return to PR assessment or `~/.claude/skills/pr-triage/pr-review-session list` based on context.
@@ -285,32 +303,23 @@ After each action:
 
 ## Handling Git Worktrees
 
-When using vibe kanban or similar tools that create git worktrees for feature branches, `gh pr checkout` will fail with an error like `fatal: '<branch>' is already checked out at '<path>'`.
+`pr-review-session view`/`next` automatically checks out the PR into a per-repo triage worktree at `${XDG_CACHE_HOME:-~/.cache}/pr-triage-worktrees/<owner>-<repo>` and prints the path as `Worktree: <path>` in the summary. Use that path for any action that touches the code.
 
-**When checking out a PR branch, always use this approach:**
+If the PR's branch is already checked out in another worktree (e.g. vibe kanban created one), the script reports that path instead of creating a duplicate. If the triage worktree has uncommitted changes, the script refuses to switch and reports the existing path — clean it up (commit/stash/discard) and re-run `view <N>` to switch.
 
-1. First try `gh pr checkout <number>`
-2. If it fails due to a worktree conflict, find the existing worktree:
-   ```bash
-   git worktree list
-   ```
-3. Identify which worktree has the PR's branch checked out
-4. `cd` to that worktree path and work from there instead
-5. When done, `cd` back to the original repository root
-
-This applies to all actions that require checking out a branch (Fix CI, Resolve feedback, Fix conflicts, Run CodeRabbit review).
+To opt out entirely (e.g. if you don't want the script touching disk), set `PR_TRIAGE_NO_WORKTREE=1`; then fall back to `gh pr checkout <number>` in the main repo.
 
 ## Commands Reference
 
 | Command                                     | Purpose                                                   |
 | ------------------------------------------- | --------------------------------------------------------- |
 | `pr-review-session list`                    | List open PRs not yet triaged this session                |
-| `pr-review-session next`                    | Mark current as triaged and show next unreviewed (wraps)  |
+| `pr-review-session next`                    | Mark current as triaged and show next unreviewed (auto-resets when all reviewed) |
 | `pr-review-session view [N] [--web]`        | Show PR summary and details; N = number or current branch |
 | `pr-review-session status`                  | Show session state (repo, triaged count, current PR)      |
 | `pr-review-session snooze [N] <dur>`        | Snooze a PR for a duration (e.g. 1h, 1d, 1w)             |
 | `pr-review-session reset`                   | Reset the triage session for this repo                    |
-| `gh pr checkout <number>`                   | Checkout PR branch (see worktree handling above)          |
+| `gh pr checkout <number>`                   | Manual checkout (only needed when `PR_TRIAGE_NO_WORKTREE=1`) |
 | `gh pr ready <number>`                      | Mark draft as ready                                       |
 | `gh pr merge <number>`                      | Merge the PR                                              |
 | `gh pr close <number>`                      | Close without merging                                     |

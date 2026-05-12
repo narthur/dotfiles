@@ -8,6 +8,10 @@
 # ~/.playwright-auth/github.json if present (see pr-triage SKILL.md). Override:
 #   PLAYWRIGHT_CLI  - path to playwright-cli (default: ~/.local/bin/playwright-cli, else PATH)
 #   PR_REVIEW_NO_PLAYWRIGHT=1 - use legacy Firefox new-tab instead
+#
+# `view`/`next` also check out the PR into a per-repo worktree at
+# $XDG_CACHE_HOME/pr-triage-worktrees/<owner>-<repo> so follow-up skills can operate on
+# the code without manual checkout. Set PR_TRIAGE_NO_WORKTREE=1 to disable.
 
 set -euo pipefail
 
@@ -20,7 +24,7 @@ Usage: $0 <command> [options]
 
 Commands:
   list              List open PRs not yet reviewed this session
-  next              Mark current PR as reviewed and show the next unreviewed PR (wraps to first when at end)
+  next              Mark current PR as reviewed and show the next unreviewed PR (auto-resets and loops when at end)
   view [N] [--web]  Show PR details. N = PR number (default: PR for current branch). --web opens in browser
   snooze [N] <dur>  Snooze a PR for a duration (e.g. 1h, 4h, 1d, 3d, 1w). N defaults to current PR.
   reset             Reset the current session (clear state for this repo)
@@ -325,6 +329,18 @@ format_mergeable() {
     echo "No - branch behind base"
     return
   fi
+  if [[ "$merge_state" == "BLOCKED" ]]; then
+    echo "No - blocked (required reviews / branch protection)"
+    return
+  fi
+  if [[ "$merge_state" == "DRAFT" ]]; then
+    echo "No - draft"
+    return
+  fi
+  if [[ "$merge_state" == "UNSTABLE" ]]; then
+    echo "No - failing/pending checks"
+    return
+  fi
   echo "Yes"
 }
 
@@ -408,6 +424,92 @@ open_pr_in_browser() {
       fi
     fi
   ) &
+}
+
+# Canonical per-repo triage worktree path.
+get_worktree_path() {
+  local repo="$1"
+  local cache_root="${XDG_CACHE_HOME:-$HOME/.cache}/pr-triage-worktrees"
+  echo "${cache_root}/${repo//\//-}"
+}
+
+# If a branch is already checked out in some worktree, print its path; else empty.
+find_worktree_with_branch() {
+  local main_repo="$1"
+  local branch="$2"
+  git -C "$main_repo" worktree list --porcelain 2>/dev/null | awk -v ref="refs/heads/$branch" '
+    /^worktree / { wt = substr($0, 10) }
+    /^branch /   { if ($2 == ref) { print wt; exit } }
+  '
+}
+
+# Ensure a worktree exists for the PR's branch and is checked out to the PR's HEAD.
+# Args: repo (owner/name), pr_num
+# Stdout: worktree path on success, empty otherwise.
+# Stderr: status/warning messages.
+ensure_pr_worktree() {
+  local repo="$1"
+  local pr_num="$2"
+  if [[ "${PR_TRIAGE_NO_WORKTREE:-}" == "1" ]]; then
+    return 0
+  fi
+  local main_repo
+  main_repo=$(git rev-parse --show-toplevel 2>/dev/null) || {
+    echo "pr-triage: not in a git repo; skipping worktree setup" >&2
+    return 0
+  }
+  local pr_meta
+  pr_meta=$(gh pr view "$pr_num" --repo "$repo" --json headRefName 2>/dev/null) || {
+    echo "pr-triage: could not fetch PR metadata for #$pr_num" >&2
+    return 0
+  }
+  local branch
+  branch=$(echo "$pr_meta" | jq -r '.headRefName // empty')
+  [[ -z "$branch" ]] && {
+    echo "pr-triage: empty headRefName for PR #$pr_num" >&2
+    return 0
+  }
+
+  # If the branch is already checked out somewhere (vibe kanban, manual worktree,
+  # the main repo itself), prefer that location instead of creating a duplicate.
+  local existing
+  existing=$(find_worktree_with_branch "$main_repo" "$branch")
+  if [[ -n "$existing" ]]; then
+    echo "$existing"
+    return 0
+  fi
+
+  local wt_path
+  wt_path=$(get_worktree_path "$repo")
+
+  # Existing triage worktree: switch it to the PR (refuse if dirty).
+  if [[ -d "$wt_path/.git" || -f "$wt_path/.git" ]]; then
+    if [[ -n "$(git -C "$wt_path" status --porcelain 2>/dev/null)" ]]; then
+      echo "pr-triage: worktree at $wt_path has uncommitted/untracked changes; not switching to PR #$pr_num" >&2
+      echo "$wt_path"
+      return 0
+    fi
+    if ! ( cd "$wt_path" && gh pr checkout "$pr_num" --repo "$repo" >/dev/null 2>&1 ); then
+      echo "pr-triage: failed to switch worktree to PR #$pr_num (see $wt_path)" >&2
+      echo "$wt_path"
+      return 0
+    fi
+    echo "$wt_path"
+    return 0
+  fi
+
+  # Create a fresh worktree (detached, then have gh pr checkout populate the branch).
+  mkdir -p "$(dirname "$wt_path")"
+  if ! git -C "$main_repo" worktree add --detach "$wt_path" >/dev/null 2>&1; then
+    echo "pr-triage: could not create worktree at $wt_path" >&2
+    return 0
+  fi
+  if ! ( cd "$wt_path" && gh pr checkout "$pr_num" --repo "$repo" >/dev/null 2>&1 ); then
+    echo "pr-triage: created worktree but failed to checkout PR #$pr_num" >&2
+    echo "$wt_path"
+    return 0
+  fi
+  echo "$wt_path"
 }
 
 # Print PR summary block (from plan: number, title, branch, author, status, URL, size, mergeable, CI, reviews, unresolved).
@@ -529,6 +631,16 @@ print_pr_summary() {
   fi
   echo ""
 
+  # Check out the PR branch into the per-repo triage worktree so follow-up
+  # skills can operate on the code without a separate manual checkout.
+  local wt_path
+  wt_path=$(ensure_pr_worktree "$repo" "$pr_num")
+  if [[ -n "$wt_path" ]]; then
+    echo "  Worktree:"
+    echo "  • $wt_path"
+    echo ""
+  fi
+
   # Then run gh pr view so user sees full body
   if [[ -n "$use_web" ]]; then
     gh pr view "$pr_num" --repo "$repo" --web
@@ -645,6 +757,17 @@ cmd_next() {
   prs_tsv=$(get_prioritized_actionable_prs "$repo")
   local filtered
   filtered=$(filter_unreviewed_prs "$updated_session" "$prs_tsv")
+
+  # If nothing unreviewed remains but actionable PRs still exist, auto-reset
+  # the reviewed list (preserving snoozed) so the loop wraps to the top.
+  if [[ -z "$filtered" ]] && [[ -n "$prs_tsv" ]]; then
+    local empty_session="{\"reviewed\":[],\"current\":null,\"snoozed\":$snoozed_json}"
+    filtered=$(filter_unreviewed_prs "$empty_session" "$prs_tsv")
+    if [[ -n "$filtered" ]]; then
+      reviewed_json='[]'
+      echo "All actionable PRs reviewed this round — looping back to the top." >&2
+    fi
+  fi
 
   if [[ -z "$filtered" ]]; then
     echo "No actionable PRs to triage."
