@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Install the crontab from ~/.config/crontab and create necessary directories.
+set -e
+
+echo "Setting up cron..."
+
+mkdir -p "$HOME/.local/log"
+echo "  Created $HOME/.local/log"
+
+crontab "$HOME/.config/crontab"
+echo "  Installed crontab from ~/.config/crontab"
+
+echo ""
+echo "Done! Current crontab:"
+crontab -l

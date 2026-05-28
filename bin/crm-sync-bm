@@ -1,10 +1,35 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Sync CRM activity to Beeminder goals
 # Counts modified CRM docs and contacts touched for the last 7 days
 
 # Source environment variables
 source ~/.env
+
+# Portable date helpers
+if date --version >/dev/null 2>&1; then
+    # GNU date (Linux)
+    days_ago_date() { date -d "$1 days ago" +%Y-%m-%d; }
+    next_day_date() { date -d "$1 +1 day" +%Y-%m-%d; }
+    find_modified_between() {
+        local dir="$1" start="$2" end="$3"
+        find "$dir" -type f -name "*.md" -newermt "$start 00:00:00" ! -newermt "$end 00:00:00" 2>/dev/null
+    }
+else
+    # BSD date (macOS)
+    days_ago_date() { date -v-"$1"d +%Y-%m-%d; }
+    next_day_date() { date -j -v+1d -f "%Y-%m-%d" "$1" +%Y-%m-%d; }
+    find_modified_between() {
+        local dir="$1" start="$2" end="$3"
+        local tmpstart tmpend
+        tmpstart=$(mktemp)
+        tmpend=$(mktemp)
+        touch -t "$(date -j -f '%Y-%m-%d %H:%M:%S' "$start 00:00:00" '+%Y%m%d%H%M.%S')" "$tmpstart"
+        touch -t "$(date -j -f '%Y-%m-%d %H:%M:%S' "$end 00:00:00" '+%Y%m%d%H%M.%S')" "$tmpend"
+        find "$dir" -type f -name "*.md" -newer "$tmpstart" ! -newer "$tmpend" 2>/dev/null
+        rm -f "$tmpstart" "$tmpend"
+    }
+fi
 
 # Helper function to check if a datapoint should be updated
 # Returns 0 (success) if update should proceed, 1 (failure) if it should be skipped
@@ -34,13 +59,12 @@ should_update() {
 # Process the last 14 days
 for i in {0..13}; do
   # Calculate date for this iteration (i days ago)
-  date_ymd=$(date -d "$i days ago" +%Y-%m-%d)
-  date_yyyymmdd=$(date -d "$i days ago" +%Y%m%d)
-  
+  date_ymd=$(days_ago_date "$i")
+  date_yyyymmdd=$(echo "$date_ymd" | tr -d '-')
+
   # Count CRM docs modified on this date
-  # Find files modified on this specific date (between start of day and start of next day)
-  next_date=$(date -d "$date_ymd +1 day" +%Y-%m-%d)
-  modified_count=$(find "$CRM_DIR" -type f -name "*.md" -newermt "$date_ymd 00:00:00" ! -newermt "$next_date 00:00:00" 2>/dev/null | wc -l)
+  next_date=$(next_day_date "$date_ymd")
+  modified_count=$(find_modified_between "$CRM_DIR" "$date_ymd" "$next_date" | wc -l | tr -d ' ')
   
   # Count contacts with Last Contact date of this date
   touched_count=$(find "$CRM_DIR" -type f -name "*.md" -exec grep -l "^Last Contact: $date_ymd" {} \; 2>/dev/null | wc -l)
