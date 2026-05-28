@@ -4,7 +4,7 @@ set -e
 
 echo "Setting up asdf plugins..."
 
-while IFS=' ' read -r plugin _version; do
+while IFS=' ' read -r plugin _version <&3; do
   # Skip empty lines and comments
   [[ -z "$plugin" || "$plugin" == \#* ]] && continue
 
@@ -14,7 +14,7 @@ while IFS=' ' read -r plugin _version; do
     echo "  $plugin: adding plugin..."
     asdf plugin add "$plugin"
   fi
-done < ~/.tool-versions
+done 3< ~/.tool-versions
 
 echo "Installing tool versions..."
 asdf install
