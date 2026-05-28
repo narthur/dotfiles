@@ -6,7 +6,7 @@ echo "Setting up asdf plugins..."
 
 # Read plugins into array first to avoid fd conflicts with asdf commands
 plugins=()
-while IFS=' ' read -r plugin _version; do
+while IFS=' ' read -r plugin _version || [[ -n "$plugin" ]]; do
   [[ -z "$plugin" || "$plugin" == \#* ]] && continue
   plugins+=("$plugin")
 done < ~/.tool-versions
