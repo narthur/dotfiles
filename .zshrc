@@ -10,5 +10,8 @@ alias dotprivate='git --git-dir=$HOME/.dotfiles-private --work-tree=$HOME'
 # PATH
 export PATH="$HOME/bin:$HOME/.local/bin:$PATH"
 
+# asdf shims
+export PATH="${ASDF_DATA_DIR:-$HOME/.asdf}/shims:$PATH"
+
 # zoxide - must be last
 eval "$(zoxide init zsh)"
