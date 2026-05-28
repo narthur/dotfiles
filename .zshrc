@@ -14,4 +14,5 @@ export PATH="$HOME/bin:$HOME/.local/bin:$PATH"
 export PATH="${ASDF_DATA_DIR:-$HOME/.asdf}/shims:$PATH"
 
 # zoxide - must be last
+autoload -Uz compinit && compinit
 eval "$(zoxide init zsh)"
