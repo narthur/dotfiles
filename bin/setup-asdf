@@ -4,17 +4,22 @@ set -e
 
 echo "Setting up asdf plugins..."
 
-while IFS=' ' read -r plugin _version <&3; do
-  # Skip empty lines and comments
+# Read plugins into array first to avoid fd conflicts with asdf commands
+plugins=()
+while IFS=' ' read -r plugin _version; do
   [[ -z "$plugin" || "$plugin" == \#* ]] && continue
+  plugins+=("$plugin")
+done < ~/.tool-versions
 
-  if asdf plugin list | grep -q "^${plugin}$"; then
+# Add any missing plugins
+for plugin in "${plugins[@]}"; do
+  if asdf plugin list 2>/dev/null | grep -q "^${plugin}$"; then
     echo "  $plugin: already installed"
   else
     echo "  $plugin: adding plugin..."
     asdf plugin add "$plugin"
   fi
-done 3< ~/.tool-versions
+done
 
 echo "Installing tool versions..."
 asdf install
