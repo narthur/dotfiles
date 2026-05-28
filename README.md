@@ -1,6 +1,6 @@
-# Linux Dotfiles
+# Dotfiles
 
-Personal dotfiles and scripts for my Linux desktop setup.
+Personal dotfiles and scripts for Linux and macOS.
 
 ## Files
 
@@ -74,7 +74,7 @@ Personal dotfiles and scripts for my Linux desktop setup.
   - Logs to `~/.local/log/<name>.log`
   - Usage: `cron-run <logname> <command> [args...]`
 
-- **`bin/install-packages`** - Installs all system packages
+- **`bin/install-packages`** - Installs all system packages (Linux-focused; run `brew bundle` on macOS)
   - Apt packages from `~/packages.txt`
   - Brew packages from `~/.Brewfile`
   - Pipx packages (rofimoji)
@@ -105,7 +105,7 @@ This repo uses a bare git repository to manage dotfiles directly in `$HOME`.
 # Clone the bare repo
 git clone --bare https://github.com/narthur/dotfiles.git $HOME/.dotfiles
 
-# Define the alias (add to .bashrc later)
+# Define the alias (add to .zshrc on macOS, .bashrc on Linux)
 alias dotfiles='git --git-dir=$HOME/.dotfiles --work-tree=$HOME'
 
 # Don't show untracked files (the entire home directory)
@@ -128,10 +128,11 @@ dotfiles checkout
 Sensitive files (e.g. private Claude skills) are tracked in a separate private bare repo:
 
 ```bash
-# Clone the private bare repo
+# Clone the private bare repo (use HTTPS if SSH not configured)
 git clone --bare git@github.com:narthur/dotprivate.git $HOME/.dotfiles-private
+# or: gh repo clone narthur/dotprivate $HOME/.dotfiles-private -- --bare
 
-# Define the alias (add to .bash_aliases later)
+# Define the alias (add to .zshrc on macOS, .bashrc on Linux)
 alias dotprivate='git --git-dir=$HOME/.dotfiles-private --work-tree=$HOME'
 
 # Don't show untracked files

@@ -24,4 +24,5 @@ vscode "esbenp.prettier-vscode"
 vscode "github.vscode-github-actions"
 vscode "github.vscode-pull-request-github"
 vscode "golang.go"
+# flatpak directives are Linux-only; brew bundle silently skips them on macOS
 flatpak "com.slack.Slack"
