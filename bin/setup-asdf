@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Install asdf plugins for each tool in ~/.tool-versions, then install all versions.
+set -e
+
+echo "Setting up asdf plugins..."
+
+while IFS=' ' read -r plugin _version; do
+  # Skip empty lines and comments
+  [[ -z "$plugin" || "$plugin" == \#* ]] && continue
+
+  if asdf plugin list | grep -q "^${plugin}$"; then
+    echo "  $plugin: already installed"
+  else
+    echo "  $plugin: adding plugin..."
+    asdf plugin add "$plugin"
+  fi
+done < ~/.tool-versions
+
+echo "Installing tool versions..."
+asdf install
+
+echo "Done!"
