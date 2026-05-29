@@ -55,7 +55,10 @@ log_section "asdf Plugins & Versions"
 run "setup asdf" setup-asdf
 
 log_section "Global pnpm Packages"
-run "install neonctl" bash -c 'pnpm install -g neonctl'
+run "pnpm setup" pnpm setup
+PNPM_HOME="${PNPM_HOME:-$HOME/Library/pnpm}"
+export PATH="$PNPM_HOME:$PATH"
+run "install neonctl" pnpm install -g neonctl
 
 log_section "Binary Manager (bin)"
 if ! command -v bin &>/dev/null; then
