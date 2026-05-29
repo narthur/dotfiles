@@ -4,6 +4,11 @@ set -e
 
 echo "Setting up asdf plugins..."
 
+# Ensure well-known plugins are always available regardless of .tool-versions
+asdf plugin add nodejs https://github.com/asdf-vm/asdf-nodejs.git 2>/dev/null || true
+asdf plugin add pnpm 2>/dev/null || true
+asdf plugin add golang https://github.com/asdf-community/asdf-golang.git 2>/dev/null || true
+
 # Read plugins into array first to avoid fd conflicts with asdf commands
 plugins=()
 while IFS=' ' read -r plugin _version || [[ -n "$plugin" ]]; do
