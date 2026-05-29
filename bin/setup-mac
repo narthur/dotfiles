@@ -56,7 +56,8 @@ run "setup asdf" setup-asdf
 
 log_section "Global pnpm Packages"
 run "pnpm setup" pnpm setup
-PNPM_HOME="${PNPM_HOME:-$HOME/Library/pnpm}"
+export PNPM_HOME="${PNPM_HOME:-$HOME/Library/pnpm}"
+mkdir -p "$PNPM_HOME"
 export PATH="$PNPM_HOME:$PATH"
 run "install neonctl" pnpm install -g neonctl
 
