@@ -98,6 +98,9 @@ else
     log_success "bun already installed"
 fi
 
+# Make bun available in current session if just installed
+export PATH="$HOME/.bun/bin:$PATH"
+
 log_section "YNAB CLI"
 if ! command -v ynab &>/dev/null; then
     log "ynab not found, installing..."
