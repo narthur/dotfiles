@@ -13,6 +13,14 @@ export PATH="$HOME/bin:$HOME/.local/bin:$PATH"
 # asdf shims
 export PATH="${ASDF_DATA_DIR:-$HOME/.asdf}/shims:$PATH"
 
+# pnpm
+export PNPM_HOME="/Users/narthur/Library/pnpm"
+case ":$PATH:" in
+  *":$PNPM_HOME:"*) ;;
+  *) export PATH="$PNPM_HOME:$PATH" ;;
+esac
+# pnpm end
+
 # zoxide - must be last
 autoload -Uz compinit && compinit
 eval "$(zoxide init zsh)"
