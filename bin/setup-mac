@@ -62,6 +62,12 @@ export PATH="$PNPM_HOME:$PATH"
 run "install neonctl" pnpm install -g neonctl
 
 log_section "Binary Manager (bin)"
+# Pre-configure bin to install to ~/.local/bin (non-interactive)
+mkdir -p "$HOME/.local/bin"
+if [ ! -f "$HOME/.config/bin/config.json" ]; then
+    mkdir -p "$HOME/.config/bin"
+    printf '{"default_path":"%s/.local/bin","bins":{}}\n' "$HOME" > "$HOME/.config/bin/config.json"
+fi
 if ! command -v bin &>/dev/null; then
     log "bin not found, installing..."
     BIN_VERSION="0.24.2"
