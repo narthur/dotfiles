@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+log() {
+    echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')]${NC} $1"
+}
+
+log_success() {
+    echo -e "${GREEN}[$(date '+%Y-%m-%d %H:%M:%S')] ✓${NC} $1"
+}
+
+log_error() {
+    echo -e "${RED}[$(date '+%Y-%m-%d %H:%M:%S')] ✗${NC} $1" >&2
+}
+
+log_section() {
+    echo ""
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${BLUE}  $1${NC}"
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+}
+
+run() {
+    local description="$1"
+    shift
+    log "Running: $description"
+    if "$@"; then
+        log_success "$description"
+        return 0
+    else
+        log_error "$description failed (exit code: $?)"
+        return 1
+    fi
+}
+
+# Detect architecture
+ARCH=$(uname -m)
+if [ "$ARCH" = "arm64" ]; then
+    PLATFORM_ARCH="arm64"
+else
+    PLATFORM_ARCH="amd64"
+fi
+
+log_section "Brew Packages"
+run "brew bundle install" brew bundle --global
+
+log_section "asdf Plugins & Versions"
+run "setup asdf" setup-asdf
+
+log_section "Global pnpm Packages"
+run "install neonctl" bash -c 'pnpm install -g neonctl'
+
+log_section "Binary Manager (bin)"
+if ! command -v bin &>/dev/null; then
+    log "bin not found, installing..."
+    BIN_VERSION="0.24.2"
+    BIN_URL="https://github.com/marcosnils/bin/releases/download/v${BIN_VERSION}/bin_${BIN_VERSION}_darwin_${PLATFORM_ARCH}"
+    run "download bin" curl -L -o /tmp/bin-bootstrap "$BIN_URL"
+    run "make bin executable" chmod +x /tmp/bin-bootstrap
+    run "install bin" /tmp/bin-bootstrap install github.com/marcosnils/bin
+else
+    log_success "bin already installed"
+fi
+
+run "update bin" bin update bin
+run "ensure buzz installed" bash -c 'bin ensure buzz || bin install github.com/pinepeakdigital/buzz'
+
+log_section "LLM Plugins"
+run "install llm-anthropic" llm install llm-anthropic
+
+log_section "Cron"
+run "setup cron" setup-cron
+
+log_section "Claude Code"
+if ! command -v claude &>/dev/null; then
+    log "claude not found, installing..."
+    run "install claude" bash -c 'curl -fsSL https://claude.ai/install.sh | bash'
+else
+    log_success "claude already installed"
+fi
+
+log_section "Bun"
+if ! command -v bun &>/dev/null; then
+    log "bun not found, installing..."
+    run "install bun" bash -c 'curl -fsSL https://bun.sh/install | bash'
+else
+    log_success "bun already installed"
+fi
+
+log_section "YNAB CLI"
+if ! command -v ynab &>/dev/null; then
+    log "ynab not found, installing..."
+    run "install ynab-cli" bun install -g @stephendolan/ynab-cli
+else
+    log_success "ynab already installed"
+fi
+
+log_section "Complete"
+log_success "macOS setup complete!"
