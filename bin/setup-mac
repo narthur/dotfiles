@@ -81,6 +81,7 @@ fi
 
 run "update bin" bin update bin
 run "ensure buzz installed" bash -c 'bin ensure buzz || bin install github.com/pinepeakdigital/buzz'
+run "ensure sysmon installed" bash -c 'bin ensure sysmon || bin install github.com/PinePeakDigital/sysmon'
 
 log_section "LLM Plugins"
 run "install llm-anthropic" llm install llm-anthropic
