@@ -116,5 +116,14 @@ else
     log_success "ynab already installed"
 fi
 
+log_section "xbar"
+mkdir -p "$HOME/Library/Application Support/xbar"
+if [ ! -L "$HOME/Library/Application Support/xbar/plugins" ]; then
+    rm -rf "$HOME/Library/Application Support/xbar/plugins"
+    run "symlink xbar plugins" ln -sf "$HOME/.config/xbar/plugins" "$HOME/Library/Application Support/xbar/plugins"
+else
+    log_success "xbar plugins symlink already exists"
+fi
+
 log_section "Complete"
 log_success "macOS setup complete!"
