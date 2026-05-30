@@ -87,6 +87,9 @@ else
     log_success "gh already installed"
 fi
 
+log_section "GitHub CLI Extensions"
+gh extension list | grep -q poi || run "install gh-poi" gh extension install seachicken/gh-poi
+
 log_section "asdf Plugins"
 run "add nodejs plugin" asdf plugin add nodejs https://github.com/asdf-vm/asdf-nodejs.git || true
 run "add pnpm plugin" asdf plugin add pnpm || true
