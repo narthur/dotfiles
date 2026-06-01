@@ -3,9 +3,16 @@
 # Accept optional date argument (format: YYYY-MM-DD), defaults to today
 target_date="${1:-$(date +%Y-%m-%d)}"
 
-# Get timestamps for the target date
-day_start=$(date -d "$target_date" +%Y-%m-%dT00:00:00%:z)
-day_end=$(date -d "$target_date + 1 day" +%Y-%m-%dT00:00:00%:z)
+# Get timestamps for the target date (portable GNU/BSD date)
+if date --version >/dev/null 2>&1; then
+  # GNU date (Linux)
+  day_start=$(date -d "$target_date" +%Y-%m-%dT00:00:00%:z)
+  day_end=$(date -d "$target_date + 1 day" +%Y-%m-%dT00:00:00%:z)
+else
+  # BSD date (macOS)
+  day_start=$(date -jf "%Y-%m-%d" "$target_date" +%Y-%m-%dT00:00:00%z)
+  day_end=$(date -j -v+1d -f "%Y-%m-%d" "$target_date" +%Y-%m-%dT00:00:00%z)
+fi
 timeperiod="${day_start}/${day_end}"
 
 # Fetch settings including categories

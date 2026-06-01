@@ -12,13 +12,16 @@ else
   days_ago_date() { date -v-"$1"d +%Y-%m-%d; }
 fi
 
+# Machine identifier for multi-machine deduplication
+MACHINE_ID=$(hostname -s)
+
 # Loop through the last 7 days (including today)
 for days_ago in {6..0}; do
   target_date=$(days_ago_date "$days_ago")
 
   # Daystamp format: YYYYMMDD (strip dashes from YYYY-MM-DD)
   DAYSTAMP=$(echo "$target_date" | tr -d '-')
-  REQUEST_ID="$DAYSTAMP"
+  REQUEST_ID="${DAYSTAMP}-${MACHINE_ID}"
 
   # Get work time in seconds from ActivityWatch
   seconds=$("$SCRIPT_DIR/get-work-time" "$target_date")
@@ -32,9 +35,20 @@ for days_ago in {6..0}; do
   hours=$(echo "scale=2; $seconds / 3600" | bc | sed 's/^\./0./')
 
   echo "Syncing $target_date: $hours hours"
-  buzz add \
+  buzz_output=$(buzz add \
     --requestid "$REQUEST_ID" \
     --daystamp "$DAYSTAMP" \
     bizsys "$hours" \
-    "Desktop work time for ${REQUEST_ID}"
+    "Work time on ${MACHINE_ID} for ${DAYSTAMP}" 2>&1)
+  buzz_exit=$?
+
+  if [ $buzz_exit -ne 0 ]; then
+    if echo "$buzz_output" | grep -qi "duplicate"; then
+      : # identical duplicate already recorded, skip silently
+    else
+      echo "$buzz_output" >&2
+    fi
+  else
+    echo "$buzz_output"
+  fi
 done

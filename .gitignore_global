@@ -10,3 +10,21 @@
 auto-rebase.*
 .cache_ggshield
 
+# macOS
+.DS_Store
+.CFUserTextEncoding
+
+# Shell history / caches
+.zsh_history
+.zcompdump
+.viminfo
+.zshrc.bak
+
+# buzz
+.buzzrc
+.buzz_version_cache
+.buzz-refresh
+
+# Credentials (never commit)
+.netrc
+
