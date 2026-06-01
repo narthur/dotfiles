@@ -43,8 +43,10 @@ fi
 
 # Find files on disk that are untracked in both repos
 echo -e "\n${YELLOW}Checking for untracked files...${NC}"
-# Get all files on disk that are either untracked or ignored
-all_files=$(git -C ~ --git-dir="$DOTFILES_DIR" --work-tree=~ ls-files -o --exclude-standard 2>/dev/null | sort)
+# Get all files on disk that are untracked in EITHER repo (union of both)
+# Use both repos to catch files that might be untracked in one but tracked in the other
+all_files=$(( git -C ~ --git-dir="$DOTFILES_DIR" --work-tree=~ ls-files -o --exclude-standard 2>/dev/null; \
+             git -C ~ --git-dir="$DOTPRIVATE_DIR" --work-tree=~ ls-files -o --exclude-standard 2>/dev/null ) | sort -u)
 
 untracked_both=()
 while IFS= read -r file; do
