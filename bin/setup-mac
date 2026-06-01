@@ -121,11 +121,7 @@ else
 fi
 
 log_section "Colima"
-if ! colima status &>/dev/null 2>&1; then
-    run "start colima" colima start
-else
-    log_success "colima already running"
-fi
+run "enable colima service" brew services start colima
 
 log_section "xbar"
 mkdir -p "$HOME/Library/Application Support/xbar"
