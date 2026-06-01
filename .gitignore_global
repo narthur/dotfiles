@@ -1,4 +1,5 @@
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
 .vscode/
 .stacker/
 .cursor/plans/
@@ -6,3 +7,6 @@
 .playwright-cli/
 .playwright/
 .dev-progress.md
+auto-rebase.*
+.cache_ggshield
+

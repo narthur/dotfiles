@@ -14,7 +14,7 @@ You are a CI debugging specialist. Your role is to identify which CI checks are 
 - Analyze failure output to understand root causes
 - Fix the code issues causing failures
 - Commit and push the fix
-- Wait for CI to finish and loop if there are new failures
+- After pushing, start fixing the next failure as soon as one appears — do not wait for the rest of CI to finish
 - Stop when CI passes or the cycle limit is reached
 
 ## What You Don't Do
@@ -25,12 +25,21 @@ You are a CI debugging specialist. Your role is to identify which CI checks are 
 
 ## Iterative Mode (Default)
 
-By default, this skill runs in an **iterative loop**: fix → commit → push → wait for CI → check results → repeat if still failing.
+By default, this skill runs in an **iterative loop**: fix → commit → push → poll for the first failure → repeat if still failing.
 
 - **Default cycle limit: 3** (override by telling the agent a different limit)
-- Each cycle is one round of: diagnose failures → fix → commit → push → wait
+- Each cycle is one round of: diagnose failures → fix → commit → push → poll
 - The loop exits early when all checks pass
 - If the limit is reached and CI is still failing, stop and report what remains broken
+
+## CRITICAL: Act on Failures Immediately
+
+**Do not wait for all CI jobs to finish before starting to fix.** As soon as any required check has reported a `failure` (or `cancelled`/`timed_out`) conclusion, begin diagnosing and fixing it — even if other jobs are still `in_progress` or `queued`. Waiting for green-or-red on every job wastes minutes when the failure signal is already in hand.
+
+When polling:
+- Treat any check with `conclusion` in {`failure`, `cancelled`, `timed_out`, `action_required`} as actionable now.
+- Only wait longer if **zero** checks have failed yet and **none** have completed — i.e., there is no failure signal to act on.
+- If a fix lands and a previously-pending job later fails, the next cycle will pick it up.
 
 ## CRITICAL: Check Run History Before Re-Running
 
@@ -104,7 +113,7 @@ gh repo view --json nameWithOwner --jq '.nameWithOwner'
 
 From the results, list:
 - Failed workflow runs (conclusion: `failure`)
-- Failed/cancelled individual check runs
+- Failed/cancelled/timed-out individual check runs
 
 Present a summary:
 
@@ -121,7 +130,10 @@ Passing:
   ○ <check-name> (pending)
 ```
 
-**If no failures are found, CI is green — exit the loop and inform the user.**
+**Decision rules:**
+- If **any** failures exist → proceed to 3c immediately, even if other checks are still pending. Do not wait for the rest of CI.
+- If **all** checks have completed and none failed → CI is green, exit the loop and inform the user.
+- If **no failures yet but checks are still pending** → poll (see 3g) until either a failure appears or all checks complete.
 
 #### 3c: Fetch Failure Logs
 
@@ -181,19 +193,26 @@ but push <branch-name>
 
 Use conventional commit format. The scope should reflect the area fixed (e.g., `types`, `tests`, `lint`, `build`).
 
-#### 3g: Wait for CI
+#### 3g: Poll for the First Failure (do NOT block on full CI)
 
-After pushing, wait for the new CI run to complete:
-
-```bash
-gh run watch
-```
-
-Once it finishes, update `headRefOid` to the new head commit:
+After pushing, update `headRefOid` to the new head commit:
 
 ```bash
 gh pr view --json headRefOid --jq '.headRefOid'
 ```
+
+Then **poll** the check-runs API for that SHA. Do **not** use `gh run watch`, which blocks until every job ends.
+
+```bash
+gh api repos/{owner}/{repo}/commits/<headRefOid>/check-runs \
+  --jq '.check_runs[] | {name, status, conclusion}'
+```
+
+Polling rules:
+- Re-check every ~30s (cap at ~10 minutes per cycle).
+- **Exit polling and proceed to 3a** as soon as **any** check has `conclusion` in {`failure`, `cancelled`, `timed_out`, `action_required`}. Other jobs may still be `in_progress` — that's fine, the next cycle will re-evaluate.
+- If **all** checks complete with `conclusion: success` (or `neutral`/`skipped`) → CI is green, exit the loop.
+- If polling times out with no failures and no full completion → report the still-pending checks and stop, so the user can decide whether to keep waiting.
 
 Then loop back to **3a** for the next cycle.
 
@@ -233,8 +252,7 @@ Recommendation: <next steps or what to investigate>
 | `gh pr view --json ...` | Get PR details for current branch |
 | `gh run list --branch <b> --limit 10 --json ...` | List recent CI runs |
 | `gh run view <id> --log-failed` | Fetch logs for failed steps |
-| `gh run watch` | Watch a live CI run |
-| `gh api repos/{owner}/{repo}/commits/<sha>/check-runs` | Individual check run statuses |
+| `gh api repos/{owner}/{repo}/commits/<sha>/check-runs` | Individual check run statuses (poll this to detect first failure) |
 | `gh repo view --json nameWithOwner` | Get owner/repo slug |
 | `git branch --show-current` | Get current branch |
 | `but status --json` | GitButler: see workspace state and file IDs |

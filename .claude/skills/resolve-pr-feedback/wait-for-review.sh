@@ -120,26 +120,30 @@ status=$(get_status)
 # review completes. We request once and then just wait for feedback/completion.
 review_requested=false
 
-case "$status" in
-  paused)
-    log "CodeRabbit auto-reviews are paused — requesting manual review"
-    request_coderabbit_review
-    review_requested=true
-    ;;
-  not_started|completed)
-    if [[ "$is_draft" == "true" ]]; then
-      log "PR is a draft and CodeRabbit is $status — requesting review"
+# Draft PRs are not auto-reviewed by CodeRabbit. After every push to a draft,
+# we must explicitly request a review so the new commits get covered. We do
+# this regardless of the current status: a `completed` state reflects the
+# previous review (now stale), and even an `in_progress` state likely refers
+# to a review of an older commit that won't pick up the new push.
+if [[ "$is_draft" == "true" ]]; then
+  log "PR is a draft (CodeRabbit doesn't auto-review drafts) — requesting review for the new push"
+  request_coderabbit_review
+  review_requested=true
+else
+  case "$status" in
+    paused)
+      log "CodeRabbit auto-reviews are paused — requesting manual review"
       request_coderabbit_review
       review_requested=true
-    fi
-    ;;
-  in_progress|starting_up)
-    log "CodeRabbit is already reviewing — no request needed"
-    ;;
-  rate_limited|timed_out)
-    log "CodeRabbit is $status — will handle during polling"
-    ;;
-esac
+      ;;
+    in_progress|starting_up)
+      log "CodeRabbit is already reviewing — no request needed"
+      ;;
+    rate_limited|timed_out)
+      log "CodeRabbit is $status — will handle during polling"
+      ;;
+  esac
+fi
 
 # ── Step 3: Polling loop ────────────────────────────────────────────
 

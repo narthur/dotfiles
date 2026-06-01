@@ -13,13 +13,18 @@ usage() {
 Usage: $0 <command> [options]
 
 Commands:
-  next              Show the most stale non-snoozed issue
-  list [--limit N]  List issues sorted by least recently updated (default limit: 10)
-  view <N>          Show full details for issue #N
-  snooze <N> <dur>  Snooze issue #N for a duration (e.g. 1h, 4h, 1d, 3d, 1w, 1m)
-  unsnooze <N>      Remove snooze for issue #N
-  snoozed           List currently snoozed issues
-  reset             Clear all snooze state for this repo
+  next                       Show the most stale non-snoozed issue
+  list [--limit N]           List issues sorted by least recently updated (default limit: 10)
+  view <N>                   Show full details for issue #N
+  snooze <N> <dur>           Snooze issue #N for a duration (e.g. 1h, 4h, 1d, 3d, 1w, 1m)
+  snooze-next <N> <dur>      Snooze issue #N then surface the next stale issue
+  unsnooze <N>               Remove snooze for issue #N
+  snoozed                    List currently snoozed issues
+  block <N> <B> [<B>...]     Add blockedBy link(s) from issue #N to one or more blocker issue numbers
+  unblock <N> <B>            Remove a blockedBy link from issue #N to blocker #B
+  unassign-copilot <N>       Remove the Copilot bot from issue #N's assignees (works around gh issue edit no-op)
+  reset                      Clear all snooze state for this repo
+  status                     Show open/snoozed/groomable counts
 
 Run from a git repo with gh configured.
 EOF
@@ -30,6 +35,88 @@ get_repo() {
     echo "Error: not in a GitHub repository or gh not configured" >&2
     exit 1
   }
+}
+
+# Legacy: open URL in Firefox without stealing focus (when xdotool exists).
+open_issue_in_firefox() {
+  local url="$1"
+  if command -v xdotool >/dev/null 2>&1; then
+    local _FOCUSED
+    _FOCUSED=$(xdotool getactivewindow 2>/dev/null || true)
+    firefox --new-tab "$url" >/dev/null 2>&1 &
+    if [[ -n "$_FOCUSED" ]]; then
+      sleep 1
+      xdotool windowfocus "$_FOCUSED" 2>/dev/null || true
+    fi
+  else
+    firefox --new-tab "$url" >/dev/null 2>&1 &
+  fi
+}
+
+issue_open_firefox_fallback() {
+  local url="$1"
+  local reason="$2"
+  echo "grooming-session: using Firefox instead of Playwright — $reason" >&2
+  ( open_issue_in_firefox "$url" ) &
+}
+
+issue_one_line_detail() {
+  local text="$1"
+  [[ -z "$text" ]] && return
+  echo "$text" | head -n 2 | tr '\n' ' ' | sed 's/[[:space:]]*$//'
+}
+
+# Open issue in Playwright (one named session per repo, single tab reused) or
+# fall back to Firefox. Mirrors the pattern in pr-triage/pr-review-session so
+# stepping through issues does not pile up browser tabs.
+open_issue_in_browser() {
+  local url="$1"
+  local repo="$2"
+  if [[ "${GROOMING_NO_PLAYWRIGHT:-}" == "1" ]]; then
+    echo "grooming-session: using Firefox instead of Playwright — GROOMING_NO_PLAYWRIGHT=1" >&2
+    ( open_issue_in_firefox "$url" ) &
+    return
+  fi
+  local default_pw="${PLAYWRIGHT_CLI:-$HOME/.local/bin/playwright-cli}"
+  local pw="$default_pw"
+  if [[ ! -x "$pw" ]]; then
+    pw=$(command -v playwright-cli 2>/dev/null || true)
+  fi
+  if [[ -z "$pw" ]]; then
+    echo "grooming-session: using Firefox instead of Playwright — playwright-cli not found (not executable at ${default_pw} and no playwright-cli on PATH; set PLAYWRIGHT_CLI if it lives elsewhere)" >&2
+    ( open_issue_in_firefox "$url" ) &
+    return
+  fi
+  local session="grooming-${repo//\//-}"
+  local auth="${HOME}/.playwright-auth/github.json"
+  (
+    if ! "$pw" list 2>/dev/null | grep -Fq -- "- ${session}:"; then
+      local open_out
+      if ! open_out=$("$pw" open --headed --browser chromium -s="$session" 2>&1); then
+        local detail
+        detail=$(issue_one_line_detail "$open_out")
+        if [[ -n "$detail" ]]; then
+          issue_open_firefox_fallback "$url" "playwright-cli open --headed failed — $detail"
+        else
+          issue_open_firefox_fallback "$url" "playwright-cli open --headed failed (no stderr; check DISPLAY/Wayland and browser install)"
+        fi
+        exit 0
+      fi
+      if [[ -f "$auth" ]]; then
+        "$pw" state-load "$auth" -s="$session" >/dev/null 2>&1 || true
+      fi
+    fi
+    local goto_out
+    if ! goto_out=$("$pw" goto "$url" -s="$session" 2>&1); then
+      local gdetail
+      gdetail=$(issue_one_line_detail "$goto_out")
+      if [[ -n "$gdetail" ]]; then
+        issue_open_firefox_fallback "$url" "playwright-cli goto failed — $gdetail"
+      else
+        issue_open_firefox_fallback "$url" "playwright-cli goto failed (no stderr)"
+      fi
+    fi
+  ) &
 }
 
 ensure_snooze_file() {
@@ -106,6 +193,64 @@ remove_snooze() {
     'if .[$repo] then .[$repo] |= del(.[$num]) else . end' "$SNOOZE_FILE" > "$tmp" && mv "$tmp" "$SNOOZE_FILE"
 }
 
+# Print the issue's GitHub native issue type (Task/Bug/Feature/etc.) or
+# "(none)" when unset. Uses GraphQL since `gh issue view --json` does not
+# expose issueType.
+print_issue_type() {
+  local repo="$1" num="$2"
+  local owner="${repo%%/*}"
+  local name="${repo##*/}"
+  local type_json type_name
+  type_json=$(gh api graphql -f query="query { repository(owner: \"$owner\", name: \"$name\") { issue(number: $num) { issueType { name } } } }" 2>/dev/null) || return 0
+  type_name=$(echo "$type_json" | jq -r '.data.repository.issue.issueType.name // "(none)"')
+  printf 'issueType:\t%s\n' "$type_name"
+}
+
+# Print relationships section (parent / sub-issues / blocked-by / blocking)
+# only when at least one exists. Uses GraphQL since `gh issue view` does not
+# expose these fields.
+print_issue_relationships() {
+  local repo="$1" num="$2"
+  local owner="${repo%%/*}"
+  local name="${repo##*/}"
+  local rel_json
+  rel_json=$(gh api graphql -f query="query { repository(owner: \"$owner\", name: \"$name\") { issue(number: $num) { blockedBy(first: 20) { totalCount nodes { number title state url } } blocking(first: 20) { totalCount nodes { number title state url } } parent { number title state url } subIssues(first: 20) { totalCount nodes { number title state url } } } } }" 2>/dev/null) || return 0
+
+  local blocked_count blocking_count sub_count has_parent
+  blocked_count=$(echo "$rel_json" | jq '.data.repository.issue.blockedBy.totalCount // 0')
+  blocking_count=$(echo "$rel_json" | jq '.data.repository.issue.blocking.totalCount // 0')
+  sub_count=$(echo "$rel_json" | jq '.data.repository.issue.subIssues.totalCount // 0')
+  has_parent=$(echo "$rel_json" | jq '.data.repository.issue.parent != null')
+
+  if (( blocked_count == 0 && blocking_count == 0 && sub_count == 0 )) && [[ "$has_parent" != "true" ]]; then
+    return 0
+  fi
+
+  echo ""
+  echo "=== Relationships ==="
+  echo ""
+
+  if [[ "$has_parent" == "true" ]]; then
+    echo "Parent:"
+    echo "$rel_json" | jq -r '.data.repository.issue.parent | "  #\(.number) [\(.state)] \(.title)"'
+  fi
+
+  if (( blocked_count > 0 )); then
+    echo "Blocked by:"
+    echo "$rel_json" | jq -r '.data.repository.issue.blockedBy.nodes[] | "  #\(.number) [\(.state)] \(.title)"'
+  fi
+
+  if (( blocking_count > 0 )); then
+    echo "Blocking:"
+    echo "$rel_json" | jq -r '.data.repository.issue.blocking.nodes[] | "  #\(.number) [\(.state)] \(.title)"'
+  fi
+
+  if (( sub_count > 0 )); then
+    echo "Sub-issues:"
+    echo "$rel_json" | jq -r '.data.repository.issue.subIssues.nodes[] | "  #\(.number) [\(.state)] \(.title)"'
+  fi
+}
+
 # Fetch issues sorted by updated (ascending = most stale first)
 fetch_issues() {
   local limit="${1:-100}"
@@ -163,6 +308,9 @@ cmd_next() {
   # Fetch issue body
   gh issue view "$num"
 
+  # Surface the native issue type — `gh issue view` does not include it.
+  print_issue_type "$repo" "$num"
+
   # Fetch comments separately (the --comments flag replaces body output, not appends)
   local comment_count
   comment_count=$(gh issue view "$num" --json comments --jq '.comments | length')
@@ -173,12 +321,14 @@ cmd_next() {
     gh issue view "$num" --comments
   fi
 
-  # Open in Firefox
+  # Surface relationships (parent/sub-issues/blocked-by/blocking) when present.
+  print_issue_relationships "$repo" "$num"
+
+  # Open issue page in browser (Playwright with a per-repo named session,
+  # falling back to Firefox).
   local issue_url
   issue_url=$(gh issue view "$num" --json url -q '.url')
-  if command -v firefox &> /dev/null; then
-    firefox --new-tab "$issue_url" &> /dev/null &
-  fi
+  open_issue_in_browser "$issue_url" "$repo"
 }
 
 cmd_list() {
@@ -215,7 +365,11 @@ cmd_list() {
 
 cmd_view() {
   local num="${1:?Error: issue number required}"
+  local repo
+  repo=$(get_repo)
   gh issue view "$num"
+  print_issue_type "$repo" "$num"
+  print_issue_relationships "$repo" "$num"
 }
 
 cmd_snooze() {
@@ -277,20 +431,131 @@ cmd_status() {
   echo "Groomable: $((total_open - snoozed_count)) issues"
 }
 
+# Resolve an issue number to its GraphQL node ID.
+resolve_issue_id() {
+  local num="$1"
+  gh issue view "$num" --json id -q '.id' 2>/dev/null || {
+    echo "Error: could not resolve issue #$num" >&2
+    return 1
+  }
+}
+
+cmd_block() {
+  local num="${1:?Error: issue number required}"
+  shift || true
+  if [[ $# -eq 0 ]]; then
+    echo "Error: at least one blocker issue number required" >&2
+    exit 1
+  fi
+
+  local issue_id
+  issue_id=$(resolve_issue_id "$num") || exit 1
+
+  local blocker
+  for blocker in "$@"; do
+    local blocker_id
+    blocker_id=$(resolve_issue_id "$blocker") || continue
+    local result
+    result=$(gh api graphql \
+      -f query='mutation($i:ID!,$b:ID!){addBlockedBy(input:{issueId:$i,blockingIssueId:$b}){issue{number}}}' \
+      -f i="$issue_id" -f b="$blocker_id" 2>&1) || {
+      echo "Error linking #$num blockedBy #$blocker: $result" >&2
+      continue
+    }
+    echo "Linked #$num blockedBy #$blocker"
+  done
+}
+
+cmd_unblock() {
+  local num="${1:?Error: issue number required}"
+  local blocker="${2:?Error: blocker issue number required}"
+
+  local issue_id blocker_id
+  issue_id=$(resolve_issue_id "$num") || exit 1
+  blocker_id=$(resolve_issue_id "$blocker") || exit 1
+
+  local result
+  result=$(gh api graphql \
+    -f query='mutation($i:ID!,$b:ID!){removeBlockedBy(input:{issueId:$i,blockingIssueId:$b}){issue{number}}}' \
+    -f i="$issue_id" -f b="$blocker_id" 2>&1) || {
+    echo "Error removing blockedBy link #$num → #$blocker: $result" >&2
+    exit 1
+  }
+  echo "Removed blockedBy link #$num → #$blocker"
+}
+
+# Remove the Copilot bot from an issue's assignees while preserving other
+# assignees. `gh issue edit --remove-assignee Copilot` silently no-ops, so we
+# replace the assignee list via GraphQL.
+cmd_unassign_copilot() {
+  local num="${1:?Error: issue number required}"
+
+  local issue_data
+  issue_data=$(gh issue view "$num" --json id,assignees 2>/dev/null) || {
+    echo "Error: could not fetch issue #$num" >&2
+    exit 1
+  }
+
+  local issue_id kept_ids has_copilot
+  issue_id=$(echo "$issue_data" | jq -r '.id')
+  has_copilot=$(echo "$issue_data" | jq '[.assignees[] | select(.login == "Copilot")] | length > 0')
+
+  if [[ "$has_copilot" != "true" ]]; then
+    echo "Issue #$num is not assigned to Copilot — nothing to do."
+    return 0
+  fi
+
+  kept_ids=$(echo "$issue_data" | jq -c '[.assignees[] | select(.login != "Copilot") | .id]')
+
+  local body
+  body=$(jq -n --arg id "$issue_id" --argjson actors "$kept_ids" '{
+    query: "mutation($id:ID!,$actors:[ID!]!){replaceActorsForAssignable(input:{assignableId:$id,actorIds:$actors}){assignable{... on Issue{number assignees(first:10){nodes{login}}}}}}",
+    variables: {id:$id, actors:$actors}
+  }')
+
+  local result
+  result=$(echo "$body" | gh api graphql --input - 2>&1) || {
+    echo "Error unassigning Copilot from #$num: $result" >&2
+    exit 1
+  }
+
+  local remaining
+  remaining=$(echo "$result" | jq -r '.data.replaceActorsForAssignable.assignable.assignees.nodes | map(.login) | join(", ")')
+  if [[ -z "$remaining" ]]; then
+    echo "Unassigned Copilot from #$num (no remaining assignees)"
+  else
+    echo "Unassigned Copilot from #$num (remaining: $remaining)"
+  fi
+}
+
+cmd_snooze_next() {
+  local num="${1:?Error: issue number required}"
+  local duration="${2:?Error: duration required (e.g. 1h, 1d, 1w, 1m)}"
+  local repo
+  repo=$(get_repo)
+  set_snooze "$repo" "$num" "$duration"
+  echo ""
+  cmd_next
+}
+
 # Main dispatch
 cmd="${1:-}"
 shift || true
 
 case "$cmd" in
-  next)     cmd_next "$@" ;;
-  list)     cmd_list "$@" ;;
-  view)     cmd_view "$@" ;;
-  snooze)   cmd_snooze "$@" ;;
-  unsnooze) cmd_unsnooze "$@" ;;
-  snoozed)  cmd_snoozed "$@" ;;
-  reset)    cmd_reset "$@" ;;
-  status)   cmd_status "$@" ;;
-  help|-h|--help) usage ;;
+  next)             cmd_next "$@" ;;
+  list)             cmd_list "$@" ;;
+  view)             cmd_view "$@" ;;
+  snooze)           cmd_snooze "$@" ;;
+  snooze-next)      cmd_snooze_next "$@" ;;
+  unsnooze)         cmd_unsnooze "$@" ;;
+  snoozed)          cmd_snoozed "$@" ;;
+  block)            cmd_block "$@" ;;
+  unblock)          cmd_unblock "$@" ;;
+  unassign-copilot) cmd_unassign_copilot "$@" ;;
+  reset)            cmd_reset "$@" ;;
+  status)           cmd_status "$@" ;;
+  help|-h|--help)   usage ;;
   *)
     usage >&2
     exit 1

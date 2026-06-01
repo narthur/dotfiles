@@ -51,7 +51,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         # --- Check 2: branch name prefix convention (e.g. alice/feature-x) ---
         if [[ -z "$branch_owner" && "$branch_name" == */* ]]; then
             branch_prefix=$(echo "$branch_name" | cut -d'/' -f1 | tr '[:upper:]' '[:lower:]')
-            non_user_prefixes="feature fix bug hotfix release chore docs test refactor wip dev"
+            non_user_prefixes="feature fix bug hotfix release chore docs test refactor wip dev copilot"
             if [[ "$branch_prefix" != "$MY_USER" ]] \
                 && ! echo "$non_user_prefixes" | grep -qw "$branch_prefix"; then
                 branch_owner="$branch_prefix"

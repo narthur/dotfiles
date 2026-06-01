@@ -14,9 +14,12 @@ inkscape
 jq
 mailutils
 moreutils
+network-manager-gnome
+nfs-kernel-server
 nvitop
 nvtop
 ocrmypdf
+oz-stable
 pandoc
 pipx
 podman-docker
@@ -28,6 +31,7 @@ qt6ct
 rofi
 shfmt
 simplescreenrecorder
+stripe
 taskwarrior
 texlive-xetex
 thunar

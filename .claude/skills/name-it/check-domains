@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+#
+# check-domains — bulk DNS-based domain availability check
+#
+# Uses authoritative DNS resolvers to check NXDOMAIN at the apex of each
+# candidate (name, TLD) pair. NXDOMAIN at apex is a strong signal of
+# availability; verify via registrar before purchase.
+#
+# Usage:
+#   check-domains [--tlds TLD1,TLD2,...] [--resolver IP] NAME [NAME ...]
+#
+# Examples:
+#   check-domains plonk scrawl wibble
+#   check-domains --tlds com,app,fun plonk klatch
+#   check-domains --resolver 8.8.8.8 plonk
+
+set -euo pipefail
+
+DEFAULT_TLDS="com,app,io,fun,page,club,place,land,party,zone"
+RESOLVER="1.1.1.1"
+TLDS=""
+NAMES=()
+
+usage() {
+  cat <<'EOF'
+check-domains — bulk DNS-based domain availability check
+
+Usage:
+  check-domains [OPTIONS] NAME [NAME ...]
+
+Options:
+  --tlds TLD1,TLD2,...   Comma-separated TLDs to check (default: com,app,io,fun,page,club,place,land,party,zone)
+  --resolver IP          DNS resolver to query (default: 1.1.1.1)
+  -h, --help             Show this help
+
+Output:
+  Each line: "NAME.TLD  STATUS"
+  STATUS is one of:
+    AVAILABLE             — NXDOMAIN at apex; strong signal the name is unregistered
+    registered            — SOA or NS exists at apex
+    ?? (status=...)       — DNS error (SERVFAIL, REFUSED, etc.); needs manual lookup
+
+Caveats:
+  - DNS-based checks are a strong signal but not definitive. A domain can
+    be registered without DNS configured.
+  - Always verify via a registrar (Cloudflare, Namecheap, etc.) before
+    purchasing.
+
+Examples:
+  check-domains plonk scrawl wibble
+  check-domains --tlds com,app,dev,page plonk
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --tlds)
+      TLDS="$2"
+      shift 2
+      ;;
+    --resolver)
+      RESOLVER="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --*)
+      echo "ERROR: unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+    *)
+      NAMES+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [[ ${#NAMES[@]} -eq 0 ]]; then
+  echo "ERROR: at least one NAME is required" >&2
+  usage >&2
+  exit 2
+fi
+
+TLDS="${TLDS:-$DEFAULT_TLDS}"
+
+if ! command -v dig >/dev/null 2>&1; then
+  echo "ERROR: 'dig' not found. Install dnsutils / bind-tools." >&2
+  exit 1
+fi
+
+check_one() {
+  local domain="$1"
+  local out
+
+  # SOA at apex
+  out=$(dig +short +time=3 +tries=2 SOA "$domain" "@$RESOLVER" 2>/dev/null || true)
+  if [[ -n "$out" ]]; then
+    printf "%-30s  registered (SOA)\n" "$domain"
+    return
+  fi
+
+  # NS at apex
+  out=$(dig +short +time=3 +tries=2 NS "$domain" "@$RESOLVER" 2>/dev/null || true)
+  if [[ -n "$out" ]]; then
+    printf "%-30s  registered (NS)\n" "$domain"
+    return
+  fi
+
+  # Look at DNS status code
+  local status
+  status=$(dig +time=3 +tries=2 SOA "$domain" "@$RESOLVER" 2>/dev/null \
+           | grep -oE 'status: [A-Z]+' | head -1 | awk '{print $2}')
+
+  case "$status" in
+    NXDOMAIN) printf "%-30s  AVAILABLE\n" "$domain" ;;
+    NOERROR)  printf "%-30s  AVAILABLE? (NOERROR but no SOA/NS)\n" "$domain" ;;
+    "")       printf "%-30s  ?? (no response)\n" "$domain" ;;
+    *)        printf "%-30s  ?? (status=%s)\n" "$domain" "$status" ;;
+  esac
+}
+
+IFS=',' read -ra TLD_ARRAY <<< "$TLDS"
+
+# Generate all (name, tld) pairs, then check each
+for name in "${NAMES[@]}"; do
+  for tld in "${TLD_ARRAY[@]}"; do
+    tld="${tld# }"
+    tld="${tld%.}"
+    tld="${tld#.}"
+    check_one "${name}.${tld}"
+  done
+done

@@ -42,6 +42,47 @@ git -C ~ --git-dir=~/.dotfiles-private --work-tree=~ <cmd>
 - **Path resolution**: Always use `-C ~` for `status`, `add`, `diff` commands. Without it, git resolves paths relative to the current working directory instead of the work tree.
 - **Cross-repo noise**: Each repo sees the other's files as "untracked" when using `status -u`. This is expected — filter by path or cross-reference both repos' tracked file lists to find truly untracked files.
 
+## What Goes Where
+
+Use this guide when deciding where to stage a file.
+
+### dotfiles (public)
+
+- Generic, reusable skills with no personal or client-specific data
+- General config (`.gitconfig`, `.gitignore_global`, shell hooks)
+- Tool configs not tied to specific clients, orgs, or internal systems
+- Scripts and skills that work for any user on any machine
+
+### dotprivate (private)
+
+- Skills that reference client or org names, internal URLs, or client systems
+- Skills that reference third-party service IDs (e.g. YNAB budget IDs, Memberstack plan IDs, Surge domains)
+- Any config that reveals business relationships or client info
+- Scripts that embed account-specific data (even if not a secret)
+
+### Don't commit anywhere — use `~/.env` instead
+
+Some values must **never** appear in any git repo, even dotprivate. `~/.env` is the canonical untracked secrets file — it exists on disk, is sourced by `.bashrc`, but is never committed.
+
+If a file contains any of the following, the inline value must be moved to `~/.env` and the file updated to reference the env var:
+
+- Database connection strings (e.g. `postgresql://user:password@host/db`)
+- API keys, tokens, or secrets (e.g. `sk_live_...`, `npg_...`)
+- Passwords in any form
+- Webhook URLs with embedded tokens
+- OAuth client secrets
+
+**Detection patterns to scan for:**
+- `psql '...'` or `psql "..."` with a full URL inline (contains `://` and `@`)
+- `export *_KEY=`, `export *_SECRET=`, `export *_TOKEN=`, `export *_PASSWORD=` with literal values
+- `Authorization: Bearer <literal-token>`
+- `curl ... -H "X-Api-Key: <literal-key>"`
+
+When found, flag it and recommend:
+1. Replace the inline value with `${ENV_VAR_NAME:?ENV_VAR_NAME not set}`
+2. Add the real value to `~/.env` (untracked, never committed)
+3. Commit only the version with the env var reference
+
 ## Workflow
 
 ### Step 1: Gather Current State
@@ -167,7 +208,7 @@ Report findings with file and line context:
 ```
 Issues found:
   SKILL.md:
-    - Line 12: hardcoded path "/home/narthur/" (use ~ or $HOME)
+    - Line 12: hardcoded path "/home/<user>/" (use ~ or $HOME)
     - Line 34: client name "Acme Corp" → personal data
   fetch-data.sh:
     - Line 1: shebang #!/bin/bash (prefer #!/usr/bin/env bash)

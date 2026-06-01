@@ -76,40 +76,32 @@ Use the **pr-review-session** script to run triage sessions: it tracks which PRs
 
 ## Workflow
 
-### Step 0: Reset Session (Optional)
+### Step 1: Jump to the Top PR
 
-Before starting a new triage session, you may want to reset any existing session state:
-
-```bash
-~/.claude/skills/pr-triage/pr-review-session reset
-```
-
-This clears the session state for the current repo, allowing you to start fresh. Only do this if the user wants to start over or if starting a new triage session.
-
-### Step 1: List Unreviewed PRs
-
-List open PRs not yet triaged this session:
+Start the triage loop by running:
 
 ```bash
-~/.claude/skills/pr-triage/pr-review-session list
+~/.claude/skills/pr-triage/pr-review-session next
 ```
 
-If no unreviewed PRs, inform the user. They can run `~/.claude/skills/pr-triage/pr-review-session reset` to clear the session and start fresh, or stop.
+`next` picks the highest-priority unreviewed actionable PR and shows it. Starting cold (no current PR set) is safe — it does not mark anything reviewed, it just shows the top of the queue. When every actionable PR has been reviewed in the current round, the session auto-resets (preserving snoozes) and loops back to the top — **do not** call `reset` manually for this case, and do not ask the user to.
 
-Optional: check session state first:
+If `next` reports "No actionable PRs to triage" (nothing for the user to do across the entire repo), inform the user and stop.
 
-```bash
-~/.claude/skills/pr-triage/pr-review-session status
-```
+Other ways to land on a PR once the loop is running:
 
-### Step 2: Select PR to Triage
-
-- **Next unreviewed in order**: `~/.claude/skills/pr-triage/pr-review-session next` — marks the current PR as reviewed and shows the next unreviewed. When every actionable PR has been reviewed in the current round, the session auto-resets (preserving snoozes) and loops back to the highest-priority PR.
 - **Specific PR by number**: `~/.claude/skills/pr-triage/pr-review-session view <number>` — shows that PR and sets it as current for the next `next`.
 - **Current branch's PR**: `~/.claude/skills/pr-triage/pr-review-session view` (no number).
 - **Open in browser**: `~/.claude/skills/pr-triage/pr-review-session view <number> --web`
 
-### Step 3: Assess PR Status
+Optional inspection (do not block the workflow on these):
+
+- `~/.claude/skills/pr-triage/pr-review-session list` — show the pending queue.
+- `~/.claude/skills/pr-triage/pr-review-session status` — show repo, reviewed count, current PR.
+
+`reset` is reserved for when the user explicitly wants to abandon in-progress triage state. The auto-loop handles end-of-round wraparound on its own.
+
+### Step 2: Assess PR Status
 
 `pr-review-session view` (and `next`) already prints a summary: branch, author, status, URL, size, mergeable, CI status, reviews, and unresolved feedback count, then runs `gh pr view` for the full body. The PR is automatically opened in Playwright (named session per repo, single tab reused) when `playwright-cli` is available; otherwise Firefox. See **Playwright browser for PR pages** above.
 
@@ -121,7 +113,7 @@ Use that output as the assessment. If you need to re-display or analyze further,
 
 Infer blockers from the summary (e.g. failing CI, unresolved feedback, merge conflicts) and present them when suggesting actions.
 
-### Step 4: Present Actions
+### Step 3: Present Actions
 
 **MANDATORY — never skip this step.** Even when a PR looks "obviously" ready to merge, close, or otherwise act on, you MUST present the options menu and wait for the user's selection. The action label in the session list (e.g. "action: merge") describes what the PR needs from a human; it is **not** a directive to take that action. The user's intent is captured only when they pick an option from this menu in the current turn.
 
@@ -143,7 +135,6 @@ What would you like to do?
 10. View PR in browser - Open the PR URL
 11. Snooze - Temporarily hide this PR and revisit later (e.g. 1h, 1d, 1w)
 12. Next - Mark reviewed and move to next unreviewed (`pr-review-session next`)
-13. Reset - Reset the triage session (`pr-review-session reset`)
 ```
 
 Adjust options based on PR state:
@@ -160,7 +151,7 @@ Adjust options based on PR state:
   # Exit 1 → already reviewed, HIDE the option
   ```
 
-### Step 5: Execute Selected Action
+### Step 4: Execute Selected Action
 
 **Option 1 - Fix failing CI:**
 
@@ -274,14 +265,15 @@ gh pr close <number>
 2. Run: `~/.claude/skills/pr-triage/pr-review-session snooze <number> <duration>`
 3. The PR will be hidden from the triage list until the snooze expires, then automatically reappear
 
-### Step 6: Continue Loop
+### Step 5: Continue Loop
 
 After each action:
 
-- **Move to next unreviewed**: `~/.claude/skills/pr-triage/pr-review-session next` — marks current PR as reviewed and shows the next. When every actionable PR has been reviewed in the current round, the session auto-resets (preserving snoozes) and loops back to the highest-priority PR.
+- **Move to next unreviewed**: `~/.claude/skills/pr-triage/pr-review-session next` — marks current PR as reviewed and shows the next. When every actionable PR has been reviewed in the current round, the session auto-resets (preserving snoozes) and loops back to the highest-priority PR. This is the default — keep running `next` to work through the queue.
 - **Jump to another PR**: `~/.claude/skills/pr-triage/pr-review-session view <number>`
-- **Reset session**: `~/.claude/skills/pr-triage/pr-review-session reset` — clears session state for this repo.
-- Otherwise, return to PR assessment or `~/.claude/skills/pr-triage/pr-review-session list` based on context.
+- Otherwise, return to PR assessment.
+
+Only call `reset` if the user explicitly asks to abandon the current triage state — the auto-loop handles end-of-round wraparound.
 
 ## Status Indicators
 

@@ -228,5 +228,5 @@ bar {
         status_command i3blocks
         font pango:monospace 12
         # Use first available output instead of primary (which is disconnected)
-        tray_output DP-2
+        tray_output HDMI-0
 }

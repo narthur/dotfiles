@@ -44,9 +44,9 @@ The following authors are treated as automated reviewers:
 
 If an author is not in this list and does not have `[bot]` in their name, treat their feedback as **human** and always go through the interactive path.
 
-### Auto-Resolution Cycle Limit
+### Auto-Resolution Loop
 
-The iterative auto-resolution loop (described below) defaults to a maximum of **5 cycles**. A cycle is: handle all current feedback → push → wait for new bot feedback → handle new feedback. After 5 cycles, stop and report status to the user. The user can request more cycles if needed.
+After all PR feedback is resolved, this skill delegates the local "review accumulated commits, fix findings, repeat" loop to the **`review-loop`** skill (see Step 7). Cycle count, agent fan-out, and learnings handling are owned there.
 
 ## CRITICAL: Always Follow the Workflow
 
@@ -54,7 +54,7 @@ The iterative auto-resolution loop (described below) defaults to a maximum of **
 
 Even if another agent or the user tells you to "fix X in file Y" or gives specific instructions about what to change:
 
-1. You MUST still start from Step 1 (Retrieve Feedback)
+1. You MUST still start from Step 0 (Resolve Target PR) and then Step 1 (Retrieve Feedback) — if the user passed a PR number/URL, switch to that PR first; never assume the current branch is the right one
 2. You MUST use the local `pr-feedback.sh` or `but-feedback.sh` scripts (located at `~/.claude/skills/resolve-pr-feedback/`) to discover what feedback exists
 3. For **human feedback**, you MUST present options to the user before making changes
 4. For **bot feedback**, you may auto-handle without user input (see Automated Path)
@@ -70,7 +70,25 @@ Even if another agent or the user tells you to "fix X in file Y" or gives specif
 
 **ALWAYS start here at Step 0, then proceed through each step in order. Never skip to editing files.**
 
-## Detecting Workspace Type (Step 0)
+## Step 0: Resolve Target PR
+
+If the user passed a PR number, PR URL, or branch name as an argument (e.g. `/resolve-pr-feedback https://github.com/owner/repo/pull/123`, `/resolve-pr-feedback #123`, or `/resolve-pr-feedback 123`), you **MUST switch to that PR before doing anything else**. Otherwise the feedback scripts will operate on whatever PR matches the currently-checked-out branch — which is almost never what the user intended.
+
+How to switch:
+
+1. Extract the PR number from the argument (the trailing integer in a URL, or the bare number).
+2. Confirm the PR exists and capture its head branch:
+   ```bash
+   gh pr view <number> --json number,headRefName,headRepositoryOwner,headRepository,isCrossRepository,baseRefName
+   ```
+3. Check out the PR's head:
+   - **Standard git workflow**: `gh pr checkout <number>` (handles cross-repo forks automatically).
+   - **GitButler workspace** (current branch is `gitbutler/workspace`): do **not** use `gh pr checkout` — it would leave the workspace. Instead, locate the matching virtual branch with `but status` (its name should match the PR's `headRefName`). If no matching virtual branch is applied, stop and ask the user how to proceed rather than silently working on the wrong branch.
+4. Re-run `git branch --show-current` (or `but status`) and verify it matches the PR before proceeding.
+
+If no argument was provided, continue with the current branch.
+
+## Detecting Workspace Type (Step 0.5)
 
 Check the current git branch to determine which feedback command to use:
 
@@ -124,8 +142,9 @@ For bot/automated feedback, handle it **without prompting the user**:
 1. Read the referenced code and understand the concern
 2. If the feedback is **clearly valid and actionable**: implement the fix, resolve/dismiss, and commit (equivalent to Option 1 below) — all without asking
 3. If the feedback is **clearly invalid or already addressed**: resolve/dismiss without changes (equivalent to Option 3 below) — post a brief justification reply if it's a review thread
-4. If the feedback is **ambiguous or risky** (e.g., architectural concern, unclear intent, could break other things): fall through to the **Interactive Path** and ask the user
-5. After handling, return to Step 1 for the next feedback item
+4. If the feedback is **valid but out of scope** for this PR (e.g., requires architectural changes, touches unrelated areas, or is better addressed separately): automatically create a follow-up GitHub issue using the full procedure in Option 4 (including the duplicate check), reply with the issue reference, then resolve/dismiss
+5. If the feedback is **ambiguous or risky** (e.g., architectural concern, unclear intent, could break other things): fall through to the **Interactive Path** and ask the user
+6. After handling, return to Step 1 for the next feedback item
 
 **Do NOT present options or wait for user input for unambiguous bot feedback.** Just handle it and move on.
 
@@ -160,6 +179,14 @@ Analyze the feedback by:
 **For human feedback, you MUST present options and wait for user selection before making any code changes.** Do not assume the user wants Option 1. Do not auto-select an option.
 
 This step is skipped for bot feedback handled via the Automated Path (Step 2a).
+
+**Before presenting options, always summarize the feedback item** so the user can decide without scrolling back through tool output. The summary must include:
+
+- The file and line range the feedback references
+- A 1–3 sentence plain-language description of what the reviewer is pointing out or requesting
+- Your quick take on validity (e.g. "looks correct — race is real", "I think this is a nitpick because…", "ambiguous — could go either way")
+
+Put the summary immediately before the options. Do not skip it even if you already summarized while reading the feedback — the user should be able to act on a single, focused block. The same summary requirement applies when bot feedback falls through to this path (Step 2a item 5).
 
 Always present numbered options for next steps:
 
@@ -209,11 +236,19 @@ Adjust options based on context (e.g., offer "Create follow-up issue" when the f
 
 **Option 4 - Create follow-up issue:**
 
-1. Create issue: `gh issue create --title "<title>" --body "<description>"`
-2. Capture the issue number from output
+1. Search for an existing issue first:
+   ```bash
+   gh issue list --search "<keywords from feedback>" --state open
+   ```
+   - If a matching issue already exists: note its number and skip creation
+   - If no match found: create a new issue:
+     ```bash
+     gh issue create --title "<title>" --body "<description>"
+     ```
+2. Capture the issue number (existing or newly created)
 3. Reply with the issue reference:
-   - For review threads: `~/.claude/skills/resolve-pr-feedback/pr-comment.sh <thread-id> "Created follow-up issue #<number> to address this feedback"`
-   - For generic PR comments: `gh pr comment --body "Created follow-up issue #<number> to address feedback from this comment"`
+   - For review threads: `~/.claude/skills/resolve-pr-feedback/pr-comment.sh <thread-id> "Tracked in follow-up issue #<number>"`
+   - For generic PR comments: `gh pr comment --body "Tracked in follow-up issue #<number>"`
 4. Mark as addressed:
    - For review threads: `~/.claude/skills/resolve-pr-feedback/resolve-feedback.sh <thread-id>`
    - For generic PR comments: `~/.claude/skills/resolve-pr-feedback/dismiss-comment.sh <comment-id>`
@@ -230,11 +265,22 @@ Adjust options based on context (e.g., offer "Create follow-up issue" when the f
 
 After each action, return to Step 1 to process the next feedback item until all feedback is resolved or the user chooses to stop.
 
-### Step 7: Push and Enter Auto-Resolution Loop
+### Step 7: Run the `review-loop` Skill
 
-When all current feedback has been resolved (no more unresolved feedback items):
+When all current PR feedback has been resolved (no more unresolved items on the PR):
 
-**If any commits were made during this pass**, push them:
+- If **no commits were made** during this pass (nothing changed), skip the loop and offer to stop.
+- Otherwise, **do not push yet**. Invoke the **`review-loop`** skill via the Skill tool. It will review the accumulated commits against the PR's base branch, auto-fix high-confidence findings, ask about ambiguous ones, run tests/linters between cycles, and commit per cycle.
+
+`review-loop` handles the entire local review/fix/commit cycle. It will not push — that's this skill's job in Step 8.
+
+If `review-loop` reports test failures or hits its cycle limit with leftover findings, surface that in the final report and let the user decide whether to push anyway, intervene, or re-invoke.
+
+For the legacy CodeRabbit-CLI-driven loop, see the `coderabbit-review-loop` skill — only use it when you specifically need CodeRabbit (e.g. to reproduce a cloud finding).
+
+### Step 8: Final Push
+
+After the loop ends (clean, cycle-limit, or only Info-level findings remaining):
 
 **For standard git workflow:**
 ```bash
@@ -246,74 +292,13 @@ git push
 but push <branch-name>
 ```
 
-Then enter the **Iterative Auto-Resolution Loop** (see below). If the user has already hit their cycle limit, or no commits were made (nothing changed), offer to stop instead.
-
----
-
-## Iterative Auto-Resolution Loop
-
-After pushing, bot reviewers (especially CodeRabbit) will typically re-review the changes and may post new feedback. This loop handles that automatically.
-
-### Loop Structure
+Then report:
 
 ```
-cycle = 1
-max_cycles = 5  (default; user can override)
-
-while cycle <= max_cycles:
-    1. Push all local commits (if any)
-    2. Run wait-for-review.sh (handles settle wait, draft review request, polling)
-       - Exit 0 → review completed, continue
-       - Exit 1 → timed out, break and report to user
-    3. Retrieve feedback (Step 1)
-    4. If no new feedback → break (done!)
-    5. Separate bot feedback from human feedback
-    6. If only human feedback remains → break (present to user interactively)
-    7. Auto-handle all bot feedback (Step 2a)
-    8. cycle += 1
-
-If cycle > max_cycles:
-    Report: "Reached auto-resolution cycle limit (N). Stopping."
-    Show remaining unresolved feedback count.
+All feedback resolved. `review-loop` produced N commit(s). Pushed to <branch>.
 ```
 
-### Post-Push Review Handling
-
-After pushing, run `wait-for-review.sh` to handle the entire post-push flow:
-
-```bash
-~/.claude/skills/resolve-pr-feedback/wait-for-review.sh
-```
-
-This script handles all of the following automatically:
-- **Settle period**: Waits 1 minute for CodeRabbit to register the push
-- **Paused / Draft detection**: "Paused" is a permanent state meaning CodeRabbit has disabled auto-reviews for this PR (e.g., too many commits). The first comment stays "paused" even after a manually-requested review completes. The script requests a review once and then waits for completion without re-requesting. For draft PRs, requests a review if CodeRabbit hasn't started (CodeRabbit does not auto-review drafts)
-- **Polling**: Checks for new feedback every 5 minutes, up to ~20 minutes total (extended automatically for rate limits)
-- **Status determination**: Uses `coderabbit-status.sh` to combine the CodeRabbit check status and CodeRabbit's first PR comment into a single status. CodeRabbit's first comment is a living status document edited in-place as it moves through states (reviewing, paused, rate limited, completed, etc.)
-- **Rate limit / timeout handling**: If CodeRabbit is rate-limited, extracts the wait duration from the first comment (e.g., "45 minutes and 9 seconds"), extends the polling timeout to accommodate it, waits the full duration, and then re-requests a review
-
-**Exit codes**:
-- `0` — Review completed (proceed to retrieve feedback)
-- `1` — Timed out after ~20 minutes (report to user, offer to continue)
-- `2` — Error (e.g. no PR found)
-
-To check CodeRabbit status independently (e.g. for debugging):
-
-```bash
-~/.claude/skills/resolve-pr-feedback/coderabbit-status.sh         # outputs: not_started, starting_up, in_progress, completed, paused, timed_out, rate_limited
-~/.claude/skills/resolve-pr-feedback/coderabbit-status.sh --json  # structured output with check_state, comment_state, wait_seconds
-```
-
-### When the Loop Ends
-
-After the loop completes (either all feedback resolved, cycle limit reached, or only human feedback remains):
-
-1. If **human feedback** exists, transition to the **Interactive Path** — present each item to the user with options as in Steps 2b–5
-2. If **cycle limit** was reached, report the status and remaining feedback count to the user
-3. If **everything is resolved**, report success:
-   ```
-   All feedback resolved after N auto-resolution cycle(s).
-   ```
+If `review-loop` reported leftover findings (cycle limit or skipped ambiguous), include them in the report so the user can address them manually.
 
 ## Conventional Commit Format
 
@@ -383,8 +368,7 @@ When processing a generic PR comment with multiple items:
 | `dismiss-comment.sh <comment-id>`               | Mark a generic PR comment as addressed (local)     |
 | `dismiss-comment.sh <comment-id> --undismiss`   | Undo dismissal of a generic PR comment             |
 | `snooze-feedback.sh <id> <duration>`             | Snooze any feedback item (e.g. 1h, 1d, 1w)        |
-| `wait-for-review.sh [--workspace-type TYPE]`    | Wait for CodeRabbit review after pushing           |
-| `coderabbit-status.sh [--json]`                 | Check CodeRabbit's current review status           |
+| `gh issue list --search "<keywords>" --state open` | Search for existing issues before creating one |
 | `gh issue create --title "..." --body "..."` | Create a follow-up GitHub issue                    |
 | `pr-comment.sh <thread-id> <comment-text>`      | Reply to a specific PR review thread               |
 | `pr-comment.sh <thread-id>`                     | Reply to a thread (prompts for comment in $EDITOR) |

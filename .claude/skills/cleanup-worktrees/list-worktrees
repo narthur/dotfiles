@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# List Claude worktrees in .claude/worktrees/ with merge status
+# List all git worktrees (except main) with merge status
 # Usage: list-worktrees [repo-path]
 #   repo-path defaults to current directory
 
@@ -12,14 +12,7 @@ if ! git -C "$REPO" rev-parse --git-dir &>/dev/null; then
   exit 1
 fi
 
-WORKTREES_DIR="$REPO/.claude/worktrees"
-
-if [[ ! -d "$WORKTREES_DIR" ]]; then
-  echo "NO_WORKTREES_DIR"
-  exit 0
-fi
-
-WORKTREES_ABS=$(realpath "$WORKTREES_DIR")
+REPO_ABS=$(git -C "$REPO" rev-parse --show-toplevel)
 
 # Detect default branch
 DEFAULT_BRANCH=$(git -C "$REPO" remote show origin 2>/dev/null \
@@ -50,9 +43,9 @@ found_any=false
 while IFS='|' read -r wt_path wt_branch wt_head; do
   [[ -z "$wt_path" ]] && continue
 
-  # Only process worktrees under .claude/worktrees/
+  # Skip the main worktree
   wt_abs=$(realpath "$wt_path" 2>/dev/null || echo "$wt_path")
-  if [[ "$wt_abs" != "$WORKTREES_ABS"/* ]]; then
+  if [[ "$wt_abs" == "$REPO_ABS" ]]; then
     continue
   fi
 
@@ -97,7 +90,7 @@ while IFS='|' read -r wt_path wt_branch wt_head; do
 done < <(awk '
   /^worktree / { path=substr($0, 10) }
   /^HEAD /     { head=substr($0, 6) }
-  /^branch /   { branch=substr($0, 15) }
+  /^branch /   { branch=substr($0, 19) }
   /^detached/  { branch="detached" }
   /^$/         { if (path != "") print path "|" branch "|" head; path=""; branch=""; head="" }
   END          { if (path != "") print path "|" branch "|" head }
@@ -106,5 +99,5 @@ done < <(awk '
 rm -f "$tmpfile"
 
 if [[ "$found_any" == "false" ]]; then
-  echo "NO_CLAUDE_WORKTREES"
+  echo "NO_WORKTREES"
 fi

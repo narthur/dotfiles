@@ -10,77 +10,85 @@ NC='\033[0m' # No Color
 # ============================================================================
 
 # Only run blacklist check in the public dotfiles repo (~/.dotfiles)
-git_dir=$(git rev-parse --git-dir 2>/dev/null)
-if [[ "$git_dir" != "$HOME/.dotfiles" ]]; then
-    exit 0
-fi
+run_blacklist_check() {
+    local git_dir
+    git_dir=$(git rev-parse --git-dir 2>/dev/null)
+    if [[ "$git_dir" != "$HOME/.dotfiles" ]]; then
+        return 0
+    fi
 
-BLACKLIST_FILE="${HOME}/.gitblacklist.txt"
+    BLACKLIST_FILE="${HOME}/.gitblacklist.txt"
 
-# Check if blacklist file exists
-if [[ ! -f "$BLACKLIST_FILE" ]]; then
-    # No blacklist file, skip this check
-    exit 0
-fi
+    # Check if blacklist file exists
+    if [[ ! -f "$BLACKLIST_FILE" ]]; then
+        return 0
+    fi
 
-# Read blacklist (skip comments and empty lines)
-blacklist_patterns=()
-while IFS= read -r line; do
-    # Skip comments and empty lines
-    [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
-    blacklist_patterns+=("$line")
-done < "$BLACKLIST_FILE"
+    # Read blacklist (skip comments and empty lines)
+    local blacklist_patterns=()
+    while IFS= read -r line; do
+        [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
+        blacklist_patterns+=("$line")
+    done < "$BLACKLIST_FILE"
 
-# If no patterns, skip check
-if [[ ${#blacklist_patterns[@]} -eq 0 ]]; then
-    exit 0
-fi
+    # If no patterns, skip check
+    if [[ ${#blacklist_patterns[@]} -eq 0 ]]; then
+        return 0
+    fi
 
-# Get staged files (exclude deleted files)
-staged_files=$(git diff --cached --name-only --diff-filter=ACM)
+    # Get staged files (exclude deleted files)
+    local staged_files
+    staged_files=$(git diff --cached --name-only --diff-filter=ACM)
 
-# Check each staged file for blacklisted strings
-found_violations=false
-violations_output=""
+    # Check each staged file for blacklisted strings
+    local found_violations=false
+    local violations_output=""
 
-while IFS= read -r file; do
-    # Check file against each blacklist pattern
-    for pattern in "${blacklist_patterns[@]}"; do
-        # Use grep with line numbers, case-insensitive
-        matches=$(git show ":$file" 2>/dev/null | grep -n -i "$pattern" 2>/dev/null || true)
+    while IFS= read -r file; do
+        for pattern in "${blacklist_patterns[@]}"; do
+            local matches
+            matches=$(git show ":$file" 2>/dev/null | grep -n -i "$pattern" 2>/dev/null || true)
 
-        if [[ -n "$matches" ]]; then
-            found_violations=true
-            violations_output+="${YELLOW}${file}${NC} contains blacklisted string '${RED}${pattern}${NC}':\n"
-            # Show first 3 matches
-            echo "$matches" | head -3 | while IFS= read -r match; do
-                violations_output+="  ${match}\n"
-            done
-            violations_output+="\n"
+            if [[ -n "$matches" ]]; then
+                found_violations=true
+                violations_output+="${YELLOW}${file}${NC} contains blacklisted string '${RED}${pattern}${NC}':\n"
+                echo "$matches" | head -3 | while IFS= read -r match; do
+                    violations_output+="  ${match}\n"
+                done
+                violations_output+="\n"
+            fi
+        done
+    done <<< "$staged_files"
+
+    if [[ "$found_violations" == "true" ]]; then
+        echo -e "\n${RED}WARNING: Blacklisted strings found in staged files!${NC}\n"
+        echo -e "$violations_output"
+        echo -e "${YELLOW}These strings are in your blacklist file: $BLACKLIST_FILE${NC}"
+        echo -e "${YELLOW}You may be committing sensitive information.${NC}\n"
+
+        if [[ ! -t 0 ]]; then
+            echo "Running in non-interactive mode. Commit blocked."
+            return 1
         fi
-    done
-done <<< "$staged_files"
 
-# If violations found, warn and ask for confirmation
-if [[ "$found_violations" == "true" ]]; then
-    echo -e "\n${RED}WARNING: Blacklisted strings found in staged files!${NC}\n"
-    echo -e "$violations_output"
-    echo -e "${YELLOW}These strings are in your blacklist file: $BLACKLIST_FILE${NC}"
-    echo -e "${YELLOW}You may be committing sensitive information.${NC}\n"
-
-    # In non-interactive mode or CI, fail the commit
-    if [[ ! -t 0 ]]; then
-        echo "Running in non-interactive mode. Commit blocked."
-        exit 1
+        read -p "Do you want to proceed with this commit anyway? [y/N] " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "Commit aborted."
+            return 1
+        fi
     fi
 
-    # Ask user if they want to proceed
-    read -p "Do you want to proceed with this commit anyway? [y/N] " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "Commit aborted."
+    return 0
+}
+
+run_blacklist_check || exit 1
+
+if [ -f .git/hooks/pre-commit ]; then
+    if ! .git/hooks/pre-commit "$@"; then
+        echo 'Local pre-commit hook failed, please see output above'
         exit 1
     fi
 fi
 
-exit 0
+ggshield secret scan pre-commit "$@"

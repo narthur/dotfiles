@@ -660,7 +660,11 @@ cmd_list() {
   filtered=$(filter_unreviewed_prs "$session" "$prs_tsv")
 
   if [[ -z "$filtered" ]]; then
-    echo "No actionable PRs to triage."
+    if [[ -n "$prs_tsv" ]]; then
+      echo "All actionable PRs reviewed this round — run \`next\` to loop back to the top."
+    else
+      echo "No actionable PRs to triage."
+    fi
     return
   fi
 

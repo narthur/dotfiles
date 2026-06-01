@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+"""Extract the final assistant text message from a subagent JSONL transcript."""
+
+import json
+import sys
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: extract-agent-result <transcript.jsonl>", file=sys.stderr)
+        sys.exit(1)
+
+    path = sys.argv[1]
+    last_text = None
+
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            if entry.get("role") != "assistant":
+                continue
+
+            content = entry.get("message", entry).get("content", "")
+
+            if isinstance(content, list):
+                texts = [
+                    p["text"]
+                    for p in content
+                    if isinstance(p, dict) and p.get("type") == "text"
+                ]
+                if texts:
+                    last_text = texts[-1]
+            elif isinstance(content, str) and content.strip():
+                last_text = content
+
+    if last_text:
+        print(last_text)
+    else:
+        print("(no text output found)", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

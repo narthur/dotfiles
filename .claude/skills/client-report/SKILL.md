@@ -54,7 +54,31 @@ The user may specify:
 
 ### Step 1: Determine Lookback Period
 
-Parse the user's request for a number of days. Default to **7 days** if not specified.
+Determine the proposed date range using the following logic, then confirm with the user before proceeding.
+
+1. **If the user specified a number of days** (e.g. "client report for the last 14 days"), use `period_end = now`, `period_start = now - N days`. Skip the auto-detection in step 2.
+
+2. **Otherwise, check for a prior report** in the configured `OUTPUT_DIR`:
+
+   ```bash
+   ls -1 <OUTPUT_DIR>/*.html 2>/dev/null | sort | tail -1
+   ```
+
+   The filename is an ISO-like timestamp `YYYY-MM-DDTHH-MM-SS.html`. Parse it as the last-generated time.
+
+   - If a prior report exists, propose `period_start = <last report timestamp>` and `period_end = now`. Compute the resulting number of days (rounded to one decimal) for display.
+   - If no prior report exists, fall back to the **7-day** default.
+
+3. **Confirm the range with the user** using `AskUserQuestion` before fetching any data:
+
+   Question: `"Generate report covering <PERIOD_START> → <PERIOD_END> (<N> days since last report)?"` (adjust wording if no prior report: "Generate report covering the last 7 days (<start> → <end>)?")
+   Header: `"Date range"`
+   Options:
+   - **Use this range** — Proceed with the proposed window.
+   - **Use 7-day default** — Override to a 7-day lookback ending now. (Omit this option if the proposed range is already 7 days.)
+   - **Custom** — User will specify a different range or number of days; ask a follow-up to collect it.
+
+   Once confirmed, use the agreed `period_start` / `period_end` for the rest of the workflow. When calling `fetch-client-data.sh`, pass `--days <N>` where N is the integer number of days in the window (round up so no activity is missed).
 
 ### Step 2: Fetch Activity Data
 
@@ -377,11 +401,27 @@ Never claim a PR is the "last" or "only remaining" part of a stack unless the su
    - Use markdown tables for the "Items Needing Attention" section
    - Include the date range, lookback period, and generation timestamp at the top
 
-7. Deploy the reports directory to Surge:
+7. **Ask the user whether to publish, then publish if approved.**
+
+   Before publishing, use `AskUserQuestion` to get explicit consent. This both respects the user's choice and supplies the auto-mode classifier with an in-conversation authorization, since its denial reason for surge uploads is that "the user never requested it."
+
+   Question: `"Publish report to <SURGE_DOMAIN>?"`
+   Header: `"Publish"`
+   Options:
+   - **Publish** — Upload reports directory to Surge (public, obscured-by-domain URL).
+   - **Skip** — Don't publish; reports stay local only.
+
+   If the user picks **Publish**, run the bundled script:
 
    ```bash
-   npx surge <OUTPUT_DIR> <SURGE_DOMAIN>
+   ~/.claude/skills/client-report/publish.sh <OUTPUT_DIR> <SURGE_DOMAIN> <timestamp>
    ```
+
+   The script handles working directory, escapes paths with spaces, validates the output dir is non-empty, and prints the final public URL on success.
+
+   **If publishing still gets blocked** by the auto-mode classifier even after the user's explicit "yes", do not silently retry. Tell the user it was blocked and offer the exact command for them to run via `!` (no `cd`, no `&&` — those break when run via `!` because the prompt wrapper HTML-escapes `&`).
+
+   If the user picks **Skip**, omit the public URL from the final message and report only the local file paths.
 
 8. Tell the user the full file paths of both generated reports, and provide the public URL to the HTML report:
    ```

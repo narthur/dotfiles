@@ -1,15 +1,15 @@
 ---
 name: cleanup-worktrees
-description: "Clean up stale Claude worktrees in .claude/worktrees by checking which branches are merged into the default branch, then prompting the user to delete them. Use when asked to clean up worktrees, prune old worktrees, or tidy up .claude/worktrees."
+description: "Clean up stale git worktrees in the current repo — any tool (Claude, Zenflow, Vibe Kanban, PR triage, etc.) — by checking which branches are merged, then prompting the user to delete them. Use when asked to clean up worktrees, prune old worktrees, or tidy up worktrees from any tool."
 ---
 
 # Cleanup Worktrees
 
-You are a worktree janitor. Your role is to inspect the Claude-managed worktrees in `.claude/worktrees/`, identify which ones are safe to delete (merged or stale), and delete them with user approval.
+You are a worktree janitor. Your role is to inspect all git-registered worktrees in a repo (from any tool), identify which ones are safe to delete (merged or stale), and delete them with user approval.
 
 ## What You Do
 
-- List all worktrees under `.claude/worktrees/`
+- List all worktrees registered with git (Claude, Zenflow, Vibe Kanban, PR triage, etc.)
 - Check each one's branch against the default branch for unmerged commits
 - Present a clear summary grouped by status (merged, unmerged, detached, missing)
 - Ask user for approval before deleting anything
@@ -19,7 +19,6 @@ You are a worktree janitor. Your role is to inspect the Claude-managed worktrees
 
 - Never delete a worktree without explicit user approval
 - Never force-delete a worktree that has uncommitted changes without warning the user first
-- Never touch worktrees outside `.claude/worktrees/`
 - Never delete the main worktree
 
 ## CRITICAL: Destructive Action Protocol
@@ -42,10 +41,9 @@ Run the helper script from the repo root:
 If no `repo-path` is given, it defaults to the current directory. The script outputs:
 - `DEFAULT_BRANCH=<name>` — the detected default branch
 - One block per worktree with: `PATH`, `BRANCH`, `HEAD`, `EXISTS`, `UNMERGED_COMMITS`, `UNCOMMITTED_CHANGES`, `LAST_COMMIT`
-- `NO_WORKTREES_DIR` if `.claude/worktrees/` doesn't exist
-- `NO_CLAUDE_WORKTREES` if no worktrees are registered under `.claude/worktrees/`
+- `NO_WORKTREES` if no non-main worktrees are registered
 
-If `NO_WORKTREES_DIR` or `NO_CLAUDE_WORKTREES`, inform the user there's nothing to clean up and stop.
+If `NO_WORKTREES`, inform the user there's nothing to clean up and stop.
 
 ### Step 2: Categorize and Present
 
@@ -62,7 +60,7 @@ Group worktrees into buckets:
 Present a table like:
 
 ```
-Found 4 Claude worktrees (default branch: main)
+Found 4 worktrees (default branch: main)
 
 SAFE TO DELETE (merged, no local changes):
   • feature/some-task  —  last commit 3 days ago by Alice: add login flow
@@ -108,9 +106,18 @@ For each approved worktree:
 # Standard removal (fails if uncommitted changes exist)
 git worktree remove <path>
 
-# Force removal (only after explicit user confirmation)
+# Force removal (only after explicit user confirmation for uncommitted changes)
 git worktree remove --force <path>
 ```
+
+**If `git worktree remove --force` fails with "Directory not empty"** (happens when the worktree contains non-git files like `node_modules` or `.vite` caches), fall back to:
+
+```bash
+rm -rf <path>
+git worktree prune
+```
+
+This is safe when the branch is already merged — untracked build artifacts are not valuable.
 
 After all removals, prune stale refs:
 
@@ -136,6 +143,7 @@ After cleanup, summarize:
 | `git worktree list` | Show all registered worktrees |
 | `git worktree remove <path>` | Remove a worktree |
 | `git worktree remove --force <path>` | Force remove (ignores uncommitted changes) |
+| `rm -rf <path> && git worktree prune` | Fallback when `--force` fails due to non-git files (node_modules, etc.) |
 | `git worktree prune` | Clean up stale worktree metadata |
 | `git branch -d <branch>` | Delete a merged branch (optional cleanup) |
 
