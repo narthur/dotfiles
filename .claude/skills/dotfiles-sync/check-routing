@@ -43,10 +43,14 @@ fi
 
 # Find files on disk that are untracked in both repos
 echo -e "\n${YELLOW}Checking for untracked files...${NC}"
-# Get all files on disk that are untracked in EITHER repo (union of both)
-# Use both repos to catch files that might be untracked in one but tracked in the other
-all_files=$(( git -C ~ --git-dir="$DOTFILES_DIR" --work-tree=~ ls-files -o --exclude-standard 2>/dev/null; \
-             git -C ~ --git-dir="$DOTPRIVATE_DIR" --work-tree=~ ls-files -o --exclude-standard 2>/dev/null ) | sort -u)
+# With bare repos sharing a worktree, git status is unreliable.
+# Scan filesystem directly: find all regular files in home dir, filter by tracked/ignored status.
+all_files=$(find "$HOME" -maxdepth 1 -type f | xargs -n1 basename | sort)
+
+# Build ignore patterns from both .gitignore files
+ignore_patterns=()
+[[ -f "$HOME/.gitignore" ]] && ignore_patterns+=($(grep -v '^#' "$HOME/.gitignore" | grep -v '^$' || true))
+[[ -f "$HOME/.gitignore_private" ]] && ignore_patterns+=($(grep -v '^#' "$HOME/.gitignore_private" | grep -v '^$' || true))
 
 untracked_both=()
 while IFS= read -r file; do
@@ -60,8 +64,15 @@ while IFS= read -r file; do
         continue
     fi
     
-    # Skip if it's a directory
-    [[ -d "$HOME/$file" ]] && continue
+    # Skip if matched by any ignore pattern
+    skip_file=0
+    for pattern in "${ignore_patterns[@]}"; do
+        if [[ "$file" == $pattern ]]; then
+            skip_file=1
+            break
+        fi
+    done
+    [[ $skip_file -eq 1 ]] && continue
     
     untracked_both+=("$file")
 done <<< "$all_files"
@@ -73,7 +84,7 @@ else
     echo -e "${YELLOW}(showing first 20; use 'fix-routing' to review and route all):\n${NC}"
     
     # Show first 20 files with suggestions (non-exhaustive)
-    local count=0
+    count=0
     for file in "${untracked_both[@]}"; do
         if [[ $count -ge 20 ]]; then
             echo -e "  ... and $((${#untracked_both[@]} - 20)) more"
