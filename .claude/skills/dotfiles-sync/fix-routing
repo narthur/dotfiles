@@ -1,0 +1,232 @@
+#!/bin/bash
+# fix-routing - Interactive tool to fix file routing inconsistencies across dotfiles and dotprivate repos
+# All routing decisions are made by the user; this script is advisory only.
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/routing.sh"
+
+DOTFILES_DIR="$HOME/.dotfiles"
+DOTPRIVATE_DIR="$HOME/.dotfiles-private"
+
+# Color codes
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Track staged changes
+declare -a staged_dotfiles
+declare -a staged_dotprivate
+declare -a staged_rm_dotfiles
+declare -a staged_rm_dotprivate
+
+echo -e "${BLUE}=== Dotfiles Routing Fix ===${NC}\n"
+
+# Get all tracked files in each repo
+echo "Scanning repos..."
+dotfiles_tracked=$(get_tracked_files "$DOTFILES_DIR")
+dotprivate_tracked=$(get_tracked_files "$DOTPRIVATE_DIR")
+
+# Find and fix duplicates (tracked in both repos)
+echo -e "\n${YELLOW}=== Duplicate Files (tracked in both repos) ===${NC}"
+duplicates=()
+while IFS= read -r file; do
+    if [[ -n "$file" ]] && echo "$dotprivate_tracked" | grep -q "^$file\$"; then
+        duplicates+=("$file")
+    fi
+done <<< "$dotfiles_tracked"
+
+if [[ ${#duplicates[@]} -eq 0 ]]; then
+    echo -e "${GREEN}✓ No duplicates found${NC}"
+else
+    echo "Found ${#duplicates[@]} duplicate file(s). For each, decide which repo should keep it:\n"
+    
+    for file in "${duplicates[@]}"; do
+        suggestion=$(suggestion_for_file "$file")
+        echo -e "${BLUE}$file${NC}"
+        echo "  Suggestion: $suggestion"
+        echo "  Currently tracked in: dotfiles AND dotprivate"
+        read -p "  Keep in: (1) dotfiles, (2) dotprivate, (3) skip? [1/2/3]: " -r response
+        
+        case "$response" in
+            2)
+                echo "  → Removing from dotfiles index"
+                git_rm_cached "$DOTFILES_DIR" "$file"
+                staged_rm_dotfiles+=("$file")
+                ;;
+            3)
+                echo "  → Skipped"
+                ;;
+            *)
+                echo "  → Removing from dotprivate index"
+                git_rm_cached "$DOTPRIVATE_DIR" "$file"
+                staged_rm_dotprivate+=("$file")
+                ;;
+        esac
+        echo ""
+    done
+fi
+
+# Find and handle untracked files
+echo -e "\n${YELLOW}=== Untracked Files ===${NC}"
+all_files=$(git -C ~ --git-dir="$DOTFILES_DIR" --work-tree=~ ls-files -o --exclude-standard 2>/dev/null | sort)
+
+untracked_both=()
+while IFS= read -r file; do
+    [[ -z "$file" ]] && continue
+    
+    if echo "$dotfiles_tracked" | grep -q "^$file\$"; then
+        continue
+    fi
+    if echo "$dotprivate_tracked" | grep -q "^$file\$"; then
+        continue
+    fi
+    
+    [[ -d "$HOME/$file" ]] && continue
+    
+    untracked_both+=("$file")
+done <<< "$all_files"
+
+if [[ ${#untracked_both[@]} -eq 0 ]]; then
+    echo -e "${GREEN}✓ No untracked files on disk${NC}"
+else
+    echo "Found ${#untracked_both[@]} untracked file(s). Interactive mode (showing first 30):\n"
+    
+    max_show=30
+    shown=0
+    
+    for file in "${untracked_both[@]}"; do
+        if [[ $shown -ge $max_show ]]; then
+            skipped=$((${#untracked_both[@]} - max_show))
+            echo -e "\n${YELLOW}... and $skipped more files. Run 'fix-routing' again to continue.${NC}"
+            break
+        fi
+        
+        suggestion=$(suggestion_for_file "$file")
+        shown=$((shown + 1))
+        
+        echo -e "${BLUE}[$shown]${NC} $file"
+        echo "  Suggestion: $suggestion"
+        read -p "  Action: (1) add to dotfiles, (2) add to dotprivate, (3) gitignore, (4) skip, (5) view? [1-5]: " -r response
+        
+        case "$response" in
+            1)
+                echo "  → Adding to dotfiles"
+                git_add "$DOTFILES_DIR" "$file"
+                staged_dotfiles+=("$file")
+                ;;
+            2)
+                echo "  → Adding to dotprivate"
+                git_add "$DOTPRIVATE_DIR" "$file"
+                staged_dotprivate+=("$file")
+                ;;
+            3)
+                echo "  → Adding to .gitignore"
+                # Always ask which .gitignore since this is user-driven
+                read -p "    Add to: (1) .gitignore, (2) .gitignore_private? [1/2]: " -r gi_response
+                if [[ "$gi_response" == "2" ]]; then
+                    gitignore="$HOME/.gitignore_private"
+                else
+                    gitignore="$HOME/.gitignore"
+                fi
+                
+                # Append to gitignore if not already present
+                if ! grep -q "^${file}$" "$gitignore" 2>/dev/null; then
+                    echo "$file" >> "$gitignore"
+                    echo "    → Appended to $(basename "$gitignore")"
+                    staged_dotfiles+=("$gitignore")
+                else
+                    echo "    → Already in $(basename "$gitignore")"
+                fi
+                ;;
+            5)
+                echo "  → Content (first 30 lines):"
+                head -30 "$HOME/$file" | sed 's/^/    /'
+                if [[ $(wc -l < "$HOME/$file") -gt 30 ]]; then
+                    echo "    ... ($(wc -l < "$HOME/$file") lines total)"
+                fi
+                echo ""
+                # Re-ask after viewing
+                read -p "  Action: (1) add to dotfiles, (2) add to dotprivate, (3) gitignore, (4) skip? [1-4]: " -r response
+                case "$response" in
+                    1)
+                        echo "  → Adding to dotfiles"
+                        git_add "$DOTFILES_DIR" "$file"
+                        staged_dotfiles+=("$file")
+                        ;;
+                    2)
+                        echo "  → Adding to dotprivate"
+                        git_add "$DOTPRIVATE_DIR" "$file"
+                        staged_dotprivate+=("$file")
+                        ;;
+                    3)
+                        echo "  → Adding to .gitignore"
+                        read -p "    Add to: (1) .gitignore, (2) .gitignore_private? [1/2]: " -r gi_response
+                        if [[ "$gi_response" == "2" ]]; then
+                            gitignore="$HOME/.gitignore_private"
+                        else
+                            gitignore="$HOME/.gitignore"
+                        fi
+                        if ! grep -q "^${file}$" "$gitignore" 2>/dev/null; then
+                            echo "$file" >> "$gitignore"
+                            echo "    → Appended to $(basename "$gitignore")"
+                            staged_dotfiles+=("$gitignore")
+                        else
+                            echo "    → Already in $(basename "$gitignore")"
+                        fi
+                        ;;
+                    *)
+                        echo "  → Skipped"
+                        ;;
+                esac
+                ;;
+            *)
+                echo "  → Skipped"
+                ;;
+        esac
+        echo ""
+    done
+fi
+
+# Summary
+echo -e "\n${BLUE}=== Session Summary ===${NC}"
+
+if [[ ${#staged_dotfiles[@]} -gt 0 ]]; then
+    echo -e "${GREEN}Staged in dotfiles:${NC}"
+    for file in "${staged_dotfiles[@]}"; do
+        echo "  + $file"
+    done
+fi
+
+if [[ ${#staged_rm_dotfiles[@]} -gt 0 ]]; then
+    echo -e "${RED}Unstaged from dotfiles:${NC}"
+    for file in "${staged_rm_dotfiles[@]}"; do
+        echo "  - $file"
+    done
+fi
+
+if [[ ${#staged_dotprivate[@]} -gt 0 ]]; then
+    echo -e "${GREEN}Staged in dotprivate:${NC}"
+    for file in "${staged_dotprivate[@]}"; do
+        echo "  + $file"
+    done
+fi
+
+if [[ ${#staged_rm_dotprivate[@]} -gt 0 ]]; then
+    echo -e "${RED}Unstaged from dotprivate:${NC}"
+    for file in "${staged_rm_dotprivate[@]}"; do
+        echo "  - $file"
+    done
+fi
+
+total_staged=$((${#staged_dotfiles[@]} + ${#staged_dotprivate[@]} + ${#staged_rm_dotfiles[@]} + ${#staged_rm_dotprivate[@]}))
+if [[ $total_staged -eq 0 ]]; then
+    echo -e "${YELLOW}No changes staged.${NC}"
+    exit 0
+fi
+
+echo -e "\n${YELLOW}Changes staged but not committed. Return to dotfiles-sync for final review and commit.${NC}"
+exit 0

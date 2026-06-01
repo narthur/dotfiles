@@ -1,0 +1,100 @@
+#!/bin/bash
+# check-routing - Audit file routing across dotfiles and dotprivate repos
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/routing.sh"
+
+DOTFILES_DIR="$HOME/.dotfiles"
+DOTPRIVATE_DIR="$HOME/.dotfiles-private"
+
+# Color codes
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+echo -e "${BLUE}=== Dotfiles Routing Check ===${NC}\n"
+
+# Get all tracked files in each repo
+echo "Scanning tracked files..."
+dotfiles_tracked=$(get_tracked_files "$DOTFILES_DIR")
+dotprivate_tracked=$(get_tracked_files "$DOTPRIVATE_DIR")
+
+# Find files tracked in both repos (duplicates)
+echo -e "\n${YELLOW}Checking for duplicates (tracked in both repos)...${NC}"
+duplicates=()
+while IFS= read -r file; do
+    if [[ -n "$file" ]] && echo "$dotprivate_tracked" | grep -q "^$file\$"; then
+        duplicates+=("$file")
+    fi
+done <<< "$dotfiles_tracked"
+
+if [[ ${#duplicates[@]} -eq 0 ]]; then
+    echo -e "${GREEN}✓ No duplicates found${NC}"
+else
+    echo -e "${RED}Found ${#duplicates[@]} file(s) tracked in both repos:${NC}"
+    for file in "${duplicates[@]}"; do
+        echo "  - $file"
+    done
+fi
+
+# Find files on disk that are untracked in both repos
+echo -e "\n${YELLOW}Checking for untracked files...${NC}"
+# Get all files on disk that are either untracked or ignored
+all_files=$(git -C ~ --git-dir="$DOTFILES_DIR" --work-tree=~ ls-files -o --exclude-standard 2>/dev/null | sort)
+
+untracked_both=()
+while IFS= read -r file; do
+    [[ -z "$file" ]] && continue
+    
+    # Skip files that are tracked in either repo
+    if echo "$dotfiles_tracked" | grep -q "^$file\$"; then
+        continue
+    fi
+    if echo "$dotprivate_tracked" | grep -q "^$file\$"; then
+        continue
+    fi
+    
+    # Skip if it's a directory
+    [[ -d "$HOME/$file" ]] && continue
+    
+    untracked_both+=("$file")
+done <<< "$all_files"
+
+if [[ ${#untracked_both[@]} -eq 0 ]]; then
+    echo -e "${GREEN}✓ No untracked files on disk${NC}"
+else
+    echo -e "${YELLOW}Found ${#untracked_both[@]} file(s) untracked in both repos${NC}"
+    echo -e "${YELLOW}(showing first 20; use 'fix-routing' to review and route all):\n${NC}"
+    
+    # Show first 20 files with suggestions (non-exhaustive)
+    local count=0
+    for file in "${untracked_both[@]}"; do
+        if [[ $count -ge 20 ]]; then
+            echo -e "  ... and $((${#untracked_both[@]} - 20)) more"
+            break
+        fi
+        count=$((count + 1))
+        suggestion=$(suggestion_for_file "$file")
+        echo -e "  ${BLUE}[$count]${NC} $file"
+        echo -e "      Could go in: $suggestion"
+    done
+fi
+
+# Summary
+echo -e "\n${BLUE}=== Summary ===${NC}"
+echo "  Dotfiles tracked: $(echo "$dotfiles_tracked" | wc -l | xargs)"
+echo "  Dotprivate tracked: $(echo "$dotprivate_tracked" | wc -l | xargs)"
+echo "  Duplicates: ${#duplicates[@]}"
+echo "  Untracked on disk: ${#untracked_both[@]}"
+
+if [[ ${#duplicates[@]} -eq 0 ]] && [[ ${#untracked_both[@]} -eq 0 ]]; then
+    echo -e "\n${GREEN}✓ No routing issues detected${NC}"
+    exit 0
+else
+    echo -e "\n${YELLOW}⚠ Routing issues detected. Run 'fix-routing' to address them.${NC}"
+    exit 1
+fi
