@@ -85,6 +85,25 @@ When found, flag it and recommend:
 
 ## Workflow
 
+### Step 0: Pull Latest
+
+Before auditing, pull both repos to ensure you're working from the latest committed state:
+
+```bash
+git -C ~ --git-dir=~/.dotfiles --work-tree=~ pull
+git -C ~ --git-dir=~/.dotfiles-private --work-tree=~ pull
+```
+
+If either pull fails due to unstaged changes, stash them first:
+
+```bash
+git -C ~ --git-dir=~/.dotfiles --work-tree=~ stash
+git -C ~ --git-dir=~/.dotfiles --work-tree=~ pull
+git -C ~ --git-dir=~/.dotfiles --work-tree=~ stash pop
+```
+
+Then proceed to Step 1.
+
 ### Step 1: Gather Current State
 
 #### 1a: Check all modified tracked files
