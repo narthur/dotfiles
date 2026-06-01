@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+AW_URL="${AW_URL:-http://localhost:5600}"
+IN="${1:-$HOME/.config/activitywatch/settings.json}"
+
+if [[ ! -f "$IN" ]]; then
+  echo "Error: $IN not found. Run aw-export first." >&2
+  exit 1
+fi
+
+echo "Importing ActivityWatch settings from $IN..." >&2
+
+for key in classes views startOfDay startOfWeek; do
+  value=$(jq ".$key" "$IN")
+  if [[ "$value" == "null" ]]; then
+    echo "  skipping $key (not in export)" >&2
+    continue
+  fi
+  curl -sf -X POST "$AW_URL/api/0/settings/$key" \
+    -H "Content-Type: application/json" \
+    -d "$value" > /dev/null
+  echo "  imported $key" >&2
+done
+
+echo "Done." >&2

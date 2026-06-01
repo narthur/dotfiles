@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+AW_URL="${AW_URL:-http://localhost:5600}"
+OUT="${1:-$HOME/.config/activitywatch/settings.json}"
+
+echo "Exporting ActivityWatch settings to $OUT..." >&2
+
+curl -sf "$AW_URL/api/0/settings" \
+  | jq '{classes, views, startOfDay, startOfWeek}' \
+  > "$OUT"
+
+echo "Exported $(jq '.classes | length' "$OUT") categories, $(jq '.views | length' "$OUT") views." >&2
