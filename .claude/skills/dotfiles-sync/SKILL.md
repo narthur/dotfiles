@@ -85,51 +85,27 @@ When found, flag it and recommend:
 
 ## Workflow
 
-### Step 0: Pull Latest (with ActivityWatch sync)
+### Step 0: Pull Latest
 
-#### 0a: Export current AW state (if AW is running)
-
-If `aw-export` is on PATH and ActivityWatch is reachable, snapshot the current local AW state before pulling:
+Run the pull-and-sync script to pull both repos. It handles stashing and optional ActivityWatch settings merge:
 
 ```bash
-if command -v aw-export &>/dev/null && curl -sf http://localhost:5600/api/0/settings >/dev/null 2>&1; then
-  aw-export /tmp/aw-before-pull.json
-fi
+~/.claude/skills/dotfiles-sync/pull-and-sync
 ```
 
-#### 0b: Pull both repos
+If you want to skip ActivityWatch sync (e.g., AW is not running):
 
 ```bash
-git -C ~ --git-dir=~/.dotfiles --work-tree=~ pull
-git -C ~ --git-dir=~/.dotfiles-private --work-tree=~ pull
+~/.claude/skills/dotfiles-sync/pull-and-sync --no-aw
 ```
 
-If either pull fails due to unstaged changes, stash first:
+The script automatically:
+- Stashes any local changes before pulling
+- Pulls both `dotfiles` and `dotprivate` repos
+- Merges ActivityWatch settings if AW is running and changed (see [references/activitywatch-merge.md](references/activitywatch-merge.md))
+- Imports the merged settings back to the running AW instance
 
-```bash
-git -C ~ --git-dir=~/.dotfiles --work-tree=~ stash
-git -C ~ --git-dir=~/.dotfiles --work-tree=~ pull
-git -C ~ --git-dir=~/.dotfiles --work-tree=~ stash pop
-```
-
-#### 0c: Merge AW settings (if AW export was taken and settings.json changed)
-
-If `/tmp/aw-before-pull.json` exists and the pull updated `~/.config/activitywatch/settings.json`:
-
-```bash
-# Merge: local AW state wins on conflict, remote adds new entries
-aw-merge /tmp/aw-before-pull.json ~/.config/activitywatch/settings.json   > /tmp/aw-merged.json && mv /tmp/aw-merged.json ~/.config/activitywatch/settings.json
-
-# Push merged settings back to the running AW instance
-aw-import
-
-# Clean up
-rm -f /tmp/aw-before-pull.json
-```
-
-The merged `settings.json` will then appear as a modified tracked file in Step 1 and be staged/committed as part of the normal audit flow.
-
-If AW was not running or `aw-export` is not installed, skip 0a and 0c — the pull result stands as-is.
+Any merged `settings.json` will appear as a modified tracked file in Step 1 and be staged/committed as part of the normal flow.
 
 ### Step 1: Gather Current State
 

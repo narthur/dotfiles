@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -e
+
+# Pull both dotfiles repos and optionally merge ActivityWatch settings.
+# 
+# Usage:
+#   pull-and-sync              # Pull both repos, skip AW sync if not running
+#   pull-and-sync --no-aw      # Pull both repos, skip AW sync entirely
+#
+# If ActivityWatch is running and aw-export/aw-import are available,
+# this script will export AW state before pulling, then merge any changes
+# to ~/.config/activitywatch/settings.json back into the running instance.
+
+NO_AW=0
+[[ "$1" == "--no-aw" ]] && NO_AW=1
+
+# Snapshot AW state if running and tools available
+AW_SNAPSHOT=""
+if [[ $NO_AW -eq 0 ]] && command -v aw-export &>/dev/null && curl -sf http://localhost:5600/api/0/settings >/dev/null 2>&1; then
+  AW_SNAPSHOT="/tmp/aw-before-pull.json"
+  aw-export "$AW_SNAPSHOT"
+fi
+
+# Pull both repos, stashing uncommitted changes first
+for git_dir in "$HOME/.dotfiles" "$HOME/.dotfiles-private"; do
+  # Check for uncommitted changes in the worktree
+  if git -C "$HOME" --git-dir="$git_dir" --work-tree="$HOME" status --porcelain | grep -q .; then
+    echo "Stashing changes in $(basename $git_dir)..."
+    git -C "$HOME" --git-dir="$git_dir" --work-tree="$HOME" stash
+  fi
+  
+  echo "Pulling $(basename $git_dir)..."
+  # Use fetch + merge instead of pull (pull doesn't work well with bare repos)
+  git --git-dir="$git_dir" fetch
+  git -C "$HOME" --git-dir="$git_dir" --work-tree="$HOME" merge FETCH_HEAD
+  
+  # Restore stashed changes
+  if git -C "$HOME" --git-dir="$git_dir" --work-tree="$HOME" stash list | grep -q .; then
+    echo "Restoring stashed changes in $(basename $git_dir)..."
+    git -C "$HOME" --git-dir="$git_dir" --work-tree="$HOME" stash pop
+  fi
+done
+
+# Merge AW settings if snapshot was taken and settings.json changed
+if [[ -n "$AW_SNAPSHOT" ]] && [[ -f "$AW_SNAPSHOT" ]]; then
+  if git -C "$HOME" --git-dir="$HOME/.dotfiles" --work-tree="$HOME" diff HEAD -- .config/activitywatch/settings.json | grep -q .; then
+    # Merge: local AW state wins on conflict, remote adds new entries
+    aw-merge "$AW_SNAPSHOT" ~/.config/activitywatch/settings.json > /tmp/aw-merged.json && \
+      mv /tmp/aw-merged.json ~/.config/activitywatch/settings.json
+    
+    # Push merged settings back to running AW instance
+    aw-import
+  fi
+  
+  rm -f "$AW_SNAPSHOT"
+fi
