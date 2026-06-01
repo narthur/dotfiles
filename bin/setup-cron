@@ -7,7 +7,7 @@ echo "Setting up cron..."
 mkdir -p "$HOME/.local/log"
 echo "  Created $HOME/.local/log"
 
-crontab "$HOME/.config/crontab"
+envsubst < "$HOME/.config/crontab" | crontab -
 echo "  Installed crontab from ~/.config/crontab"
 
 echo ""

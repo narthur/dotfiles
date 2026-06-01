@@ -28,3 +28,6 @@ auto-rebase.*
 # Credentials (never commit)
 .netrc
 
+# Claude Code app state (contains personal account info)
+.claude.json
+
