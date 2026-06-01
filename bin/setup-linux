@@ -101,6 +101,7 @@ run "install global tools" bash -c 'cd ~ && asdf install'
 
 log_section "Global pnpm packages"
 run "install neonctl" bash -c 'cd ~ && pnpm install -g neonctl'
+run "install surge" bash -c 'cd ~ && pnpm install -g surge'
 
 log_section "LLM Plugins"
 run "install llm-anthropic" llm install llm-anthropic

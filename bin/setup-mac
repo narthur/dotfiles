@@ -60,6 +60,7 @@ export PNPM_HOME="${PNPM_HOME:-$HOME/Library/pnpm}"
 mkdir -p "$PNPM_HOME"
 export PATH="$PNPM_HOME:$PATH"
 run "install neonctl" pnpm install -g neonctl
+run "install surge" pnpm install -g surge
 
 log_section "Binary Manager (bin)"
 # Pre-configure bin to install to ~/.local/bin (non-interactive)
