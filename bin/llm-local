@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+#
+# llm-local — run cheap, RECOVERABLE subtasks through a local model via the `llm`
+# CLI (using the llm-ollama plugin and a locally-pulled model).
+#
+# Scoped on purpose to low-stakes, verifiable jobs that are safe to delegate from
+# a stronger model: filter / extract / redact / classify. Do NOT use it to
+# summarize source that a stronger model then reasons about for correctness —
+# putting a weak model upstream of expensive reasoning yields confident wrong
+# answers. See Fieldnotes "Local LLM Setup on Mac (Apple Silicon)".
+#
+# Input is read from stdin. Model defaults to qwen2.5-coder:7b (fast/cheap);
+# override with LLM_LOCAL_MODEL (e.g. qwen2.5-coder:14b). `llm models` lists ids.
+
+set -euo pipefail
+
+MODEL="${LLM_LOCAL_MODEL:-qwen2.5-coder:7b}"
+
+usage() {
+    cat >&2 <<'EOF'
+Usage: llm-local <mode> [instruction]      (input is read from stdin)
+
+Modes:
+  filter <goal>      Return only the input lines/items relevant to <goal>, verbatim.
+  extract <what>     Pull out the requested items (TODOs, env vars, URLs, ...).
+  redact             Echo input unchanged but replace secrets/PII with [REDACTED].
+  classify <cats>    Label each input line with one of the given categories.
+  run <instruction>  Raw instruction (escape hatch; same safe-task caveats apply).
+
+Examples:
+  cat app.log     | llm-local filter "errors related to auth"
+  cat .env.example| llm-local extract "the env var names"
+  pbpaste         | llm-local redact | pbcopy
+
+Model: LLM_LOCAL_MODEL (default qwen2.5-coder:7b). Discover ids with `llm models`.
+EOF
+}
+
+mode="${1:-}"
+[ $# -gt 0 ] && shift
+instruction="${*:-}"
+
+case "$mode" in
+    filter)
+        system="You are a deterministic text filter. From the input, return ONLY the lines or items relevant to the user's goal, verbatim and unchanged. Output nothing else — no commentary, no preamble. If nothing matches, output nothing."
+        ;;
+    extract)
+        system="You are a deterministic extractor. Return ONLY the requested items from the input, one per line, verbatim, no duplicates. No commentary, no preamble."
+        ;;
+    redact)
+        # Redaction is the highest-stakes mode; the 7B has been observed to miss
+        # PII (e.g. email addresses), so default this mode to the more reliable
+        # 14B unless the caller has explicitly set LLM_LOCAL_MODEL. Still best-
+        # effort — never trust as a security guarantee.
+        [ -z "${LLM_LOCAL_MODEL:-}" ] && MODEL="qwen2.5-coder:14b"
+        system="You are a redaction tool. Echo the input unchanged EXCEPT replace any secrets, API keys, tokens, passwords, or personal data with the literal text [REDACTED]. Do not summarize, reorder, or comment. Preserve all other text exactly."
+        instruction="${instruction:-Redact any secrets or personal data.}"
+        ;;
+    classify)
+        system="You are a deterministic classifier. For each input line or item, output one line 'label<TAB>item' using exactly one of the user's categories. No commentary, no preamble."
+        ;;
+    run)
+        system="Answer concisely. This is a low-stakes helper task; do not fabricate."
+        ;;
+    ""|-h|--help|help)
+        usage
+        [ -z "$mode" ] && exit 2 || exit 0
+        ;;
+    *)
+        echo "llm-local: unknown mode '$mode'" >&2
+        usage
+        exit 2
+        ;;
+esac
+
+if [ "$mode" != "redact" ] && [ "$mode" != "run" ] && [ -z "$instruction" ]; then
+    echo "llm-local: mode '$mode' requires an instruction argument" >&2
+    usage
+    exit 2
+fi
+
+command -v llm >/dev/null 2>&1 || { echo "llm-local: the 'llm' CLI is not installed (brew \"llm\")" >&2; exit 1; }
+
+exec llm -m "$MODEL" -s "$system" ${instruction:+"$instruction"}

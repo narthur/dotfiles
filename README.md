@@ -51,6 +51,12 @@ Personal dotfiles and scripts for Linux and macOS.
     3. Restart Firefox
     4. Click a slack:// link and choose `~/.local/bin/slack-handler` as the handler
 
+- **`bin/llm-local`** - Runs cheap, recoverable subtasks through a local model via the `llm` CLI
+  - Modes: `filter`, `extract`, `redact`, `classify`, `run` (input read from stdin)
+  - Defaults to `qwen2.5-coder:7b`; override with `LLM_LOCAL_MODEL`
+  - Scoped to low-stakes, verifiable jobs — not for summarizing source a stronger model reasons over
+  - See Fieldnotes "Local LLM Setup on Mac (Apple Silicon)" for rationale
+
 - **`bin/get-work-time`** - Fetches productive work time from ActivityWatch
   - Queries ActivityWatch API for window events
   - Uses your configured categories from ActivityWatch settings

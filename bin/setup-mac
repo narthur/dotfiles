@@ -89,6 +89,7 @@ gh extension list | grep -q poi || run "install gh-poi" gh extension install sea
 
 log_section "LLM Plugins"
 run "install llm-anthropic" llm install llm-anthropic
+run "install llm-ollama" llm install llm-ollama
 
 log_section "Cron"
 run "setup cron" setup-cron
@@ -122,6 +123,23 @@ fi
 
 log_section "Colima"
 run "enable colima service" brew services start colima
+
+log_section "Ollama"
+run "enable ollama service" brew services start ollama
+# Wait for the Ollama API to come up before pulling (brew services start is async)
+for _ in $(seq 1 30); do
+    curl -fsS http://127.0.0.1:11434/api/version &>/dev/null && break
+    sleep 1
+done
+# Local coding models (4-bit GGUF). 14B = offline quality driver; 7B = snappy/battery.
+# Each is skipped if already pulled. See Fieldnotes "Local LLM Setup on Mac".
+for model in qwen2.5-coder:14b qwen2.5-coder:7b; do
+    if ollama list 2>/dev/null | grep -q "^${model}"; then
+        log_success "${model} already pulled"
+    else
+        run "pull ${model}" ollama pull "$model"
+    fi
+done
 
 log_section "xbar"
 mkdir -p "$HOME/Library/Application Support/xbar"
