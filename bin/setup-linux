@@ -52,6 +52,7 @@ run "brew bundle install" brew bundle install --global
 log_section "Pipx Packages"
 run "pipx ensurepath" pipx ensurepath
 run "pipx install rofimoji" pipx install rofimoji
+run "pipx install ggshield" pipx install ggshield
 run "pipx install stack-pr" pipx install stack-pr
 
 log_section "Binary Manager (bin)"
