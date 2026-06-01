@@ -21,6 +21,13 @@ case ":$PATH:" in
 esac
 # pnpm end
 
+# Podman as Docker host
+if command -v podman &>/dev/null; then
+    _podman_sock=$(podman machine inspect --format '{{.ConnectionInfo.PodmanSocket.Path}}' 2>/dev/null)
+    [ -n "$_podman_sock" ] && export DOCKER_HOST="unix://$_podman_sock"
+    unset _podman_sock
+fi
+
 # zoxide - must be last
 autoload -Uz compinit && compinit
 eval "$(zoxide init zsh)"

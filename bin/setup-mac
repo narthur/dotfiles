@@ -120,6 +120,14 @@ else
     log_success "ynab already installed"
 fi
 
+log_section "Podman"
+if ! podman machine inspect &>/dev/null 2>&1; then
+    run "init podman machine" podman machine init
+else
+    log_success "podman machine already initialized"
+fi
+run "configure podman" configure-podman
+
 log_section "xbar"
 mkdir -p "$HOME/Library/Application Support/xbar"
 if [ ! -L "$HOME/Library/Application Support/xbar/plugins" ]; then
