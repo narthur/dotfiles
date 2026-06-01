@@ -47,10 +47,14 @@ echo -e "\n${YELLOW}Checking for untracked files...${NC}"
 # Scan filesystem directly: find all regular files in home dir, filter by tracked/ignored status.
 all_files=$(find "$HOME" -maxdepth 1 -type f | xargs -n1 basename | sort)
 
-# Build ignore patterns from both .gitignore files
+# Build ignore patterns from git's configured global excludesfile, plus any
+# legacy locations, so this matches what git actually ignores.
 ignore_patterns=()
-[[ -f "$HOME/.gitignore" ]] && ignore_patterns+=($(grep -v '^#' "$HOME/.gitignore" | grep -v '^$' || true))
-[[ -f "$HOME/.gitignore_private" ]] && ignore_patterns+=($(grep -v '^#' "$HOME/.gitignore_private" | grep -v '^$' || true))
+excludes_file=$(git config --get core.excludesfile 2>/dev/null)
+excludes_file="${excludes_file/#\~/$HOME}"  # expand a leading ~
+for gi in "$excludes_file" "$HOME/.gitignore_global" "$HOME/.gitignore" "$HOME/.gitignore_private"; do
+    [[ -n "$gi" && -f "$gi" ]] && ignore_patterns+=($(grep -v '^#' "$gi" | grep -v '^$' || true))
+done
 
 untracked_both=()
 while IFS= read -r file; do
