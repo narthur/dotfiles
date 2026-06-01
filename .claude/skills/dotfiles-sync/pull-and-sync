@@ -14,6 +14,13 @@ set -e
 NO_AW=0
 [[ "$1" == "--no-aw" ]] && NO_AW=1
 
+# Warn if --no-aw is used but ActivityWatch is running
+if [[ $NO_AW -eq 1 ]] && command -v aw-export &>/dev/null && curl -sf http://localhost:5600/api/0/settings >/dev/null 2>&1; then
+  echo "⚠ Warning: --no-aw was used, but ActivityWatch is running."
+  echo "Consider running without --no-aw to sync ActivityWatch settings."
+  echo "(Or use --no-aw only when AW is not running or settings merge is not needed.)"
+fi
+
 # Snapshot AW state if running and tools available
 AW_SNAPSHOT=""
 if [[ $NO_AW -eq 0 ]] && command -v aw-export &>/dev/null && curl -sf http://localhost:5600/api/0/settings >/dev/null 2>&1; then
