@@ -126,7 +126,13 @@ if ! podman machine inspect &>/dev/null 2>&1; then
 else
     log_success "podman machine already initialized"
 fi
-run "configure podman" configure-podman
+if ! podman machine inspect --format '{{.State}}' 2>/dev/null | grep -q running; then
+    run "start podman machine" podman machine start
+else
+    log_success "podman machine already running"
+fi
+# Note: configure-podman is Linux-only (modifies /etc/containers/registries.conf)
+# On macOS, registries are configured inside the podman VM which has docker.io by default
 
 log_section "xbar"
 mkdir -p "$HOME/Library/Application Support/xbar"
