@@ -120,19 +120,12 @@ else
     log_success "ynab already installed"
 fi
 
-log_section "Podman"
-if ! podman machine inspect &>/dev/null 2>&1; then
-    run "init podman machine" podman machine init
+log_section "Colima"
+if ! colima status &>/dev/null 2>&1; then
+    run "start colima" colima start
 else
-    log_success "podman machine already initialized"
+    log_success "colima already running"
 fi
-if ! podman machine inspect --format '{{.State}}' 2>/dev/null | grep -q running; then
-    run "start podman machine" podman machine start
-else
-    log_success "podman machine already running"
-fi
-# Note: configure-podman is Linux-only (modifies /etc/containers/registries.conf)
-# On macOS, registries are configured inside the podman VM which has docker.io by default
 
 log_section "xbar"
 mkdir -p "$HOME/Library/Application Support/xbar"
