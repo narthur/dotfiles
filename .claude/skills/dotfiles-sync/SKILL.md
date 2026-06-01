@@ -118,7 +118,34 @@ git -C ~ --git-dir=~/.dotfiles-private --work-tree=~ status
 
 This shows all tracked files with uncommitted changes, across the entire repo — not just skills.
 
-#### 1b: Check for untracked skills
+#### 1b: Check for routing inconsistencies
+
+Run the read-only audit to detect files tracked in both repos or untracked on disk:
+
+```bash
+~/.claude/skills/dotfiles-sync/check-routing
+```
+
+This reports:
+- **Duplicates**: Files tracked in both repos (you must decide which keeps it)
+- **Untracked on disk**: Files present on disk but not tracked in either repo (you must decide their fate)
+- **Routing suggestions**: For each file, suggestions are shown (e.g., "could go in dotfiles (generic tool config) | review-needed (contains 'skill')") based on heuristic patterns. **These are advisory only and require your confirmation.**
+
+If issues are found, use the interactive fixer:
+
+```bash
+~/.claude/skills/dotfiles-sync/fix-routing
+```
+
+The fixer prompts you for **every decision**:
+- For each duplicate, you choose which repo keeps it
+- For each untracked file, you choose to add it to dotfiles, dotprivate, gitignore, or skip
+- For gitignore additions, you choose which .gitignore file to update
+- Suggestions are shown but you make the final call
+
+The fixer stages all your choices but never commits or pushes—return to dotfiles-sync for final review.
+
+#### 1c: Check for untracked skills (alternative)
 
 List all skill directories on disk:
 
