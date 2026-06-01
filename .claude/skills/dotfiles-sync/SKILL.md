@@ -143,6 +143,13 @@ The fixer prompts you for **every decision**:
 - For gitignore additions, you choose which .gitignore file to update
 - Suggestions are shown but you make the final call
 
+**Important**: Suggestions based on keyword matching (e.g., "contains 'narthbugz'") are **starting points only**. Before deciding, ask yourself:
+- Does this file **contain** client data, secrets, or personal information?
+- Or does it just **reference** a service/tool that happens to be client-related?
+- Is this a reusable pattern that others could use, even if the config is client-specific?
+
+When in doubt, read the file or skill description to understand its actual purpose vs. its naming or dependencies.
+
 The fixer stages all your choices but never commits or pushes—return to dotfiles-sync for final review.
 
 #### 1c: Check for untracked skills (alternative)
