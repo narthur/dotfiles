@@ -50,7 +50,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 PERIOD_END=$(date +%Y-%m-%d)
-PERIOD_START=$(date -d "${DAYS} days ago" +%Y-%m-%d)
+PERIOD_START=$(python3 -c "from datetime import date, timedelta; print(date.today() - timedelta(days=${DAYS}))")
 
 echo "=== META ==="
 echo "{\"period_start\":\"${PERIOD_START}\",\"period_end\":\"${PERIOD_END}\",\"days\":${DAYS}}"
@@ -59,7 +59,7 @@ source ~/.env 2>/dev/null || true
 
 AUTH_HEADER=""
 if [[ -n "${NARTHBUGZ_EMAIL:-}" && -n "${NARTHBUGZ_TOKEN:-}" ]]; then
-  AUTH_HEADER="Basic $(echo -n "${NARTHBUGZ_EMAIL}:${NARTHBUGZ_TOKEN}" | base64 -w 0)"
+  AUTH_HEADER="Basic $(echo -n "${NARTHBUGZ_EMAIL}:${NARTHBUGZ_TOKEN}" | base64 | tr -d '\n')"
 fi
 
 TMPDIR_DATA=$(mktemp -d)
