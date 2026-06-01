@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Merge two ActivityWatch settings JSON exports (local wins on conflict).
+# Usage: aw-merge <local.json> <remote.json>
+# Outputs merged JSON to stdout.
+
+set -euo pipefail
+LOCAL="${1:?Usage: aw-merge <local.json> <remote.json>}"
+REMOTE="${2:?Usage: aw-merge <local.json> <remote.json>}"
+
+jq -n \
+  --slurpfile l "$LOCAL" \
+  --slurpfile r "$REMOTE" '
+  ($l[0]) as $local | ($r[0]) as $remote |
+
+  # Classes: union by name path, local wins on conflict
+  (($remote.classes // []) | map({key: (.name | join("/")), value: .}) | from_entries) as $rc |
+  (($local.classes  // []) | map({key: (.name | join("/")), value: .}) | from_entries) as $lc |
+  ($rc + $lc | to_entries | map(.value)) as $merged_classes |
+
+  # Views: union by id, local wins on conflict
+  (($remote.views // []) | map({key: (.id // (.name // . | tostring)), value: .}) | from_entries) as $rv |
+  (($local.views  // []) | map({key: (.id // (.name // . | tostring)), value: .}) | from_entries) as $lv |
+  ($rv + $lv | to_entries | map(.value)) as $merged_views |
+
+  {
+    classes:    $merged_classes,
+    views:      $merged_views,
+    startOfDay:  ($local.startOfDay  // $remote.startOfDay),
+    startOfWeek: ($local.startOfWeek // $remote.startOfWeek)
+  }
+'

@@ -85,16 +85,26 @@ When found, flag it and recommend:
 
 ## Workflow
 
-### Step 0: Pull Latest
+### Step 0: Pull Latest (with ActivityWatch sync)
 
-Before auditing, pull both repos to ensure you're working from the latest committed state:
+#### 0a: Export current AW state (if AW is running)
+
+If `aw-export` is on PATH and ActivityWatch is reachable, snapshot the current local AW state before pulling:
+
+```bash
+if command -v aw-export &>/dev/null && curl -sf http://localhost:5600/api/0/settings >/dev/null 2>&1; then
+  aw-export /tmp/aw-before-pull.json
+fi
+```
+
+#### 0b: Pull both repos
 
 ```bash
 git -C ~ --git-dir=~/.dotfiles --work-tree=~ pull
 git -C ~ --git-dir=~/.dotfiles-private --work-tree=~ pull
 ```
 
-If either pull fails due to unstaged changes, stash them first:
+If either pull fails due to unstaged changes, stash first:
 
 ```bash
 git -C ~ --git-dir=~/.dotfiles --work-tree=~ stash
@@ -102,7 +112,24 @@ git -C ~ --git-dir=~/.dotfiles --work-tree=~ pull
 git -C ~ --git-dir=~/.dotfiles --work-tree=~ stash pop
 ```
 
-Then proceed to Step 1.
+#### 0c: Merge AW settings (if AW export was taken and settings.json changed)
+
+If `/tmp/aw-before-pull.json` exists and the pull updated `~/.config/activitywatch/settings.json`:
+
+```bash
+# Merge: local AW state wins on conflict, remote adds new entries
+aw-merge /tmp/aw-before-pull.json ~/.config/activitywatch/settings.json   > /tmp/aw-merged.json && mv /tmp/aw-merged.json ~/.config/activitywatch/settings.json
+
+# Push merged settings back to the running AW instance
+aw-import
+
+# Clean up
+rm -f /tmp/aw-before-pull.json
+```
+
+The merged `settings.json` will then appear as a modified tracked file in Step 1 and be staged/committed as part of the normal audit flow.
+
+If AW was not running or `aw-export` is not installed, skip 0a and 0c — the pull result stands as-is.
 
 ### Step 1: Gather Current State
 
