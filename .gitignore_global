@@ -10,6 +10,10 @@
 auto-rebase.*
 .cache_ggshield
 
+# Python caches
+__pycache__/
+*.pyc
+
 # macOS
 .DS_Store
 .CFUserTextEncoding
