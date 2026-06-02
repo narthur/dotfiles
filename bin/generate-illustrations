@@ -2,6 +2,15 @@
 
 model="anthropic/claude-haiku-4-5-20251001"
 
+# Hosted image model on fal.ai (override with IMAGE_MODEL env var if desired)
+image_model="${IMAGE_MODEL:-fal-ai/flux/schnell}"
+
+# Fail fast if the image API key is missing (add `export FAL_KEY=...` to ~/.env)
+if [[ -z "$FAL_KEY" ]]; then
+    echo "Error: FAL_KEY is not set. Get one at https://fal.ai/dashboard/keys and add 'export FAL_KEY=...' to ~/.env" >&2
+    exit 1
+fi
+
 # Define styles: each entry has a name, abstractness level, and artistic style description
 declare -a styles=(
     "Very Concrete:Photo-realistic documentary style"
@@ -15,7 +24,7 @@ declare -a styles=(
 )
 
 # Prompt template for extracting key themes and concepts from the article
-extraction_prompt_template=$(cat <<'PROMPT_END'
+IFS= read -r -d '' extraction_prompt_template <<'PROMPT_END' || true
 Analyze the following article and extract the key themes, concepts, subjects, and narrative 
 elements that would be important for creating illustrations. Provide a concise but comprehensive 
 summary that captures:
@@ -37,10 +46,9 @@ themes, concepts, and atmospheric elements in a clear, structured format.
 ARTICLE:
 {ARTICLE}
 PROMPT_END
-)
 
 # Base prompt template for generating a single image prompt
-base_prompt_template=$(cat <<'PROMPT_END'
+IFS= read -r -d '' base_prompt_template <<'PROMPT_END' || true
 Create a single, detailed prompt for an image generator to create an illustration based on the 
 following summary of key themes, concepts, and atmospheric elements from an article.
 
@@ -92,7 +100,6 @@ CRITICAL OUTPUT FORMAT:
 ARTICLE SUMMARY:
 {SUMMARY}
 PROMPT_END
-)
 
 if [[ -n "$1" ]]; then
     if [[ ! -f "$1" ]]; then
@@ -105,8 +112,6 @@ else
     article_text=$(sed '/^END$/q' | sed '$d')
 fi
 
-script_dir="${Z_EXPERIMENTS_DIR}"
-images_dir="$script_dir/images"
 output_dir="$HOME/Pictures/Illustrations"
 
 # Extract key themes and concepts from the article
@@ -177,24 +182,28 @@ for i in "${!all_prompts[@]}"; do
     if [[ -n "$prompt_line" ]]; then
         printf "[%d/%d] %s... " "$((i+1))" "$total" "$label"
 
-        # Run image generation locally (suppress subprocess output)
-        (
-            cd "$script_dir"
-            source .venv/bin/activate
-            python main.py --prompt "$prompt_line" \
-                --width "$image_width" \
-                --height "$image_height"
-        ) >/dev/null 2>&1
+        # Request a single image from the hosted model (synchronous endpoint)
+        response=$(curl -sS -X POST "https://fal.run/$image_model" \
+            -H "Authorization: Key $FAL_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n \
+                --arg p "$prompt_line" \
+                --argjson w "$image_width" \
+                --argjson h "$image_height" \
+                '{prompt:$p, image_size:{width:$w, height:$h}, num_images:1, output_format:"png"}')")
 
-        # Get the most recently created image file
-        latest_image=$(ls -t "$images_dir"/*.png 2>/dev/null | head -1)
+        image_url=$(echo "$response" | jq -r '.images[0].url // empty')
 
-        if [[ -n "$latest_image" ]]; then
-            filename=$(basename "$latest_image")
-            cp "$latest_image" "$output_dir/$filename"
-            echo "✓ $filename"
+        if [[ -n "$image_url" ]]; then
+            filename="$(date +%Y%m%d-%H%M%S)-$((i+1)).png"
+            if curl -sS -fL "$image_url" -o "$output_dir/$filename"; then
+                echo "✓ $filename"
+            else
+                echo "✗ download failed"
+            fi
         else
-            echo "✗ no image found"
+            err=$(echo "$response" | jq -r '.detail // .error // .message // "unknown error"' 2>/dev/null)
+            echo "✗ no image ($err)"
         fi
     fi
 done
