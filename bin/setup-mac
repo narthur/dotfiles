@@ -120,6 +120,13 @@ if ! command -v ynab &>/dev/null; then
 else
     log_success "ynab already installed"
 fi
+# Auth is interactive (stores a token in the macOS keychain) — can't be automated here.
+# `ynab auth status` always exits 0; it reports state as JSON, so grep the field.
+if ynab auth status 2>/dev/null | grep -Eq '"authenticated":[[:space:]]*true'; then
+    log_success "ynab authenticated"
+else
+    log "ynab not authenticated — run: ynab auth login  (token: https://app.ynab.com/settings/developer)"
+fi
 
 log_section "Colima"
 run "enable colima service" brew services start colima

@@ -12,6 +12,7 @@ i3
 i3blocks
 inkscape
 jq
+libsecret-1-dev
 mailutils
 moreutils
 network-manager-gnome

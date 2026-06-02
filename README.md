@@ -153,6 +153,10 @@ dotprivate checkout
 1. Install packages: `~/bin/install-packages`
 2. Configure postfix for local mail: `~/bin/configure-postfix`
 3. Install crontab: `crontab ~/.config/crontab`
+4. Authenticate the YNAB CLI: `ynab auth login` (the setup scripts install it but
+   auth is interactive — get a token at https://app.ynab.com/settings/developer).
+   Stored in the OS keychain; on Linux this needs `libsecret-1-dev`, otherwise set
+   the `YNAB_API_KEY` env var instead.
 
 ### Daily Usage
 
@@ -182,6 +186,7 @@ Cron jobs send their output to your local mailbox via postfix.
 - [zoxide](https://github.com/ajeetdsouza/zoxide) - Directory jumper
 - [feh](https://feh.finalrewind.org/) - Image viewer / wallpaper setter
 - [Dashlane CLI](https://cli.dashlane.com/) - Password and secret manager
+- [ynab-cli](https://github.com/stephendolan/ynab-cli) - YNAB CLI (installed via bun; used by the ppd-financial-review skill)
 - [postfix](http://www.postfix.org/) - Mail transfer agent (local delivery)
 - [mailutils](https://mailutils.org/) - Mail reading tools
 - jq, curl, bc, wget, moreutils - Command line utilities

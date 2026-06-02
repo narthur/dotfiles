@@ -173,6 +173,14 @@ if ! command -v ynab &> /dev/null; then
 else
     log_success "ynab already installed"
 fi
+# Keychain storage needs libsecret-1-dev (in packages.txt). Auth is interactive and
+# can't be automated; without a keychain, fall back to the YNAB_API_KEY env var.
+# `ynab auth status` always exits 0; it reports state as JSON, so grep the field.
+if ynab auth status 2> /dev/null | grep -Eq '"authenticated":[[:space:]]*true'; then
+    log_success "ynab authenticated"
+else
+    log "ynab not authenticated — run: ynab auth login  (token: https://app.ynab.com/settings/developer)"
+fi
 
 log_section "Complete"
 log_success "All packages installed successfully!"
