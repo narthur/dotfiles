@@ -101,7 +101,25 @@ ARTICLE SUMMARY:
 {SUMMARY}
 PROMPT_END
 
-if [[ -n "$1" ]]; then
+if [[ "$1" == "--from-clipboard" || "$1" == "-c" ]]; then
+    # Read the article straight from the system clipboard
+    if command -v pbpaste >/dev/null 2>&1; then
+        article_text=$(pbpaste)
+    elif command -v wl-paste >/dev/null 2>&1; then
+        article_text=$(wl-paste)
+    elif command -v xclip >/dev/null 2>&1; then
+        article_text=$(xclip -selection clipboard -o)
+    elif command -v xsel >/dev/null 2>&1; then
+        article_text=$(xsel --clipboard --output)
+    else
+        echo "Error: --from-clipboard needs pbpaste (macOS) or wl-paste/xclip/xsel (Linux)." >&2
+        exit 1
+    fi
+    if [[ -z "${article_text//[[:space:]]/}" ]]; then
+        echo "Error: clipboard is empty." >&2
+        exit 1
+    fi
+elif [[ -n "$1" ]]; then
     if [[ ! -f "$1" ]]; then
         echo "Error: File not found: $1" >&2
         exit 1
