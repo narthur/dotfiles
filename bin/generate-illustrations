@@ -5,6 +5,9 @@ model="anthropic/claude-haiku-4-5-20251001"
 # Hosted image model on fal.ai (override with IMAGE_MODEL env var if desired)
 image_model="${IMAGE_MODEL:-fal-ai/flux/dev}"
 
+# Appended to every image prompt so all styles render as paintings, never photos
+painterly_suffix="Rendered as a fine-art painting on canvas, with visible brushstrokes, paint texture, and the unmistakable hand of a painter. This is a painting, not a photograph."
+
 # Fail fast if the image API key is missing (add `export FAL_KEY=...` to ~/.env)
 if [[ -z "$FAL_KEY" ]]; then
     echo "Error: FAL_KEY is not set. Get one at https://fal.ai/dashboard/keys and add 'export FAL_KEY=...' to ~/.env" >&2
@@ -13,7 +16,7 @@ fi
 
 # Define styles: each entry has a name, abstractness level, and artistic style description
 declare -a styles=(
-    "Very Concrete:Photo-realistic documentary style"
+    "Very Concrete:Hyperrealist oil painting"
     "Very Concrete:Realistic academic oil painting"
     "Moderately Concrete:Impressionist representational"
     "Moderately Concrete:Expressionist semi-representational"
@@ -205,7 +208,7 @@ for i in "${!all_prompts[@]}"; do
             -H "Authorization: Key $FAL_KEY" \
             -H "Content-Type: application/json" \
             -d "$(jq -n \
-                --arg p "$prompt_line" \
+                --arg p "$prompt_line $painterly_suffix" \
                 --argjson w "$image_width" \
                 --argjson h "$image_height" \
                 '{prompt:$p, image_size:{width:$w, height:$h}, num_images:1, output_format:"png"}')")
