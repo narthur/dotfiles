@@ -130,7 +130,17 @@ The output includes three types of feedback:
 
 ### Step 2: Classify Feedback Source
 
-Check the author of the feedback item against the Known Bot Authors list.
+**First, decide whether the item carries actionable feedback at all.** Some comments surface in the feedback queue but aren't feedback — they're procedural noise. These can be **auto-resolved/dismissed without prompting, regardless of author** (human included), because there is nothing to act on:
+
+- **Bot-trigger / command comments** — e.g. `@coderabbitai review`, `@coderabbitai resolve`, `@coderabbitai full review`, `/review`, or any comment whose entire content is a directive aimed at a review bot rather than at the code.
+- **Automated acknowledgements & status notices** — e.g. CodeRabbit "Review finished" / "Action performed", "Review limit reached" / rate-limit notices, "currently reviewing", deploy/preview-bot status pings, CI status echoes.
+- **Pure chatter with no request** — "thanks", "👍", "merging now", and similar, when they contain no question or change request.
+
+For these, dismiss the comment (`dismiss-comment.sh`) — or resolve the thread (`resolve-feedback.sh`) if it's a review thread — and move on to Step 1. No reply, no options, no user prompt.
+
+**Guardrail:** this exception is *only* for comments that plainly contain no actionable request. If a comment mixes a bot trigger with a real ask ("@coderabbitai review — also can we rename this?"), or you're at all unsure whether a human comment is substantive, treat it as feedback and fall through to the author-based classification below. When in doubt on a human comment, never auto-dismiss — go interactive.
+
+Otherwise, classify by author against the Known Bot Authors list:
 
 - **Bot feedback** → proceed to **Step 2a (Automated Path)**
 - **Human feedback** → proceed to **Step 2b (Interactive Path)**
