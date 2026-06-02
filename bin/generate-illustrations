@@ -3,7 +3,7 @@
 model="anthropic/claude-haiku-4-5-20251001"
 
 # Hosted image model on fal.ai (override with IMAGE_MODEL env var if desired)
-image_model="${IMAGE_MODEL:-fal-ai/flux/schnell}"
+image_model="${IMAGE_MODEL:-fal-ai/flux/dev}"
 
 # Fail fast if the image API key is missing (add `export FAL_KEY=...` to ~/.env)
 if [[ -z "$FAL_KEY" ]]; then
