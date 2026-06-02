@@ -43,17 +43,26 @@ run() {
 }
 
 log_section "Ollama Model Setup"
-run "pull qwen3-coder:30b" ollama pull qwen3-coder:30b
+# Base coding models (also pulled by setup-mac; shared by bin/llm-local).
+for model in qwen2.5-coder:14b qwen2.5-coder:7b; do
+    if ollama list 2>/dev/null | grep -q "^${model}"; then
+        log_success "${model} already pulled"
+    else
+        run "pull ${model}" ollama pull "$model"
+    fi
+done
 
-# Create model variant with larger context window for opencode
-log "Creating qwen3-coder:30b-16k variant with larger context window"
-MODELFILE=$(mktemp)
-cat > "$MODELFILE" << 'EOF'
-FROM qwen3-coder:30b
-PARAMETER num_ctx 16384
-EOF
-run "create qwen3-coder:30b-16k variant" ollama create qwen3-coder:30b-16k -f "$MODELFILE"
-rm "$MODELFILE"
+# Create 16k-context variants for opencode (agentic coding needs more than
+# Ollama's 4k default). `ollama create` with only a PARAMETER override shares
+# the base weights, so these add negligible disk.
+log "Creating 16k-context variants for opencode"
+for base in qwen2.5-coder:14b qwen2.5-coder:7b; do
+    variant="${base}-16k"
+    MODELFILE=$(mktemp)
+    printf 'FROM %s\nPARAMETER num_ctx 16384\n' "$base" > "$MODELFILE"
+    run "create ${variant} variant" ollama create "$variant" -f "$MODELFILE"
+    rm -f "$MODELFILE"
+done
 
 log_section "OpenCode Configuration"
 OPENCODE_CONFIG_DIR="$HOME/.config/opencode"
@@ -73,8 +82,11 @@ cat > "$OPENCODE_CONFIG" << 'EOF'
         "baseURL": "http://localhost:11434/v1"
       },
       "models": {
-        "qwen3-coder:30b-16k": {
-          "name": "Qwen3 Coder 30B (16k context)"
+        "qwen2.5-coder:14b-16k": {
+          "name": "Qwen2.5 Coder 14B (local, 16k context)"
+        },
+        "qwen2.5-coder:7b-16k": {
+          "name": "Qwen2.5 Coder 7B (local, 16k context)"
         }
       }
     }
@@ -84,5 +96,5 @@ EOF
 log_success "OpenCode configuration created"
 
 log_section "Complete"
-log_success "OpenCode is now configured to use qwen3-coder:30b-16k"
+log_success "OpenCode is now configured to use qwen2.5-coder 14B/7B (16k context)"
 log "Start opencode and run /models to select the model"
