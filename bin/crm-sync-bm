@@ -6,6 +6,22 @@
 # Source environment variables
 source ~/.env
 
+# Fail loudly if we can't actually read the CRM directory.
+# macOS protects ~/Documents with TCC; a scheduled job (cron/launchd) without
+# file access is silently denied, which makes `find` return 0 and would zero out
+# the Beeminder goals. Refuse to sync rather than overwrite real data with zeros.
+if [ -z "$CRM_DIR" ]; then
+  echo "ERROR: CRM_DIR is unset (check ~/.env). Refusing to sync." >&2
+  exit 1
+fi
+total_md=$(find "$CRM_DIR" -type f -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+if [ "$total_md" -eq 0 ]; then
+  echo "ERROR: Found 0 .md files under CRM_DIR ($CRM_DIR)." >&2
+  echo "Likely missing file access (macOS Full Disk Access / TCC) or a bad path." >&2
+  echo "Refusing to sync zeros to Beeminder." >&2
+  exit 1
+fi
+
 # Portable date helpers
 if date --version >/dev/null 2>&1; then
     # GNU date (Linux)

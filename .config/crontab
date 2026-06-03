@@ -7,4 +7,6 @@ PATH=$HOME/bin:$HOME/.local/bin:/opt/homebrew/bin:/home/linuxbrew/.linuxbrew/bin
 0 * * * * cron-run dashlane-sync dcli sync
 0 */6 * * * cron-run sync-claude-tokens $HOME/bin/sync-claude-tokens
 0 3 * * 0 cron-run backup-urls $HOME/bin/backup-urls
-55 * * * * cron-run crm-sync-bm $HOME/bin/crm-sync-bm
+
+# crm-sync-bm moved to launchd (~/.config/launchd/, installed via setup-launchd).
+# cron can't read ~/Documents (macOS TCC), so find returned 0 and zeroed the goals.

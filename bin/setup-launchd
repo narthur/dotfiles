@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Install launchd user agents from ~/.config/launchd/*.plist and create
+# necessary directories. The launchd analog of setup-cron.
+set -e
+
+echo "Setting up launchd agents..."
+
+mkdir -p "$HOME/.local/log"
+echo "  Created $HOME/.local/log"
+
+mkdir -p "$HOME/Library/LaunchAgents"
+
+shopt -s nullglob
+domain="gui/$(id -u)"
+
+for template in "$HOME/.config/launchd/"*.plist; do
+    name="$(basename "$template")"
+    label="${name%.plist}"
+    dest="$HOME/Library/LaunchAgents/$name"
+
+    # Only ${HOME} is templated; leave everything else literal.
+    envsubst '${HOME}' < "$template" > "$dest"
+    echo "  Installed $dest"
+
+    # Reload: remove any existing instance, then load fresh.
+    launchctl bootout "$domain/$label" 2>/dev/null || true
+    launchctl bootstrap "$domain" "$dest"
+    echo "  Loaded $label"
+done
+
+echo ""
+echo "Done! Loaded com.narthur.* agents:"
+launchctl list | grep -E "com\.narthur\." || echo "  (none)"
