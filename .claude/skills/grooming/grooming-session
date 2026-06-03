@@ -37,6 +37,41 @@ get_repo() {
   }
 }
 
+# --- Token scope preflight --------------------------------------------------
+# The token's OAuth scopes as a space-padded string (" repo gist project "),
+# so membership tests can match whole words. Empty if scopes can't be read.
+token_scopes() {
+  local s
+  s=$(gh auth status 2>&1 | sed -n "s/.*Token scopes:[[:space:]]*//p" | tr -d "'\"" | tr ',' ' ')
+  printf ' %s ' "$s"
+}
+
+has_scope() {
+  [[ "$(token_scopes)" == *" $1 "* ]]
+}
+
+# Hard-fail (exit non-zero) rather than emit output that would silently lack
+# data the caller needs — so the script's output is never misleading.
+# Project membership/status reads return EMPTY (not an error) when the token
+# lacks project scope, which is exactly the kind of silent gap we refuse.
+require_project_access() {
+  if has_scope project || has_scope "read:project"; then
+    return 0
+  fi
+  cat >&2 <<'EOF'
+grooming-session: ERROR — this repo has a grooming overlay (repos/<owner>-<repo>.md)
+whose checks depend on GitHub Projects, but the gh token has neither the 'project'
+nor 'read:project' scope.
+
+Without it, project membership/status reads return EMPTY rather than failing — which
+produces MISLEADING grooming output (an issue looks like it's in no project when it
+may be). Refusing to continue.
+
+Fix (write access, lets grooming also move cards): gh auth refresh -s project
+EOF
+  exit 3
+}
+
 # Legacy: open URL in Firefox without stealing focus (when xdotool exists).
 open_issue_in_firefox() {
   local url="$1"
@@ -89,10 +124,18 @@ open_issue_in_browser() {
   fi
   local session="grooming-${repo//\//-}"
   local auth="${HOME}/.playwright-auth/github.json"
+  # Persistent on-disk profile per repo: log in to GitHub once in the grooming
+  # window and it stays logged in across every future session — no state-save
+  # ritual, no expiring JSON file. Per-repo dir preserves multi-repo isolation
+  # (two persistent contexts can't share one profile dir concurrently).
+  local profile="${HOME}/.playwright-auth/profiles/${repo//\//-}"
   (
     if ! "$pw" list 2>/dev/null | grep -Fq -- "- ${session}:"; then
+      local profile_existed=1
+      [[ -d "$profile" ]] || profile_existed=0
+      mkdir -p "$profile"
       local open_out
-      if ! open_out=$("$pw" open --headed --browser chromium -s="$session" 2>&1); then
+      if ! open_out=$("$pw" open --headed --browser chromium --persistent --profile "$profile" -s="$session" 2>&1); then
         local detail
         detail=$(issue_one_line_detail "$open_out")
         if [[ -n "$detail" ]]; then
@@ -102,7 +145,10 @@ open_issue_in_browser() {
         fi
         exit 0
       fi
-      if [[ -f "$auth" ]]; then
+      # First creation of this persistent profile: seed it from a legacy saved
+      # auth state if one happens to exist. After that the profile carries the
+      # login itself, so this never runs again for this repo.
+      if [[ "$profile_existed" == "0" && -f "$auth" ]]; then
         "$pw" state-load "$auth" -s="$session" >/dev/null 2>&1 || true
       fi
     fi
@@ -304,6 +350,17 @@ cmd_next() {
 
   echo "=== Most Stale Issue ($count open non-snoozed issues remaining) ==="
   echo ""
+
+  # Point at a repo-specific overlay of extra grooming checks, if one exists.
+  # An overlay implies project-dependent checks, so verify project scope before
+  # the issue body / project data is fetched and hard-fail if it's missing —
+  # never emit misleading blank-project output.
+  local overlay="${HOME}/.claude/skills/grooming/repos/${repo//\//-}.md"
+  if [[ -f "$overlay" ]]; then
+    require_project_access
+    echo "Repo overlay: $overlay (load once per session — appends repo-specific checks)"
+    echo ""
+  fi
 
   # Fetch issue body
   gh issue view "$num"

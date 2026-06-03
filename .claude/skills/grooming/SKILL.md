@@ -52,16 +52,23 @@ Treat the Relationships section as authoritative for blocker / dependency info �
 
 If no issues remain, inform the user the grooming session is complete.
 
+### Repo-specific overlay (load once at session start)
+
+Some repos have extra, repo-specific grooming checks beyond the standard list. Before running checks on the first issue of a session, look for an overlay file at:
+
+```
+~/.claude/skills/grooming/repos/<owner>-<repo>.md
+```
+
+(same `owner/repo` → hyphen convention as the browser session name — e.g. `repos/acme-webapp.md`). If it exists, **read it once** and treat its checks as **appended to the standard checklist** for every issue this session: include them in the Step 2 summary and walk their fixes in Step 3 alongside the built-in ones. If no overlay exists, just run the standard checks. `grooming-session next` prints a one-line pointer when an overlay is present so you don't forget to load it.
+
 ### Playwright browser for issue pages
 
 `grooming-session next` opens the issue's GitHub page in a browser as a side effect, so you and the user can look at it together.
 
 - **One window per repo grooming session:** Session name is `grooming-<owner>-<repo>` (slashes in `owner/repo` become hyphens). Each `next` navigates that session with `goto`, so you do not accumulate tabs while stepping through issues in one repository.
 - **Multiple repos at once:** Each repo gets its own named Playwright session (separate browser context / window), so parallel grooming in different clones stays isolated.
-- **GitHub login:** Playwright does not use your system browser profile. Save auth once, then reuse it:
-  1. `playwright-cli open --headed --browser chromium -s=github-auth https://github.com/login`
-  2. `playwright-cli state-save ~/.playwright-auth/github.json -s=github-auth`
-  3. Sign in to GitHub in the window, then confirm with the user when done.
+- **GitHub login (persistent profile):** The browser launches with a persistent on-disk profile per repo (`~/.playwright-auth/profiles/<owner>-<repo>`, via `--persistent --profile`). The **first** time you groom a repo the window opens logged out — just sign in to GitHub in that window and it stays logged in across every future session automatically. No state-save ritual, no expiring file. (A legacy `~/.playwright-auth/github.json`, if present, seeds a brand-new profile once.)
 - **Watch the browser:** `playwright-cli show`
 - **Overrides:** `GROOMING_NO_PLAYWRIGHT=1` forces the legacy Firefox new-tab behavior. `PLAYWRIGHT_CLI` sets the path to `playwright-cli` (default `~/.local/bin/playwright-cli`, then `PATH`).
 
@@ -84,7 +91,11 @@ If any checks fail, proceed to Step 3 to walk through the failing checks' fixes 
 5. **Do the title and description reflect decisions made in comments?** — Have clarifications, scope changes, or agreed approaches been buried in discussion? If yes → propose folding them into the body/title.
 6. **Is the issue properly labeled?** — Missing or wrong labels (bug/feature/area/priority)? If yes → propose label changes. Cross-check the `blocked` label against the Relationships section: `blocked` should imply at least one open `blockedBy` link, and an open `blockedBy` link should imply the `blocked` label. Mismatches (label without link, or link without label, or label with all blockers closed) are check failures — propose either removing/adding the label or recording the missing relationship.
 7. **If in a project, does it have the correct project status?** — E.g. "Backlog" vs. "In Progress" vs. "Blocked". If wrong → propose a status change.
-8. **Does the issue have the correct issue type applied?** — (GitHub's native issue types, where applicable.) If wrong/missing → propose setting it.
+8. **Does the issue have the correct issue type applied?** — (GitHub's native issue types, where applicable.) Don't default to one type reflexively — classify by the issue's *nature*:
+   - **Bug** — describes incorrect/unexpected behavior on a real code path: wrong output, crashes, unhandled errors, silent data inconsistency, stuck/broken UI, races, leaks. If the issue narrates a way the software *misbehaves*, it's a Bug even when the fix is one line.
+   - **Feature** — new functionality, a request, or an enhancement that adds capability.
+   - **Task** — work with no current misbehavior: refactors, cleanup, type-tightening, extracting helpers, tests, docs, or *latent* risks the issue itself flags as "currently safe."
+   The trap to avoid: small hardening / error-handling / "tighten this" issues read like chores but are **Bugs** if they fix observable broken behavior on some path. When unsure between Bug and Task, ask "does something actually misbehave today (or on a reachable error path)?" — yes → Bug, no → Task. If wrong/missing → propose setting it.
 9. **Is the description detailed enough to be actionable?** — Could a reasonable teammate pick this up without needing to ask clarifying questions? If too thin → propose expanding the description (include acceptance criteria if absent).
 
 When walking through fixes in Step 3, present them in priority order (lower-numbered checks first). The order matters because earlier fixes can make later ones moot (e.g. there's no point expanding a description on an issue that's about to be closed). Mention briefly if you skip ahead because an early fix obviates a later one.
