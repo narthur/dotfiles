@@ -4,3 +4,6 @@
 .env
 *.pem
 *.key
+
+# Personal data tracked in dotprivate instead
+.config/backup-urls/urls.txt
