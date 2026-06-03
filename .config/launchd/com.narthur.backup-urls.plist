@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.narthur.backup-urls</string>
+
+    <!-- Route through cron-run for consistent logging
+         (~/.local/log/backup-urls.log, timestamped lines). -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>${HOME}/bin/cron-run</string>
+        <string>backup-urls</string>
+        <string>${HOME}/bin/backup-urls</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>${HOME}/bin:${HOME}/.local/bin:/opt/homebrew/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <!-- Weekly, Sunday 03:00, matching the old crontab entry (0 3 * * 0).
+         Unlike cron, launchd reruns a missed interval once on wake — important
+         for a 3am job on a laptop that's usually asleep. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

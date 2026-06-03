@@ -5,6 +5,10 @@
 
 set -euo pipefail
 
+# Source environment variables (OBSIDIAN_VAULT etc.) — required under `set -u`,
+# since cron/launchd start with a clean environment.
+source ~/.env
+
 # Configuration
 BACKUP_DIR="$OBSIDIAN_VAULT/Backups/backup-urls"
 URLS_FILE="$HOME/.config/backup-urls/urls.txt"
