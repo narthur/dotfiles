@@ -67,7 +67,7 @@ for i in {0..13}; do
   modified_count=$(find_modified_between "$CRM_DIR" "$date_ymd" "$next_date" | wc -l | tr -d ' ')
   
   # Count contacts with Last Contact date of this date
-  touched_count=$(find "$CRM_DIR" -type f -name "*.md" -exec grep -l "^Last Contact: $date_ymd" {} \; 2>/dev/null | wc -l)
+  touched_count=$(find "$CRM_DIR" -type f -name "*.md" -exec grep -l "^Last Contact: $date_ymd" {} \; 2>/dev/null | wc -l | tr -d ' ')
   
   # Add datapoint to rolofresh goal
   echo "Syncing rolofresh: $modified_count modified CRM docs for $date_ymd"
