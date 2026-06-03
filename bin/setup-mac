@@ -148,6 +148,20 @@ for model in qwen2.5-coder:14b qwen2.5-coder:7b; do
     fi
 done
 
+log_section "LaunchAgents"
+# Bootstrap hand-written LaunchAgents tracked in dotfiles (brew-managed ones
+# like colima/ollama are handled by `brew services` above). Idempotent:
+# skip any agent launchd already knows about.
+for plist in "$HOME"/Library/LaunchAgents/net.activitywatch.aw-qt.plist; do
+    [ -f "$plist" ] || continue
+    label=$(basename "$plist" .plist)
+    if launchctl print "gui/$(id -u)/$label" &>/dev/null; then
+        log_success "$label already loaded"
+    else
+        run "bootstrap $label" launchctl bootstrap "gui/$(id -u)" "$plist"
+    fi
+done
+
 log_section "xbar"
 mkdir -p "$HOME/Library/Application Support/xbar"
 if [ ! -L "$HOME/Library/Application Support/xbar/plugins" ]; then
