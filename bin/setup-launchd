@@ -22,12 +22,27 @@ for template in "$HOME/.config/launchd/"*.plist; do
     envsubst '${HOME}' < "$template" > "$dest"
     echo "  Installed $dest"
 
-    # Reload: remove any existing instance, then load fresh.
+    # Unload any existing instance, then wait for it to actually disappear.
+    # bootout is async; bootstrapping too soon races and fails with
+    # "5: Input/output error" (common with KeepAlive agents like aw-qt).
     launchctl bootout "$domain/$label" 2>/dev/null || true
-    launchctl bootstrap "$domain" "$dest"
-    echo "  Loaded $label"
+    for _ in $(seq 1 20); do
+        launchctl print "$domain/$label" &>/dev/null || break
+        sleep 0.3
+    done
+
+    if launchctl bootstrap "$domain" "$dest" 2>/dev/null; then
+        echo "  Loaded $label"
+    else
+        # Still registered (transient) — force a restart instead of failing.
+        if launchctl kickstart -k "$domain/$label" 2>/dev/null; then
+            echo "  Reloaded $label (kickstart)"
+        else
+            echo "  WARN: could not (re)load $label" >&2
+        fi
+    fi
 done
 
 echo ""
-echo "Done! Loaded com.narthur.* agents:"
-launchctl list | grep -E "com\.narthur\." || echo "  (none)"
+echo "Done! Loaded agents:"
+launchctl list | grep -E "com\.narthur\.|net\.activitywatch\." || echo "  (none)"

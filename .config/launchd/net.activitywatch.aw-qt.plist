@@ -18,8 +18,8 @@
 	<key>LimitLoadToSessionType</key>
 	<string>Aqua</string>
 	<key>StandardOutPath</key>
-	<string>/Users/narthur/Library/Logs/activitywatch.log</string>
+	<string>${HOME}/Library/Logs/activitywatch.log</string>
 	<key>StandardErrorPath</key>
-	<string>/Users/narthur/Library/Logs/activitywatch.log</string>
+	<string>${HOME}/Library/Logs/activitywatch.log</string>
 </dict>
 </plist>

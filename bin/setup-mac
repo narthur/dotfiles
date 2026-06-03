@@ -149,21 +149,10 @@ for model in qwen2.5-coder:14b qwen2.5-coder:7b; do
 done
 
 log_section "LaunchAgents"
-# Install + (re)load LaunchAgents templated from ~/.config/launchd (e.g. crm-sync-bm).
+# Install + (re)load all hand-maintained LaunchAgents templated from
+# ~/.config/launchd (crm-sync-bm, aw-qt). brew-managed agents like
+# colima/ollama are handled by `brew services` above.
 run "setup launchd agents" setup-launchd
-
-# Bootstrap hand-written LaunchAgents tracked in dotfiles (brew-managed ones
-# like colima/ollama are handled by `brew services` above). Idempotent:
-# skip any agent launchd already knows about.
-for plist in "$HOME"/Library/LaunchAgents/net.activitywatch.aw-qt.plist; do
-    [ -f "$plist" ] || continue
-    label=$(basename "$plist" .plist)
-    if launchctl print "gui/$(id -u)/$label" &>/dev/null; then
-        log_success "$label already loaded"
-    else
-        run "bootstrap $label" launchctl bootstrap "gui/$(id -u)" "$plist"
-    fi
-done
 
 log_section "xbar"
 mkdir -p "$HOME/Library/Application Support/xbar"
