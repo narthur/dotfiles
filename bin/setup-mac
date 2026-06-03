@@ -149,6 +149,9 @@ for model in qwen2.5-coder:14b qwen2.5-coder:7b; do
 done
 
 log_section "LaunchAgents"
+# Install + (re)load LaunchAgents templated from ~/.config/launchd (e.g. crm-sync-bm).
+run "setup launchd agents" setup-launchd
+
 # Bootstrap hand-written LaunchAgents tracked in dotfiles (brew-managed ones
 # like colima/ollama are handled by `brew services` above). Idempotent:
 # skip any agent launchd already knows about.
