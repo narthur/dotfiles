@@ -89,6 +89,16 @@ Personal dotfiles and scripts for Linux and macOS.
   - asdf plugins (nodejs, pnpm, ruby)
   - Colored output with progress logging
 
+### macOS LaunchAgents
+
+- **`Library/LaunchAgents/net.activitywatch.aw-qt.plist`** - Starts ActivityWatch at login
+  - Launches `aw-qt` (the tray manager that spawns the server + watchers)
+  - `RunAtLoad` so it starts on login; `KeepAlive`/`SuccessfulExit=false` restarts it if it crashes
+  - Logs to `~/Library/Logs/activitywatch.log`
+  - Load it (or after editing): `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/net.activitywatch.aw-qt.plist`
+  - Reload after changes: `launchctl bootout gui/$(id -u)/net.activitywatch.aw-qt` then bootstrap again
+  - (Linux equivalent: ActivityWatch autostart is handled by i3 / the desktop session, not this plist)
+
 ### Cron
 
 - **`.config/crontab`** - Cron job definitions
