@@ -51,10 +51,27 @@ curl -s --max-time 1 -o /dev/null -X POST "$AW_URL/api/0/buckets/$bucket" \
   -H 'Content-Type: application/json' \
   -d "{\"client\":\"aw-watcher-claude\",\"type\":\"claudecode.activity\",\"hostname\":\"$host\"}" 2>/dev/null
 
-# Only project/file/language go into the event data — keeping it stable is what
-# lets heartbeats merge into continuous events. (tool/cwd live in the state file
-# for debugging but are intentionally not part of the bucket data.)
-data=$(jq -c '{project: (.project // ""), file: (.file // ""), language: (.language // "")}' "$STATE" 2>/dev/null)
+# Event data. project/file/language drive per-project/per-file durations and
+# server-side categorize() (which matches all data values). app/title exist so the
+# *web UI* categorizer can see us at all: it only tests data.app and data.title
+# (aw-webui CLASSIFY_KEYS = ['app','title'], no way to add fields), so without them
+# no category rule in the browser can ever match a Claude event. app is constant
+# ("Claude Code") for a catch-all rule; title concatenates project/file/language so
+# regex rules can target any of them. All fields are deterministic from the same
+# inputs, so consecutive identical states still merge into one continuous event.
+# (tool/cwd stay in the state file for debugging, out of the bucket data.)
+data=$(jq -c '
+  (.project // "")  as $p |
+  (.file // "")     as $f |
+  (.language // "") as $l |
+  {
+    app: "Claude Code",
+    title: ([$p, $f, (if $l != "" then "(" + $l + ")" else empty end)]
+            | map(select(. != "")) | join(" — ")),
+    project: $p,
+    file: $f,
+    language: $l
+  }' "$STATE" 2>/dev/null)
 [ -z "$data" ] && exit 0
 
 ts=$(date -u +%Y-%m-%dT%H:%M:%S.000000+00:00)
