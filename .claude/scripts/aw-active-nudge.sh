@@ -32,4 +32,12 @@ fi
 # Keepalive heartbeat so the activity event stays continuous through long tools.
 "$HOME/.claude/scripts/aw-claude-heartbeat.sh" >/dev/null 2>&1
 
+# Belt-and-suspenders against idle *system* sleep while Claude is working (the
+# cliclick tap already keeps the display awake, which normally prevents system
+# sleep too). Held in the foreground but for less than the 30s launchd interval, so
+# each run finishes before the next is due (no skipped beats) and the assertion
+# lapses on its own ~25s after Claude goes idle. System sleep only — display is free
+# to dim. No effect on clamshell/lid-closed sleep, and can't wake an asleep Mac.
+caffeinate -i -t 25 >/dev/null 2>&1
+
 exit 0
