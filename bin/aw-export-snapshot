@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Snapshot ActivityWatch settings (category filters/classes + views) into the
+# dotprivate-tracked settings.json, committing only when something changed.
+#
+# Run on a schedule via cron (see ~/.config/crontab). Safe to run unattended:
+#   - no-ops quietly if ActivityWatch isn't reachable (e.g. just after wake/boot,
+#     or not installed on this machine), so it stays cross-platform-friendly;
+#   - exports to a temp file first, so a failed/partial export can never clobber
+#     the tracked settings.json;
+#   - commits to the dotprivate bare repo only when the snapshot actually differs.
+# Pushing is left to the normal dotfiles-sync flow.
+set -euo pipefail
+
+AW_URL="${AW_URL:-http://localhost:5600}"
+SETTINGS="$HOME/.config/activitywatch/settings.json"
+dotprivate() { git --git-dir="$HOME/.dotfiles-private" --work-tree="$HOME" "$@"; }
+
+# Skip quietly if ActivityWatch isn't up. This is expected (machine just woke,
+# AW not installed here), not an error, so exit 0 to keep cron logs clean.
+if ! curl -sf "$AW_URL/api/0/settings" >/dev/null 2>&1; then
+  echo "ActivityWatch not reachable at $AW_URL; skipping snapshot."
+  exit 0
+fi
+
+# Export to a temp file first so a partial export can't truncate the real file.
+TMP="$(mktemp)"
+trap 'rm -f "$TMP"' EXIT
+aw-export "$TMP"
+
+# Trust the export only if it actually contains a classes array.
+if ! jq -e '.classes | type == "array"' "$TMP" >/dev/null 2>&1; then
+  echo "Export produced no 'classes' array; leaving existing settings untouched." >&2
+  exit 1
+fi
+
+# Nothing to do if the snapshot is byte-identical (jq output is deterministic).
+if [[ -f "$SETTINGS" ]] && cmp -s "$TMP" "$SETTINGS"; then
+  echo "No change in ActivityWatch settings; nothing to commit."
+  exit 0
+fi
+
+# Regression guard: a reset/corrupted AW (or a bad cross-machine sync) reports the
+# default rule set, which is far smaller than a tuned one. Refuse to overwrite the
+# tracked backup with a snapshot that loses a large share of category-rule detail —
+# otherwise the backup quietly inherits the loss (this exact thing happened once).
+# Override with AW_ALLOW_SHRINK=1 for an intentional big pruning.
+terms() { jq '[.classes[] | (.rule.regex // "") | select(.!="") | split("|") | length] | add // 0' "$1"; }
+if [[ -f "$SETTINGS" && "${AW_ALLOW_SHRINK:-0}" != "1" ]]; then
+  new_terms=$(terms "$TMP"); old_terms=$(terms "$SETTINGS")
+  if (( old_terms > 0 && new_terms * 2 < old_terms )); then
+    echo "REFUSING to snapshot: regex-term count dropped ${old_terms} -> ${new_terms}" >&2
+    echo "  This looks like an ActivityWatch reset, not an edit. Tracked backup left untouched." >&2
+    echo "  If intentional, re-run with AW_ALLOW_SHRINK=1. To restore the backup into AW: aw-import" >&2
+    exit 1
+  fi
+fi
+
+mkdir -p "$(dirname "$SETTINGS")"
+mv "$TMP" "$SETTINGS"
+trap - EXIT
+
+count="$(jq '.classes | length' "$SETTINGS")"
+dotprivate add "$SETTINGS"
+dotprivate commit -q -m "chore(aw): snapshot ActivityWatch settings (${count} categories)"
+echo "Committed updated ActivityWatch settings snapshot (${count} categories)."
