@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Ensure Claude Code's ActivityWatch activity-tracking hooks are registered in the
+# machine-local (un-tracked) ~/.claude/settings.json. Idempotent: safe to run
+# repeatedly; only appends a hook entry if one running the script isn't already
+# present, and preserves any existing hooks (e.g. heroku-guard).
+# See Fieldnotes "ActivityWatch Claude Code Tracking".
+set -e
+
+SETTINGS="$HOME/.claude/settings.json"
+CMD="~/.claude/hooks/aw-active-ping.sh"
+
+if ! command -v jq >/dev/null 2>&1; then
+    echo "  jq not found; skipping Claude hook registration" >&2
+    exit 0
+fi
+
+mkdir -p "$HOME/.claude"
+[ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
+
+if ! jq -e . "$SETTINGS" >/dev/null 2>&1; then
+    echo "  $SETTINGS is not valid JSON; skipping (won't risk clobbering it)" >&2
+    exit 0
+fi
+
+tmp="$(mktemp)"
+# PreToolUse + PostToolUse get a wildcard matcher; UserPromptSubmit takes no
+# matcher. For each, append our entry only if no existing hook already runs CMD.
+jq --arg cmd "$CMD" '
+  (.hooks //= {})
+  | (.hooks.PreToolUse //= [])
+  | (.hooks.PostToolUse //= [])
+  | (.hooks.UserPromptSubmit //= [])
+  | (if any(.hooks.PreToolUse[]?.hooks[]?; .command == $cmd) then .
+     else .hooks.PreToolUse += [{matcher: "*", hooks: [{type: "command", command: $cmd, async: true}]}] end)
+  | (if any(.hooks.PostToolUse[]?.hooks[]?; .command == $cmd) then .
+     else .hooks.PostToolUse += [{matcher: "*", hooks: [{type: "command", command: $cmd, async: true}]}] end)
+  | (if any(.hooks.UserPromptSubmit[]?.hooks[]?; .command == $cmd) then .
+     else .hooks.UserPromptSubmit += [{hooks: [{type: "command", command: $cmd, async: true}]}] end)
+' "$SETTINGS" > "$tmp"
+
+if jq -e . "$tmp" >/dev/null 2>&1; then
+    mv "$tmp" "$SETTINGS"
+    echo "  Claude activity hooks registered in $SETTINGS"
+else
+    rm -f "$tmp"
+    echo "  Failed to produce valid settings.json; left existing file untouched" >&2
+    exit 1
+fi

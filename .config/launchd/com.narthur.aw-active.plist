@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.narthur.aw-active</string>
+
+    <!-- Keeps ActivityWatch from marking the Mac AFK while Claude Code is working
+         (including via the phone app), and records Claude's activity to a
+         dedicated bucket. Runs every 30s; the script no-ops unless Claude was
+         active in the last ~150s. Invoked directly (not via cron-run) to avoid a
+         log line every 30 seconds. See Fieldnotes "ActivityWatch Claude Code Tracking". -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>${HOME}/.claude/scripts/aw-active-nudge.sh</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>StartInterval</key>
+    <integer>30</integer>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

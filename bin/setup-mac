@@ -102,6 +102,11 @@ else
     log_success "claude already installed"
 fi
 
+log_section "Claude Code Hooks"
+# Register the ActivityWatch activity-tracking hooks in the machine-local
+# ~/.claude/settings.json (which isn't tracked in dotfiles). Idempotent.
+run "register Claude activity hooks" setup-claude-hooks
+
 log_section "Bun"
 if ! command -v bun &>/dev/null; then
     log "bun not found, installing..."
@@ -150,8 +155,8 @@ done
 
 log_section "LaunchAgents"
 # Install + (re)load all hand-maintained LaunchAgents templated from
-# ~/.config/launchd (crm-sync-bm, aw-qt). brew-managed agents like
-# colima/ollama are handled by `brew services` above.
+# ~/.config/launchd (crm-sync-bm, aw-qt, aw-active, backup-urls). brew-managed
+# agents like colima/ollama are handled by `brew services` above.
 run "setup launchd agents" setup-launchd
 
 log_section "xbar"
