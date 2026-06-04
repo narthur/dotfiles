@@ -31,6 +31,7 @@ cask "activitywatch"
 cask "xbar"
 cask "copilot-cli"
 cask "discord"
+cask "obsidian"
 cask "zed"
 # flatpak directives are Linux-only; brew bundle silently skips them on macOS
 flatpak "com.slack.Slack"
