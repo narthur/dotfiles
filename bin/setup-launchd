@@ -45,4 +45,4 @@ done
 
 echo ""
 echo "Done! Loaded agents:"
-launchctl list | grep -E "com\.narthur\.|net\.activitywatch\." || echo "  (none)"
+launchctl list | grep -E "com\.narthur\." || echo "  (none)"
