@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# dependabot-overlap — Detect whether an open non-Dependabot PR touches the same
+# package manifest(s) as a given Dependabot PR.
+#
+# Purpose: guard the auto-merge of Dependabot dependency bumps. Auto-merging a
+# bump while a human PR edits the same package.json creates conflict churn in
+# that human PR (it has to re-resolve lockfile/version lines). When this script
+# reports an overlap, triage should NOT auto-merge — defer the bump to the user.
+#
+# Usage: dependabot-overlap <pr-number> [--repo owner/repo]
+#
+# Prints overlapping PRs as "  #<n>: <manifest>" lines (one per overlap).
+#
+# Exit codes:
+#   0 — overlap found (DO NOT auto-merge; defer to user)
+#   1 — no overlap (safe to auto-merge, subject to the usual green+mergeable+bump-type checks)
+#   2 — usage error or API failure
+#
+# Scope notes:
+#   - Only package.json manifests are compared. Lockfiles (pnpm-lock.yaml etc.)
+#     are intentionally ignored: a lockfile changes on nearly every dependency
+#     PR, so comparing it would flag everything.
+#   - Draft PRs are excluded: they are not landing imminently, and blocking all
+#     bumps for a package on a long-lived draft is worse than the minor churn of
+#     resolving a conflict in that draft later.
+#   - An action-only bump (e.g. actions/checkout) changes no package.json, so it
+#     can never overlap and always exits 1.
+#
+# Written for bash 3.2 (macOS default): no mapfile, no empty-array expansion.
+
+set -euo pipefail
+
+repo=""
+pr=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo) repo="$2"; shift 2 ;;
+    -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+    *) pr="$1"; shift ;;
+  esac
+done
+
+if [[ -z "$pr" ]]; then
+  echo "Usage: dependabot-overlap <pr-number> [--repo owner/repo]" >&2
+  exit 2
+fi
+
+# gh wrapper that appends --repo only when set (avoids empty-array under set -u).
+ghv() {
+  if [[ -n "$repo" ]]; then gh "$@" --repo "$repo"; else gh "$@"; fi
+}
+
+# Manifests the Dependabot PR changes (package.json only), newline-separated.
+dep_manifests=$(ghv pr view "$pr" --json files \
+  -q '.files[].path | select(endswith("package.json"))' 2>/dev/null) \
+  || { echo "error: could not read PR #$pr files" >&2; exit 2; }
+
+# No manifest touched (e.g. github-actions bump) → no overlap possible.
+[[ -z "$dep_manifests" ]] && exit 1
+
+# Open non-Dependabot, non-draft PR numbers to compare against.
+others=$(ghv pr list --state open --json number,author,isDraft \
+  -q '.[] | select((.author.login != "app/dependabot") and (.isDraft | not)) | .number' 2>/dev/null) \
+  || { echo "error: could not list open PRs" >&2; exit 2; }
+
+found=0
+while IFS= read -r other; do
+  [[ -z "$other" || "$other" == "$pr" ]] && continue
+  other_files=$(ghv pr view "$other" --json files -q '.files[].path' 2>/dev/null) || continue
+  while IFS= read -r m; do
+    [[ -z "$m" ]] && continue
+    if grep -qxF "$m" <<<"$other_files"; then
+      printf '  #%s: %s\n' "$other" "$m"
+      found=1
+    fi
+  done <<<"$dep_manifests"
+done <<<"$others"
+
+[[ "$found" -eq 1 ]] && exit 0
+exit 1

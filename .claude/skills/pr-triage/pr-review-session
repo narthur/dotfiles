@@ -188,14 +188,20 @@ get_prioritized_actionable_prs() {
      else (.author.login // "unknown")
      end) as $owner |
 
+    # Bots whose PRs the user drives autonomously (no human review required to
+    # reach "merge"): the github-actions app and Dependabot. Dependabot PRs are
+    # surfaced here so triage can auto-merge green patch/minor bumps; the
+    # major-bump gate lives in the pr-triage skill, not in this query.
+    ((.author.login // "unknown") | (. == "app/github-actions" or . == "app/dependabot")) as $autoBot |
+
     # NOTE: Action logic is duplicated in ~/bin/prs
     # If you change this, update that file too.
-    (if ($owner == $me or (.author.login // "unknown") == "app/github-actions") then
+    (if ($owner == $me or $autoBot) then
       if $merge == "CONFLICTING" then "resolve conflicts"
       elif $ci == "fail" then "fix ci"
       elif $changes == "yes" then "respond"
-      elif ($review == "approved" or ((.author.login // "unknown") == "app/github-actions" and ($review == "none" or $review == "awaiting"))) and $ci == "pass" and $merge == "MERGEABLE" then "merge"
-      elif $review == "none" and (.isDraft | not) and (.author.login // "unknown") != "app/github-actions" and $ci != "awaiting" then "add reviewers"
+      elif ($review == "approved" or ($autoBot and ($review == "none" or $review == "awaiting"))) and $ci == "pass" and $merge == "MERGEABLE" then "merge"
+      elif $review == "none" and (.isDraft | not) and ($autoBot | not) and $ci != "awaiting" then "add reviewers"
       elif .isDraft then "work on"
       else ""
       end
@@ -223,6 +229,7 @@ get_prioritized_actionable_prs() {
       author: ((.author.login // "unknown") |
         if . == "app/copilot-swe-agent" then "copilot"
         elif . == "app/github-actions" then "actions"
+        elif . == "app/dependabot" then "dependabot"
         else .
         end)
     }

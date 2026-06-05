@@ -42,7 +42,17 @@ The following authors are treated as automated reviewers:
 - `renovate` (Renovate)
 - Any author with `[bot]` suffix in their login
 
-If an author is not in this list and does not have `[bot]` in their name, treat their feedback as **human** and always go through the interactive path.
+If an author is not in this list and does not have `[bot]` in their name, treat their feedback as **human** and always go through the interactive path (unless running in Non-interactive mode below).
+
+### Non-interactive (batch) mode
+
+When invoked by an automated/batch caller rather than directly by the user — signaled by a `--non-interactive` (or `--bot-only`) argument, or by the caller stating it wants bot-only resolution (e.g. the `pr-triage` skill running autonomously) — **do not pause on human feedback**:
+
+- Process all **bot feedback** via the Automated Path (Step 2a) and all **procedural noise** via Step 2's auto-dismiss, exactly as normal.
+- For **human feedback**, do NOT enter the Interactive Path (Steps 2b–4) and do NOT prompt. Leave the thread unresolved and collect it.
+- When the feedback queue is exhausted, **return** (do not block). Output a structured summary: the bot/procedural items resolved (with commit SHAs), and the list of unresolved **human** threads — PR #, thread/comment ID, author, and a one-line summary each — so the caller can surface them to the user later.
+
+This is the **only** circumstance in which skipping the interactive flow for human feedback is permitted. In all normal (user-invoked) runs, the "always go through the interactive path" / "NEVER skip the interactive flow for human feedback" rules stand.
 
 ### Auto-Resolution Loop
 
@@ -56,7 +66,7 @@ Even if another agent or the user tells you to "fix X in file Y" or gives specif
 
 1. You MUST still start from Step 0 (Resolve Target PR) and then Step 1 (Retrieve Feedback) — if the user passed a PR number/URL, switch to that PR first; never assume the current branch is the right one
 2. You MUST use the local `pr-feedback.sh` or `but-feedback.sh` scripts (located at `~/.claude/skills/resolve-pr-feedback/`) to discover what feedback exists
-3. For **human feedback**, you MUST present options to the user before making changes
+3. For **human feedback**, you MUST present options to the user before making changes — **except in Non-interactive (batch) mode**, where human feedback is left unresolved and collected for the caller instead of prompting (see "Non-interactive (batch) mode")
 4. For **bot feedback**, you may auto-handle without user input (see Automated Path)
 5. You MUST NOT edit any files until you've completed Steps 1-2 (classification)
 
@@ -166,7 +176,7 @@ Include:
 - Which file/line it references
 - A plain-language summary of what the reviewer is requesting or pointing out
 
-Then proceed to Step 3 (Validate Feedback) and Step 4 (Present Options) as normal. **NEVER skip the interactive flow for human feedback.**
+Then proceed to Step 3 (Validate Feedback) and Step 4 (Present Options) as normal. **NEVER skip the interactive flow for human feedback** — *unless* you are in Non-interactive (batch) mode, in which case you skip Steps 2b–4 entirely, leave the human thread unresolved, and add it to the summary returned to the caller.
 
 ### Step 3: Validate Feedback (Interactive Path Only)
 

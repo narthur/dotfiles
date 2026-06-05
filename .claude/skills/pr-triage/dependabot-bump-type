@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# dependabot-bump-type — Classify a Dependabot PR's semver bump from its title.
+#
+# Usage: dependabot-bump-type <pr-number> [--repo owner/repo]
+#
+# Prints one of: minor-patch | major | unknown
+#
+# Exit codes:
+#   0 — minor-patch  (safe to auto-merge under the patch+minor policy)
+#   1 — major        (defer to the user; major bumps need manual review)
+#   2 — unknown      (could not classify — group updates, odd titles, downgrades,
+#                     API/usage errors; treat as "defer to user" to be safe)
+#
+# Notes:
+#   - Parses the "from <X> to <Y>" tokens in the PR title (the standard
+#     Dependabot format) rather than relying on an Action's metadata output.
+#   - Treats 0.x minor bumps as "major": under semver, a minor bump while the
+#     major is 0 (e.g. 0.4.x -> 0.5.0) may be breaking, so it is deferred.
+
+set -euo pipefail
+
+repo=""
+pr=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo) repo="$2"; shift 2 ;;
+    -h|--help)
+      grep '^#' "$0" | sed 's/^# \{0,1\}//'
+      exit 2 ;;
+    *) pr="$1"; shift ;;
+  esac
+done
+
+if [[ -z "$pr" ]]; then
+  echo "Usage: dependabot-bump-type <pr-number> [--repo owner/repo]" >&2
+  exit 2
+fi
+
+view_args=(--json title)
+[[ -n "$repo" ]] && view_args+=(--repo "$repo")
+
+title=$(gh pr view "$pr" "${view_args[@]}" -q .title 2>/dev/null) || { echo unknown; exit 2; }
+
+# Pull the "from X to Y" version tokens. Group updates ("Bump the foo group with
+# 3 updates") have no single from/to pair and fall through to unknown.
+if [[ "$title" =~ [Ff]rom[[:space:]]+([^[:space:]]+)[[:space:]]+to[[:space:]]+([^[:space:]]+) ]]; then
+  from="${BASH_REMATCH[1]}"
+  to="${BASH_REMATCH[2]}"
+else
+  echo unknown; exit 2
+fi
+
+# Echo "<major> <minor>" for a version string, stripping a leading "v" and any
+# non-numeric suffix on each segment (e.g. "1.2.3-beta" -> "1 2").
+ver_segments() {
+  local v="${1#v}"
+  local maj="${v%%.*}"
+  maj="${maj%%[^0-9]*}"
+  local min=0
+  if [[ "$v" == *.* ]]; then
+    local rest="${v#*.}"
+    min="${rest%%.*}"
+    min="${min%%[^0-9]*}"
+  fi
+  printf '%s %s\n' "${maj:-0}" "${min:-0}"
+}
+
+read -r fmaj fmin < <(ver_segments "$from")
+read -r tmaj tmin < <(ver_segments "$to")
+
+# Guard against non-numeric parses.
+if ! [[ "$fmaj" =~ ^[0-9]+$ && "$tmaj" =~ ^[0-9]+$ && "$fmin" =~ ^[0-9]+$ && "$tmin" =~ ^[0-9]+$ ]]; then
+  echo unknown; exit 2
+fi
+
+if (( tmaj > fmaj )); then
+  echo major; exit 1
+elif (( tmaj < fmaj )); then
+  echo unknown; exit 2          # downgrade — unusual, let a human look
+elif (( fmaj == 0 && tmin > fmin )); then
+  echo major; exit 1            # 0.x minor bump is potentially breaking
+elif (( fmaj == 0 && tmin < fmin )); then
+  echo unknown; exit 2          # 0.x downgrade
+else
+  echo minor-patch; exit 0
+fi

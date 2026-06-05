@@ -1,23 +1,152 @@
 ---
 name: pr-triage
-description: "Go through open pull requests, check their status, and take actions to move them forward. This includes triaging PRs, fixing CI, resolving feedback, merging, or managing PR workflow. Use when asked to triage PRs, go through open PRs, or manage PR workflow."
+description: "Go through open pull requests, check their status, and take actions to move them forward. This includes triaging PRs, fixing CI, resolving feedback, merging, or managing PR workflow. Use when asked to triage PRs, go through open PRs, or manage PR workflow. Runs autonomously by default on the user's own PRs — rebasing, resolving conflicts, fixing CI, and applying bot feedback without input — and only returns to the user once it has exhausted all autonomous work."
 ---
 
-You are helping the user triage their open pull requests. Your role is to assess PR status, identify blockers, and take actions to move PRs forward toward merging.
+You are helping the user triage their open pull requests. Your role is to assess PR status, identify blockers, and take actions to move PRs forward toward merging. **By default you operate autonomously** (see "Autonomous Operation" below): work every eligible PR as far as you can on your own, and only return to the user once nothing autonomous remains.
 
 ## What You Do
 
-- Help users work through their open PRs systematically
+- Work through the user's open PRs systematically and autonomously
 - Assess each PR's status (CI, reviews, conflicts, feedback)
 - Identify what's blocking each PR
-- Execute actions to unblock PRs (fix CI, resolve feedback, request reviews, merge)
-- Track progress through review sessions
+- Execute unblocking actions yourself (integrate base/resolve conflicts, fix CI, apply bot feedback, request reviews)
+- Batch the decisions that are the user's to make (merge, mark-ready) and anything you can't handle into a single request at the end
 
 ## What You Don't Do
 
 - You don't perform code reviews yourself (the user has other tooling for that)
-- You don't make judgment calls about code quality
-- You focus on workflow and status, not review content
+- You don't apply **human** review feedback without confirmation, or make code-quality judgment calls on it
+- You never merge a PR or flip a draft to ready on your own — those are always the user's call (the **one exception** is low-risk Dependabot bumps; see "Dependabot PRs")
+- You don't act on PRs that aren't the user's to drive (someone else's, or assigned away)
+
+## Autonomous Operation (default)
+
+Unless the user explicitly asks for interactive/step-by-step triage, run **autonomously**: work every eligible PR as far as you can without input, and only return to the user once you have exhausted all autonomous work across **all** eligible PRs. Reaching a mergeable or ready state on one PR is **not** a reason to stop — keep working the others first.
+
+### Eligible PRs
+
+A PR is **eligible** for autonomous handling when it is the user's to drive:
+
+- authored by the user **and** not assigned to someone else (no assignees, or the user is among them), **or**
+- assigned to the user (regardless of author), **or**
+- authored by **Dependabot** (`app/dependabot`) — see "Dependabot PRs" below for the special auto-merge handling these get.
+
+Compute the current user and the eligible set at the start of the run:
+
+```bash
+me=$(gh api user -q .login)
+gh pr list --state open --json number,title,author,assignees,isDraft | \
+  jq --arg me "$me" '[ .[]
+    | select(
+        ((.author.login == $me) and ((.assignees | length) == 0 or any(.assignees[]; .login == $me)))
+        or any(.assignees[]; .login == $me)
+        or (.author.login == "app/dependabot")
+      )
+    | {number, title, isDraft} ]'
+```
+
+PRs that are **not** eligible (someone else's, or assigned away) are out of scope for autonomous changes. Don't rebase/fix/push them; just note them in the final report (and, for others' code, you may still offer a CodeRabbit review via the normal menu).
+
+### Autonomous actions — do these without asking
+
+For each eligible PR, take every applicable action, committing and pushing as you go. Drive PR selection through the session (`next`) but apply the eligibility filter above before acting.
+
+- **Integrate base / resolve conflicts** — rebase or merge `origin/<base>` and resolve conflicts yourself, keeping both sides' intent. Prefer a **merge** over a rebase when the branch's history already uses merges or has internal churn that would make a rebase replay the same conflicts repeatedly. Verify with the affected package's tests/typecheck before pushing. See "Option 3 - Fix conflicts".
+- **Fix failing CI** — fix real failures in the worktree; re-run only genuinely-transient checks. See "Option 1 - Fix failing CI".
+- **Apply bot feedback** — run `/resolve-pr-feedback <pr#> --non-interactive` (its Non-interactive/batch mode). It applies all **bot** and procedural feedback automatically and, critically, **does NOT pause on human feedback** — it returns the list of unresolved human threads instead. Take that list, add each human thread to the deferred items for the final request, and keep going. **Never let feedback resolution block autonomous work**: resolve what's auto-resolvable, defer the rest, and move on to the next action on this or another eligible PR.
+- **Request a CodeRabbit review** when `cr-needs-review <n>` reports unreviewed commits, so feedback is waiting by the time you finish a pass.
+
+After any push, CI re-runs. Don't block on it — move to the next eligible PR and revisit (re-`view`) once CI settles.
+
+### Gated actions — NEVER do automatically
+
+- **Merge** (`gh pr merge`) — never merge on your own. **Exception:** green, mergeable, `minor-patch` Dependabot PRs are auto-merged (see "Dependabot PRs"); every other PR's merge is gated.
+- **Mark a draft ready** (`gh pr ready`) — do all prep on eligible drafts, but never flip draft→ready on your own.
+
+Both are batched into the single final request below.
+
+### Dependabot PRs (auto-merge exception)
+
+Dependabot PRs (`app/dependabot`) are the **one exception** to "never merge automatically". They are dependency bumps, not the user's own code, and the user has opted into hands-off handling for the low-risk ones. Handle them like this:
+
+1. **Classify the bump** with the helper:
+
+   ```bash
+   ~/.claude/skills/pr-triage/dependabot-bump-type <number>
+   # stdout: minor-patch | major | unknown
+   # exit 0 = minor-patch, 1 = major, 2 = unknown
+   ```
+
+2. **Overlap guard — check for a competing human PR before auto-merging.** If an open non-Dependabot PR edits the same `package.json` this bump touches, auto-merging will pile conflict churn onto that human PR (it has to re-resolve the lockfile/version lines every time a bump lands). Run:
+
+   ```bash
+   ~/.claude/skills/pr-triage/dependabot-overlap <number>
+   # exit 0 = overlap found → DO NOT auto-merge; defer to user
+   # exit 1 = no overlap   → safe to auto-merge (still subject to the checks below)
+   # exit 2 = error
+   ```
+
+   On exit 0, treat the bump as deferred: note it in the final request as "subsumed by / overlaps #<n> — held to avoid conflict churn" and move on. Do **not** auto-merge it even if it is green + `minor-patch`. (An action-only bump like `actions/checkout` touches no manifest and always reports no overlap.)
+
+3. **Decide by state** (only when the overlap guard reports clear):
+
+   - **Green + mergeable + `minor-patch`** → **auto-merge it** (the exception). Use the repo's default merge method, defaulting to squash: `gh pr merge <number> --squash` (or `--merge`/`--rebase` to match repo settings). Log it and move on. Do **not** add it to the final batched request — it's done.
+   - **Green + mergeable + `major` or `unknown`** → do **not** merge. Defer to the final batched request under "Ready to merge" with the bump type noted (e.g. "major: 4.x → 5.x — your call"). Major bumps and unclassifiable titles (group updates, odd version strings) always need the user's judgment.
+   - **CI failing** → do **not** try to fix a dependency bump in-tree. A genuinely failing bump usually means the new version breaks something, which is a decision for the user — defer it to the final request with the failing check named. Only re-run a check that is plainly transient (timeout, network, runner error); never hand-edit the dependency to make CI pass.
+
+4. **Conflicts / behind base** → **never** manually rebase or force-push a Dependabot branch (it desyncs Dependabot and it'll just recreate the PR). Instead comment `@dependabot rebase` and move on; revisit the PR on a later pass once Dependabot has updated it:
+
+   ```bash
+   gh pr comment <number> --body "@dependabot rebase"
+   ```
+
+5. **Bot feedback** on Dependabot PRs (e.g. CodeRabbit) is informational — don't block on it. Apply trivially-safe auto-fixes if `/resolve-pr-feedback --non-interactive` handles them, otherwise leave it; the merge decision is driven by CI + bump type, not by review threads.
+
+Everything Dependabot-related still goes in the activity log: classification result, each `@dependabot rebase` comment, each auto-merge (with SHA), and each deferral with its reason.
+
+### Exhaustion loop
+
+Cycle through the eligible set until a **full pass makes no new autonomous change** on any PR **and no eligible PR has CI still running**. Treat a PR as settled for the pass when it is either:
+
+1. green + mergeable (awaiting your merge decision), or a fully-prepped draft (awaiting your mark-ready decision); or
+2. blocked on something only the user can resolve (recorded for the final request).
+
+Re-evaluate the whole set each pass — fixing or landing one PR can unblock or reorder another (e.g. two PRs touching the same lines, where the second needs a rebase after the first lands).
+
+### Final request — only after exhaustion
+
+Return to the user **once**, with a single consolidated report covering every eligible PR:
+
+- **Ready to merge** — ask which to merge (and in what order, if interdependent). Honor the strict gate in "Option 6".
+- **Prepped drafts** — ask which to mark ready.
+- **Needs your input** — for each, state precisely what's blocking and what you'd need: unresolved **human** feedback, CI you couldn't fix (e.g. repo-wide dependency-audit CVEs, flaky infra, or a failure needing a product decision), conflicts requiring a judgment call, or ambiguous bot feedback you declined to auto-apply.
+
+Prefer a single `AskUserQuestion` (or one compact numbered list) so the user can resolve everything in one turn.
+
+### Activity log
+
+Keep a durable, reviewable trail of everything autonomous mode does. Log to a per-repo file:
+
+```
+${XDG_CACHE_HOME:-$HOME/.cache}/pr-triage-worktrees/<owner>-<repo>/triage-activity.log
+```
+
+Append one timestamped line per meaningful action — don't overwrite. At the start of a run write a header, then log each action as you take it (not in a batch at the end, so the trail survives an interruption):
+
+```bash
+LOG="${XDG_CACHE_HOME:-$HOME/.cache}/pr-triage-worktrees/$(gh repo view --json nameWithOwner -q .nameWithOwner | tr / -)/triage-activity.log"
+mkdir -p "$(dirname "$LOG")"
+log() { printf '%s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$LOG"; }
+
+log "=== autonomous run start: $(gh repo view --json nameWithOwner -q .nameWithOwner) ==="
+log "PR #780: rebased onto origin/main, resolved 2 conflicts in shared.ts, pushed (abc1234)"
+log "PR #780: applied CodeRabbit feedback (assert issues field), tests 14/14, pushed (def5678)"
+log "PR #601: web-audit failing on repo-wide vitest CVE — deferred to user"
+log "=== run end: 3 ready to merge, 1 needs input ==="
+```
+
+Log at minimum: run start/end, each conflict resolution / CI fix / feedback application (with the pushed commit SHA), each gated item deferred, and each thing deferred to the user with the reason. Tell the user where the log lives in your final report.
 
 ## CRITICAL: Workflow Constraints
 
@@ -74,6 +203,8 @@ The `view … --web` flag still uses `gh pr view --web` (system default browser)
 
 Use the **pr-review-session** script to run triage sessions: it tracks which PRs have been reviewed in the current session, lists unreviewed PRs, and lets you move to the next unreviewed PR (with wrap). Run from the repository root.
 
+> These steps describe the session mechanics used by **both** modes. In the default **autonomous** mode (see "Autonomous Operation" above), you still drive PR selection with `next`, but you skip the per-PR menu (Step 3) for eligible PRs — taking the autonomous actions directly and logging them — and only run the single batched request once everything is exhausted.
+
 ## Workflow
 
 ### Step 1: Jump to the Top PR
@@ -115,9 +246,11 @@ Infer blockers from the summary (e.g. failing CI, unresolved feedback, merge con
 
 ### Step 3: Present Actions
 
-**MANDATORY — never skip this step.** Even when a PR looks "obviously" ready to merge, close, or otherwise act on, you MUST present the options menu and wait for the user's selection. The action label in the session list (e.g. "action: merge") describes what the PR needs from a human; it is **not** a directive to take that action. The user's intent is captured only when they pick an option from this menu in the current turn.
+> **Autonomous mode (the default) does NOT use this per-PR menu.** In autonomous mode you take the autonomous actions directly (no menu, no per-PR confirmation) and surface only the gated decisions (merge, mark-ready) and unhandleable items, batched into the single final request described in "Autonomous Operation". Use the menu below only (a) for PRs that are **not eligible** for autonomous handling, or (b) when the user has explicitly asked for interactive/step-by-step triage.
 
-This applies in auto mode too. Auto mode is not a license to merge, close, or push without an explicit selection.
+**When you do present the menu, it is MANDATORY — never skip it.** Even when a PR looks "obviously" ready to merge, close, or otherwise act on, you MUST present the options menu and wait for the user's selection. The action label in the session list (e.g. "action: merge") describes what the PR needs from a human; it is **not** a directive to take that action.
+
+**The merge gate applies in both modes.** Merging and flipping draft→ready are never automatic: in interactive mode they require an explicit menu selection; in autonomous mode they are deferred to the final batched request. Autonomy covers prep work (conflicts, CI, bot feedback) — not merge. The **sole exception** is low-risk Dependabot bumps in autonomous mode (green, mergeable, `minor-patch`), which are auto-merged per "Dependabot PRs".
 
 Based on assessment, present relevant options:
 
@@ -211,7 +344,9 @@ gh pr ready <number>
 
 **Option 6 - Merge PR:**
 
-**Only execute this when the user has explicitly selected "Merge PR" from the Step 4 options menu in the current turn.** Do not infer merge intent from action-category labels, "Next" selections, PR size, or auto mode. If you're about to run `gh pr merge` and you cannot point to the user's most recent message picking the merge option, stop and present the options menu instead.
+**Only execute this when the user has explicitly chosen to merge in the current turn** — either by selecting "Merge PR" from the Step 4 menu (interactive mode) or by picking the PR in the autonomous final batched request. Do not infer merge intent from action-category labels, "Next" selections, PR size, or the fact that autonomous mode is running. If you're about to run `gh pr merge` and you cannot point to the user's most recent message authorizing this specific merge, stop and ask instead.
+
+**Exception — Dependabot:** a green, mergeable, `minor-patch` Dependabot PR is auto-merged in autonomous mode without explicit per-PR authorization, per the standing opt-in in "Dependabot PRs". This carve-out applies **only** to Dependabot bumps that classify as `minor-patch`; for any other PR the gate above stands.
 
 ```bash
 gh pr merge <number> --squash  # or --merge, --rebase based on repo settings
@@ -317,11 +452,13 @@ To opt out entirely (e.g. if you don't want the script touching disk), set `PR_T
 | `gh pr close <number>`                      | Close without merging                                     |
 | `gh pr edit <number> --add-reviewer <user>` | Add reviewer                                              |
 | `cr-needs-review <number>`                  | Check if PR has commits not yet reviewed by CodeRabbit    |
+| `dependabot-bump-type <number>`             | Classify a Dependabot PR's bump: `minor-patch`/`major`/`unknown` |
+| `dependabot-overlap <number>`               | Exit 0 if an open human PR touches the same manifest (defer auto-merge); exit 1 if clear |
 | `failing-actions`                           | List all failing actions across PRs                       |
 | `playwright-cli show`                       | Open Playwright dashboard (watch PR browser)              |
 | `playwright-cli goto <url> -s=pr-triage-…`  | Open a PR in the repo’s triage Playwright session         |
 
-All `pr-review-session` and `cr-needs-review` commands should be prefixed with the full path: `~/.claude/skills/pr-triage/`
+All `pr-review-session`, `cr-needs-review`, `dependabot-bump-type`, and `dependabot-overlap` commands should be prefixed with the full path: `~/.claude/skills/pr-triage/`
 
 ## Tips
 
@@ -329,6 +466,8 @@ All `pr-review-session` and `cr-needs-review` commands should be prefixed with t
 - **Actionable only**: The session only shows PRs where you have something to do. Non-actionable PRs (e.g., waiting on someone else, no review requested from you) are automatically excluded.
 - **Priority order**: PRs are automatically sorted by action priority: review > resolve conflicts > fix ci > respond > merge > add reviewers > work on. `next` always picks the highest-priority unreviewed PR.
 - **Batch triage**: Use `pr-review-session next` repeatedly to work through all actionable PRs in priority order (session tracks progress)
-- **Delegate**: For PRs that need author action, leave a comment and move on
+- **Autonomous by default**: Don't ask per-PR. Do all the prep you can on every eligible PR (the user's own / assigned), log each action, and consolidate merge/mark-ready decisions and blockers into one request at the end. See "Autonomous Operation".
+- **Activity log**: Every autonomous run appends to `${XDG_CACHE_HOME:-~/.cache}/pr-triage-worktrees/<owner>-<repo>/triage-activity.log`. Point the user to it in your final report.
+- **Delegate**: For non-eligible PRs that need someone else's action, leave a comment if useful and note them in the final report
 - **Stale PRs**: For PRs with no activity, consider closing or requesting status updates
 - **Stacked PRs**: The session only surfaces PRs targeting the default branch, so if a PR is part of a stack, it's already the next one that can land. Don't worry about the rest of the stack — treat it as an independent PR.
