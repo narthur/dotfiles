@@ -29,11 +29,13 @@ brew "withgraphite/tap/graphite"
 mas "Amphetamine", id: 937984704
 mas "Dashlane", id: 517914548
 cask "activitywatch"
+cask "claude"
 cask "xbar"
 cask "copilot-cli"
 cask "discord"
 cask "obsidian"
 cask "signal"
+cask "slack"
 cask "steam"
 cask "zed"
 # flatpak directives are Linux-only; brew bundle silently skips them on macOS
