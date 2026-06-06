@@ -179,24 +179,6 @@ When acting on a PR, prefer running commands in the printed worktree path (`cd "
 
 **Invoking other skills during triage:** any skill that operates on "the current branch" or cwd's git state (e.g. `/pr-cleanup`, `/lint`, `/jest`, `/ruby-tests`, `/coderabbit:review`) will silently audit/test the wrong code if invoked from the main repo's cwd while the PR lives in the worktree. Before invoking such a skill, `cd` into the printed `Worktree:` path so the subskill's git/test commands resolve against the PR's checkout. If a subskill auto-detects context, brief it explicitly with the worktree path.
 
-### Playwright browser for PR pages
-
-`pr-review-session` opens the PR in **Playwright** via `playwright-cli` (see the `playwright` skill) when the CLI is available. Otherwise it falls back to Firefox.
-
-- **One tab per repo triage session:** Session name is `pr-triage-<owner>-<repo>` (slashes in `owner/repo` become hyphens). Each `view` / `next` navigates that session with `goto`, so you do not accumulate tabs while stepping through PRs in one repository.
-- **Multiple repos at once:** Each repo gets its own named Playwright session (separate browser context / window), so parallel triage in different clones stays isolated.
-- **GitHub login:** Playwright does not use your system browser profile. Save auth once, then reuse it:
-  1. `mkdir -p ~/.playwright-auth`
-  2. `playwright-cli open --headed -s=github-auth`
-  3. Sign in to GitHub in the window, then confirm with the user when done.
-  4. `playwright-cli state-save ~/.playwright-auth/github.json -s=github-auth`
-  5. `playwright-cli close -s=github-auth`
-  The triage script loads `~/.playwright-auth/github.json` into each new `pr-triage-*` session the first time that session is created. If the file is missing, the PR page may show GitHub’s sign-in UI until you complete this setup.
-- **Watch the browser:** `playwright-cli show`
-- **Overrides:** `PR_REVIEW_NO_PLAYWRIGHT=1` forces the legacy Firefox new-tab behavior. `PLAYWRIGHT_CLI` sets the path to `playwright-cli` (default `~/.local/bin/playwright-cli`, then `PATH`).
-
-The `view … --web` flag still uses `gh pr view --web` (system default browser), not Playwright.
-
 ---
 
 # PR Triage Session Workflow
@@ -223,7 +205,6 @@ Other ways to land on a PR once the loop is running:
 
 - **Specific PR by number**: `~/.claude/skills/pr-triage/pr-review-session view <number>` — shows that PR and sets it as current for the next `next`.
 - **Current branch's PR**: `~/.claude/skills/pr-triage/pr-review-session view` (no number).
-- **Open in browser**: `~/.claude/skills/pr-triage/pr-review-session view <number> --web`
 
 Optional inspection (do not block the workflow on these):
 
@@ -234,7 +215,7 @@ Optional inspection (do not block the workflow on these):
 
 ### Step 2: Assess PR Status
 
-`pr-review-session view` (and `next`) already prints a summary: branch, author, status, URL, size, mergeable, CI status, reviews, and unresolved feedback count, then runs `gh pr view` for the full body. The PR is automatically opened in Playwright (named session per repo, single tab reused) when `playwright-cli` is available; otherwise Firefox. See **Playwright browser for PR pages** above.
+`pr-review-session view` (and `next`) already prints a summary: branch, author, status, URL, size, mergeable, CI status, reviews, and unresolved feedback count, then runs `gh pr view` for the full body.
 
 Use that output as the assessment. If you need to re-display or analyze further, the same summary is produced by:
 
@@ -265,9 +246,8 @@ What would you like to do?
 7. Close PR - Close without merging
 8. Run CodeRabbit review - Run a local AI code review on this PR's changes
 9. Request CodeRabbit review - Trigger a remote CodeRabbit review via PR comment
-10. View PR in browser - Open the PR URL
-11. Snooze - Temporarily hide this PR and revisit later (e.g. 1h, 1d, 1w)
-12. Next - Mark reviewed and move to next unreviewed (`pr-review-session next`)
+10. Snooze - Temporarily hide this PR and revisit later (e.g. 1h, 1d, 1w)
+11. Next - Mark reviewed and move to next unreviewed (`pr-review-session next`)
 ```
 
 Adjust options based on PR state:
@@ -382,19 +362,7 @@ gh pr close <number>
 2. Inform the user that CodeRabbit will process the review asynchronously and results will appear as PR comments.
 3. Return to PR assessment or move to next PR.
 
-**Option 10 - View in browser:**
-
-- **Playwright (same window as triage):** from the repo root, session name is `pr-triage-$(gh repo view --json nameWithOwner -q .nameWithOwner | tr / -)`:
-
-  ```bash
-  playwright-cli goto "$(gh pr view <number> --json url -q .url)" -s=pr-triage-$(gh repo view --json nameWithOwner -q .nameWithOwner | tr / -)
-  ```
-
-  Or run `~/.claude/skills/pr-triage/pr-review-session view <number>` again to open the current PR in that session.
-
-- **System browser:** `gh pr view <number> --web`
-
-**Option 11 - Snooze:**
+**Option 10 - Snooze:**
 
 1. Ask the user how long to snooze (e.g. 1h, 4h, 1d, 3d, 1w), or accept inline if already specified
 2. Run: `~/.claude/skills/pr-triage/pr-review-session snooze <number> <duration>`
@@ -442,7 +410,7 @@ To opt out entirely (e.g. if you don't want the script touching disk), set `PR_T
 | ------------------------------------------- | --------------------------------------------------------- |
 | `pr-review-session list`                    | List open PRs not yet triaged this session                |
 | `pr-review-session next`                    | Mark current as triaged and show next unreviewed (auto-resets when all reviewed) |
-| `pr-review-session view [N] [--web]`        | Show PR summary and details; N = number or current branch |
+| `pr-review-session view [N]`                | Show PR summary and details; N = number or current branch |
 | `pr-review-session status`                  | Show session state (repo, triaged count, current PR)      |
 | `pr-review-session snooze [N] <dur>`        | Snooze a PR for a duration (e.g. 1h, 1d, 1w)             |
 | `pr-review-session reset`                   | Reset the triage session for this repo                    |
@@ -455,14 +423,11 @@ To opt out entirely (e.g. if you don't want the script touching disk), set `PR_T
 | `dependabot-bump-type <number>`             | Classify a Dependabot PR's bump: `minor-patch`/`major`/`unknown` |
 | `dependabot-overlap <number>`               | Exit 0 if an open human PR touches the same manifest (defer auto-merge); exit 1 if clear |
 | `failing-actions`                           | List all failing actions across PRs                       |
-| `playwright-cli show`                       | Open Playwright dashboard (watch PR browser)              |
-| `playwright-cli goto <url> -s=pr-triage-…`  | Open a PR in the repo’s triage Playwright session         |
 
 All `pr-review-session`, `cr-needs-review`, `dependabot-bump-type`, and `dependabot-overlap` commands should be prefixed with the full path: `~/.claude/skills/pr-triage/`
 
 ## Tips
 
-- **Playwright PR window**: Use `playwright-cli show` if you need to see the headed browser; triage still drives navigation via `goto` in the background.
 - **Actionable only**: The session only shows PRs where you have something to do. Non-actionable PRs (e.g., waiting on someone else, no review requested from you) are automatically excluded.
 - **Priority order**: PRs are automatically sorted by action priority: review > resolve conflicts > fix ci > respond > merge > add reviewers > work on. `next` always picks the highest-priority unreviewed PR.
 - **Batch triage**: Use `pr-review-session next` repeatedly to work through all actionable PRs in priority order (session tracks progress)

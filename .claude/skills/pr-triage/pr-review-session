@@ -1,15 +1,9 @@
 #!/usr/bin/env bash
 
 # pr-review-session - Manage PR review sessions (track reviewed, next, list, view, reset)
-# Usage: pr-review-session list | next | view [N] [--web] | reset | status
+# Usage: pr-review-session list | next | view [N] | reset | status
 #
-# PR pages open in Playwright (playwright-cli) when available: one named browser session
-# per GitHub repo (pr-triage-owner-repo), reusing a single tab. Load GitHub cookies from
-# ~/.playwright-auth/github.json if present (see pr-triage SKILL.md). Override:
-#   PLAYWRIGHT_CLI  - path to playwright-cli (default: ~/.local/bin/playwright-cli, else PATH)
-#   PR_REVIEW_NO_PLAYWRIGHT=1 - use legacy Firefox new-tab instead
-#
-# `view`/`next` also check out the PR into a per-repo worktree at
+# `view`/`next` check out the PR into a per-repo worktree at
 # $XDG_CACHE_HOME/pr-triage-worktrees/<owner>-<repo> so follow-up skills can operate on
 # the code without manual checkout. Set PR_TRIAGE_NO_WORKTREE=1 to disable.
 
@@ -25,7 +19,7 @@ Usage: $0 <command> [options]
 Commands:
   list              List open PRs not yet reviewed this session
   next              Mark current PR as reviewed and show the next unreviewed PR (auto-resets and loops when at end)
-  view [N] [--web]  Show PR details. N = PR number (default: PR for current branch). --web opens in browser
+  view [N]          Show PR details. N = PR number (default: PR for current branch).
   snooze [N] <dur>  Snooze a PR for a duration (e.g. 1h, 4h, 1d, 3d, 1w). N defaults to current PR.
   reset             Reset the current session (clear state for this repo)
   status            Show session state: repo, reviewed count, current PR
@@ -351,88 +345,6 @@ format_mergeable() {
   echo "Yes"
 }
 
-# Legacy: open URL in Firefox without stealing focus (when xdotool exists).
-open_pr_in_firefox() {
-  local url="$1"
-  if command -v xdotool >/dev/null 2>&1; then
-    local _FOCUSED
-    _FOCUSED=$(xdotool getactivewindow 2>/dev/null || true)
-    firefox --new-tab "$url" >/dev/null 2>&1 &
-    if [[ -n "$_FOCUSED" ]]; then
-      sleep 1
-      xdotool windowfocus "$_FOCUSED" 2>/dev/null || true
-    fi
-  else
-    firefox --new-tab "$url" >/dev/null 2>&1
-  fi
-}
-
-# Explain Firefox fallback on stderr, then open the PR in Firefox.
-pr_open_firefox_fallback() {
-  local url="$1"
-  local reason="$2"
-  echo "pr-review-session: using Firefox instead of Playwright — $reason" >&2
-  open_pr_in_firefox "$url"
-}
-
-# First line or two of multiline command output, single line for stderr messages.
-pr_review_one_line_detail() {
-  local text="$1"
-  [[ -z "$text" ]] && return
-  echo "$text" | head -n 2 | tr '\n' ' ' | sed 's/[[:space:]]*$//'
-}
-
-# Open PR in Playwright (one session per repo, single tab) or fall back to Firefox.
-open_pr_in_browser() {
-  local url="$1"
-  local repo="$2"
-  if [[ "${PR_REVIEW_NO_PLAYWRIGHT:-}" == "1" ]]; then
-    echo "pr-review-session: using Firefox instead of Playwright — PR_REVIEW_NO_PLAYWRIGHT=1" >&2
-    ( open_pr_in_firefox "$url" ) &
-    return
-  fi
-  local default_pw="${PLAYWRIGHT_CLI:-$HOME/.local/bin/playwright-cli}"
-  local pw="$default_pw"
-  if [[ ! -x "$pw" ]]; then
-    pw=$(command -v playwright-cli 2>/dev/null || true)
-  fi
-  if [[ -z "$pw" ]]; then
-    echo "pr-review-session: using Firefox instead of Playwright — playwright-cli not found (not executable at ${default_pw} and no playwright-cli on PATH; set PLAYWRIGHT_CLI if it lives elsewhere)" >&2
-    ( open_pr_in_firefox "$url" ) &
-    return
-  fi
-  local session="pr-triage-${repo//\//-}"
-  local auth="${HOME}/.playwright-auth/github.json"
-  (
-    if ! "$pw" list 2>/dev/null | grep -Fq -- "- ${session}:"; then
-      local open_out
-      if ! open_out=$("$pw" open --headed --browser chromium -s="$session" 2>&1); then
-        local detail
-        detail=$(pr_review_one_line_detail "$open_out")
-        if [[ -n "$detail" ]]; then
-          pr_open_firefox_fallback "$url" "playwright-cli open --headed failed — $detail"
-        else
-          pr_open_firefox_fallback "$url" "playwright-cli open --headed failed (no stderr; check DISPLAY/Wayland and browser install)"
-        fi
-        exit 0
-      fi
-      if [[ -f "$auth" ]]; then
-        "$pw" state-load "$auth" -s="$session" >/dev/null 2>&1 || true
-      fi
-    fi
-    local goto_out
-    if ! goto_out=$("$pw" goto "$url" -s="$session" 2>&1); then
-      local gdetail
-      gdetail=$(pr_review_one_line_detail "$goto_out")
-      if [[ -n "$gdetail" ]]; then
-        pr_open_firefox_fallback "$url" "playwright-cli goto failed — $gdetail"
-      else
-        pr_open_firefox_fallback "$url" "playwright-cli goto failed (no stderr)"
-      fi
-    fi
-  ) &
-}
-
 # Canonical per-repo triage worktree path.
 get_worktree_path() {
   local repo="$1"
@@ -523,7 +435,6 @@ ensure_pr_worktree() {
 print_pr_summary() {
   local repo="$1"
   local pr_num="$2"
-  local use_web="${3:-}"
   local owner="${repo%%/*}"
   local repo_name="${repo#*/}"
 
@@ -649,12 +560,7 @@ print_pr_summary() {
   fi
 
   # Then run gh pr view so user sees full body
-  if [[ -n "$use_web" ]]; then
-    gh pr view "$pr_num" --repo "$repo" --web
-  else
-    gh pr view "$pr_num" --repo "$repo"
-    open_pr_in_browser "$url" "$repo"
-  fi
+  gh pr view "$pr_num" --repo "$repo"
 }
 
 cmd_list() {
@@ -718,10 +624,8 @@ cmd_view() {
   local repo="$1"
   shift
   local pr_num=""
-  local use_web=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --web) use_web="1"; shift ;;
       [0-9]*) pr_num="$1"; shift ;;
       *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
@@ -735,7 +639,7 @@ cmd_view() {
     pr_num=$(echo "$info" | jq -r '.number')
   fi
   # Show PR (update session only after we successfully load it)
-  if ! print_pr_summary "$repo" "$pr_num" "$use_web"; then
+  if ! print_pr_summary "$repo" "$pr_num"; then
     exit 1
   fi
   local session
@@ -791,7 +695,7 @@ cmd_next() {
   next_num=$(echo "$filtered" | head -1 | cut -f1)
 
   write_session "$repo" "$reviewed_json" "$next_num" "$snoozed_json"
-  print_pr_summary "$repo" "$next_num" ""
+  print_pr_summary "$repo" "$next_num"
 }
 
 cmd_reset() {
