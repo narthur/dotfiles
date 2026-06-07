@@ -1,0 +1,62 @@
+#!/bin/bash
+# Egress safety checker for Claude Code Bash commands.
+#
+# Takes a shell command string as $1. Detects whether the command can send
+# data OFF this machine (an exfiltration channel) or hide such a command
+# behind indirection. The point is to re-insert a human approval step on
+# outbound actions even when Claude Code runs in auto/bypass permission mode,
+# which is the control that actually breaks the "lethal trifecta".
+#
+# Output: on a match, prints a short human reason to stdout.
+# Exit 0 = no egress channel detected (caller should stay silent / allow).
+# Exit 1 = egress channel or obscuring indirection detected (caller asks).
+#
+# This is deliberately a DETECTOR, not a blocker: the wrapper turns a match
+# into permissionDecision "ask", so legitimate pushes/uploads still work with
+# one confirmation. False positives cost a keystroke; false negatives cost data.
+#
+# NB: the words below (curl, eval, ssh, base64, ...) appear only as regex
+# string literals to MATCH against the inspected command. This script never
+# executes them and never calls eval — the security-plugin warning on "eval"
+# is a false positive on that detection pattern.
+
+command="$1"
+[[ -z "$command" ]] && exit 0
+
+# A network/exfil binary appearing in command position: at string start or
+# after a shell separator ( ; | & ( { newline ` ). The leading boundary stops
+# us matching substrings like "occurl" or a directory named "scp/".
+boundary='(^|[[:space:]]|[;&|(){}<>`])'
+
+# Each entry is "<regex>\x1f<reason>". Reasons can contain "|", so we split on
+# the ASCII Unit Separator (\x1f), never on "|".
+patterns=(
+  "${boundary}curl([[:space:]]|$)"$'\x1f'"curl (HTTP client — can POST data anywhere)"
+  "${boundary}wget([[:space:]]|$)"$'\x1f'"wget (can POST via --post-data / upload)"
+  "${boundary}n(c|cat|etcat)([[:space:]]|$)"$'\x1f'"netcat (raw TCP/UDP exfil)"
+  "${boundary}socat([[:space:]]|$)"$'\x1f'"socat (arbitrary network relay)"
+  "${boundary}telnet([[:space:]]|$)"$'\x1f'"telnet (raw TCP)"
+  "${boundary}(s?ftp|tftp)([[:space:]]|$)"$'\x1f'"ftp/sftp (file upload)"
+  "${boundary}scp([[:space:]]|$)"$'\x1f'"scp (remote copy)"
+  "${boundary}rsync([[:space:]]|$)"$'\x1f'"rsync (can sync to a remote host)"
+  "${boundary}ssh([[:space:]]|$)"$'\x1f'"ssh (remote command execution / tunnel)"
+  "${boundary}(dig|nslookup|host)([[:space:]]|$)"$'\x1f'"DNS tool (data can be smuggled in DNS queries)"
+  "/dev/(tcp|udp)/"$'\x1f'"bash /dev/tcp network redirect"
+  "${boundary}git([[:space:]].*)?[[:space:]]push([[:space:]]|$)"$'\x1f'"git push (publishes commits — incl. the PUBLIC dotfiles repo)"
+  "${boundary}(npx[[:space:]]+)?surge([[:space:]]|$)"$'\x1f'"surge (publishes to a public URL)"
+  "${boundary}eval([[:space:]]|$)"$'\x1f'"eval (hides the real command from this guard)"
+  "[|][[:space:]]*(sh|bash|zsh|python[0-9.]*|node|perl|ruby)([[:space:]]|$)"$'\x1f'"pipe-to-interpreter (e.g. curl ... | sh)"
+  "base64[[:space:]].*[|]"$'\x1f'"base64 piped onward (common exfil/obfuscation step)"
+  "${boundary}xargs([[:space:]]|$)"$'\x1f'"xargs (can invoke a network tool indirectly)"
+)
+
+for entry in "${patterns[@]}"; do
+  regex="${entry%%$'\x1f'*}"
+  reason="${entry##*$'\x1f'}"
+  if [[ "$command" =~ $regex ]]; then
+    echo "$reason"
+    exit 1
+  fi
+done
+
+exit 0
