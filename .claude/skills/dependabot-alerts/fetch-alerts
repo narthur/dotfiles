@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Surface open Dependabot alerts for the current repo, cross-referenced with
+# any open Dependabot PRs. Emits labeled sections of newline-delimited JSON.
+#
+# Usage: fetch-alerts [owner/repo]
+#   With no arg, detects the repo from the current directory via `gh`.
+
+repo="${1:-}"
+if [[ -z "$repo" ]]; then
+  repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null) || {
+    echo "ERROR: not in a GitHub repo and no owner/repo argument given." >&2
+    echo "       cd into a repo or run: fetch-alerts owner/repo" >&2
+    exit 1
+  }
+fi
+
+echo "=== REPO ==="
+echo "$repo"
+
+# --- Open Dependabot alerts ----------------------------------------------------
+# Needs the `security_events` (or `repo`) scope. A 403 usually means the token
+# lacks it — fix with: gh auth refresh -s security_events
+echo "=== ALERTS ==="
+err_file=$(mktemp)
+trap 'rm -f "$err_file"' EXIT
+alerts_raw=$(gh api --paginate "/repos/$repo/dependabot/alerts?state=open&per_page=100" 2>"$err_file") || {
+  err=$(cat "$err_file")
+  echo "ERROR fetching alerts: $err" >&2
+  if echo "$err" | grep -qi 'disabled for this repository'; then
+    echo "HINT: Dependabot alerts are turned OFF for this repo. Enable them under" >&2
+    echo "      Settings → Code security → Dependabot alerts. Nothing to triage until then." >&2
+  elif echo "$err" | grep -qi 'security_events\|insufficient\|requires.*scope'; then
+    echo "HINT: your token may lack the read scope for alerts." >&2
+    echo "      Run: gh auth refresh -s security_events  (a 'repo' scope also covers it)" >&2
+  fi
+  exit 1
+}
+
+# Flatten each alert to one compact JSON object per line, ordered by severity.
+echo "$alerts_raw" | jq -c '
+  def rank: {critical:0, high:1, medium:2, low:3}[.] // 4;
+  [ .[] | {
+      number,
+      severity: .security_advisory.severity,
+      package: .dependency.package.name,
+      ecosystem: .dependency.package.ecosystem,
+      manifest: .dependency.manifest_path,
+      scope: .dependency.scope,
+      summary: .security_advisory.summary,
+      cve: .security_advisory.cve_id,
+      ghsa: .security_advisory.ghsa_id,
+      cvss: (.security_advisory.cvss.score // null),
+      vulnerable_range: (.security_vulnerability.vulnerable_version_range // null),
+      patched: (.security_vulnerability.first_patched_version.identifier // null),
+      auto_dismissed: (.auto_dismissed_at != null),
+      url: .html_url
+    } ]
+  | sort_by(.severity | rank)
+  | .[]
+'
+
+# --- Open Dependabot PRs (for cross-referencing) -------------------------------
+echo "=== DEPENDABOT_PRS ==="
+gh pr list --repo "$repo" --state open --author "app/dependabot" \
+  --limit 100 --json number,title,headRefName,url,createdAt,isDraft,mergeable,statusCheckRollup \
+  --jq '.[] | {
+    number, title, branch: .headRefName, url, createdAt, isDraft, mergeable,
+    checks: ([.statusCheckRollup[]? | .conclusion // .status] | group_by(.) | map({(.[0]): length}) | add)
+  }' 2>/dev/null || echo "(could not list Dependabot PRs)" >&2
+
+echo "=== DONE ==="

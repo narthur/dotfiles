@@ -6,9 +6,17 @@
 OLLAMA_URL="http://localhost:11434"
 OLLAMA_MODEL="qwen2.5-coder:7b"
 
+# JSONL debug log; one object per invocation. Cross-reference entries with
+# Claude Code history via session_id / transcript_path.
+LOG_DIR="${HOME}/.claude/hooks/logs"
+LOG_FILE="${LOG_DIR}/git-repo-info.jsonl"
+
 # Capture stdin (the Stop hook payload) to read the transcript path.
 payload=$(cat)
 transcript=$(printf '%s' "$payload" | jq -r '.transcript_path // empty')
+session_id=$(printf '%s' "$payload" | jq -r '.session_id // empty')
+cwd=$(printf '%s' "$payload" | jq -r '.cwd // empty')
+started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 # Last genuine typed user prompt (skips bash I/O, tool results, meta).
 query=""
@@ -51,8 +59,10 @@ if [ -n "$response" ]; then
     stream: false,
     options: {num_predict: 80, temperature: 0.2}
   }')
+  ollama_start=$(date +%s)
   summary=$(curl -s --max-time 20 "$OLLAMA_URL/api/generate" -d "$req" 2>/dev/null \
     | jq -r '.response // empty' | tr '\n' ' ' | sed -E 's/^ +//; s/ +$//')
+  ollama_ms=$(( ($(date +%s) - ollama_start) * 1000 ))
 fi
 
 # Git context (silent when not in a repo).
@@ -65,6 +75,22 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     pr=$(gh pr view --json url -q .url 2>/dev/null)
   fi
 fi
+
+# Append a structured debug record (best-effort; never blocks output).
+mkdir -p "$LOG_DIR" 2>/dev/null && \
+jq -nc \
+  --arg ts "$started_at" \
+  --arg session_id "$session_id" \
+  --arg transcript "$transcript" \
+  --arg cwd "$cwd" \
+  --arg repo "$repo" --arg branch "$branch" --arg pr "$pr" \
+  --arg q "$query" --arg response "$response" --arg summary "$summary" \
+  --argjson ollama_ms "${ollama_ms:-0}" \
+  '{ts: $ts, session_id: $session_id, transcript: $transcript, cwd: $cwd,
+    repo: $repo, branch: $branch, pr: $pr, query: $q,
+    response_len: ($response | length), response: $response,
+    summary: $summary, ollama_ms: $ollama_ms}' \
+  >> "$LOG_FILE" 2>/dev/null
 
 jq -n --arg repo "$repo" --arg branch "$branch" --arg pr "$pr" \
       --arg q "$query" --arg s "$summary" '
