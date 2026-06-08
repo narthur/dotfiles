@@ -84,16 +84,6 @@ request_coderabbit_review() {
   }
 }
 
-check_for_new_feedback() {
-  local count
-  if [[ "$WORKSPACE_TYPE" == "gitbutler" ]]; then
-    count=$("$SOURCE_DIR/but-feedback.sh" --limit 1 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep -c '^\[Thread:\|^\[Review:\|^\[Comment:') || true
-  else
-    count=$("$SOURCE_DIR/pr-feedback.sh" --limit 1 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep -c '^\[Thread:\|^\[Review:\|^\[Comment:') || true
-  fi
-  [[ "$count" -gt 0 ]]
-}
-
 get_status() {
   "$CODERABBIT_STATUS_SH" "$@"
 }
@@ -155,6 +145,9 @@ log "Waiting ${FIRST_POLL_SECONDS}s before first status check..."
 sleep "$FIRST_POLL_SECONDS"
 
 poll_count=0
+# Tracks whether we've observed CodeRabbit actively reviewing this run, used
+# to distinguish a fresh `completed` from a stale one (see the completed case).
+seen_active=false
 
 while true; do
   poll_count=$((poll_count + 1))
@@ -162,23 +155,36 @@ while true; do
 
   log "Poll #${poll_count} (${elapsed}s elapsed since push)..."
 
-  # Check if there's new feedback available
-  if check_for_new_feedback; then
-    log "New feedback detected — review complete"
-    exit 0
-  fi
-
-  # Check CodeRabbit status
+  # Completion is decided solely by the authoritative coderabbit-status
+  # signal below — NOT by whether the feedback queue is non-empty. The queue
+  # is essentially never empty during a review: CodeRabbit's first comment is
+  # a living "review in progress" status note, and other bots (bundle-stats,
+  # etc.) post their own comments right after a push. Treating any unresolved
+  # comment as "review complete" exited ~60s after every push, before the
+  # review had actually finished. coderabbit-status reads the content of
+  # CodeRabbit's status comment plus its check, and maps a freshly-pushed
+  # commit (new check pending, stale walkthrough still showing) to
+  # `in_progress`, so it doesn't suffer that false positive.
   status_json=$(get_status_json)
   status=$(echo "$status_json" | jq -r '.status')
+  check_state=$(echo "$status_json" | jq -r '.check_state')
   wait_seconds=$(echo "$status_json" | jq -r '.wait_seconds')
 
   log "CodeRabbit status: $status"
 
   case "$status" in
     completed)
-      log "CodeRabbit review completed (no new feedback found)"
-      exit 0
+      # Guard against a stale `completed`: right after a push there's a brief
+      # window where the new commit has no CodeRabbit check yet
+      # (check_state=not_present) while the prior review's walkthrough still
+      # shows as completed. Only accept completion once we've either seen the
+      # review go active this run, or the check itself has concluded on the
+      # current head. Otherwise keep polling for the new review to register.
+      if [[ "$seen_active" == true || "$check_state" == "completed" ]]; then
+        log "CodeRabbit review completed"
+        exit 0
+      fi
+      log "Status is 'completed' but the review hasn't registered on the new commit yet (check_state=$check_state) — continuing to poll"
       ;;
     rate_limited|timed_out)
       actual_wait=${wait_seconds:-180}
@@ -197,7 +203,9 @@ while true; do
       review_requested=true
       ;;
     in_progress|starting_up)
-      # Still working — continue polling
+      # Review is actively running on the current push — record it so a later
+      # `completed` is trusted as fresh rather than stale.
+      seen_active=true
       ;;
     paused)
       if [[ "$review_requested" == false ]]; then
