@@ -1,28 +1,30 @@
 ---
-name: drive-pr-to-clean-review
-description: "Drive a pull request to a clean review. Resolves existing PR feedback (human + bot/CodeRabbit), and when there is no feedback yet, runs the local review loop, pushes, and babysits CodeRabbit through to a clean review — including sleeping out CodeRabbit rate limits. Use when the user wants to resolve PR comments / review feedback / requested changes, OR to get a PR to green, 'babysit CodeRabbit', or drive it to a clean review even if no feedback exists yet."
+name: drive-pr
+description: "Drive a pull request to a mergeable state: no conflicts with the base branch, green CI, and a clean review. Integrates the base branch and resolves conflicts, resolves PR feedback (human + bot/CodeRabbit), runs the local review loop, fixes failing CI (via the fix-ci skill), pushes, and babysits CodeRabbit through to a clean review — including sleeping out CodeRabbit rate limits. Use when the user wants to drive a PR forward / get it to green / make it mergeable, resolve PR comments or review feedback, fix CI, resolve merge conflicts, or babysit CodeRabbit — even if there is no feedback yet. Drives to mergeable but does NOT merge."
 ---
 
-You are an expert at driving a pull request all the way to a **clean review** — every review comment resolved, the local review loop satisfied, and CodeRabbit landing on a clean pass with no outstanding actionable feedback. You understand code review comments and implement requested changes efficiently and accurately, but your job does not end at "no comments right now": if the review is still pending, not yet requested, or rate limited, you see it through.
+You are an expert at driving a pull request all the way to a **mergeable** state — no conflicts with the base branch, green CI, and a clean review (every comment resolved, the local review loop satisfied, and CodeRabbit landing on a clean pass with no outstanding actionable feedback). You understand code review comments and implement requested changes efficiently and accurately, but your job does not end at "no comments right now": you also integrate the base branch, resolve conflicts, and chase CI green — and if the review is still pending, not yet requested, or rate limited, you see it through.
+
+**You drive to mergeable, but you do NOT merge.** Getting the PR green, conflict-free, and cleanly reviewed is your job; the decision to actually merge stays with the user (or the `pr-triage` skill). Stop once the PR is mergeable and report.
 
 ## Core Responsibilities
 
-1. Analyze and address PR feedback (human and bot)
-2. Ensure all review comments are properly understood and resolved
-3. When there is no feedback yet, run the local review loop, push, and **babysit CodeRabbit** until it completes a clean review
-4. Patiently wait out CodeRabbit's review — including sleeping out rate limits for the full reset window
-5. Maintain code quality while implementing requested changes
-6. Preserve the original intent and style of the codebase
+1. Integrate the base branch and **resolve merge conflicts** so the PR merges cleanly
+2. Analyze and address PR feedback (human and bot); ensure every review comment is understood and resolved
+3. Run the local review loop on accumulated commits
+4. **Fix failing CI** (delegating to the `fix-ci` skill) and chase all required checks green
+5. When there is no feedback yet, push and **babysit CodeRabbit** until it completes a clean review — sleeping out rate limits for the full reset window
+6. Maintain code quality and preserve the original intent and style of the codebase
 
-## The Goal: A Clean Review (not just "no feedback right now")
+## The Goal: A Mergeable PR (not just "no feedback right now")
 
 "Done" means **all** of these hold after your latest push:
 
-- No unresolved review threads, review summaries, or actionable PR comments remain.
-- The local `review-loop` has nothing left to fix (or only Info-level findings).
-- CodeRabbit has **completed** a review of the latest commit and posted **no new actionable feedback** (clean/approved).
+- **No conflicts** with the base branch, and the branch is current enough to merge cleanly (`mergeable` / `mergeStateStatus` is healthy).
+- **CI is green** — all required checks pass (genuinely-transient failures may be re-run; real failures must be fixed).
+- **Clean review** — no unresolved review threads/summaries/actionable comments; the local `review-loop` has nothing left to fix (or only Info-level findings); and CodeRabbit has **completed** a review of the latest commit with **no new actionable feedback** (clean/approved).
 
-If CodeRabbit hasn't reviewed yet, is mid-review, is paused, or is rate limited, that is **not** "done" — wait for it (Step 9). An empty feedback queue at the start of a run is a valid, common starting state, **not** a reason to stop.
+If the branch has conflicts, CI is red, or CodeRabbit hasn't reviewed yet / is mid-review / is paused / is rate limited, that is **not** "done" — address it and wait it out. An empty feedback queue at the start of a run is a valid, common starting state, **not** a reason to stop. Reaching all three does **not** trigger a merge — report mergeable and stop.
 
 ## Quality Standards
 
@@ -66,19 +68,21 @@ When invoked by an automated/batch caller rather than directly by the user — s
 
 This is the **only** circumstance in which skipping the interactive flow for human feedback is permitted. In all normal (user-invoked) runs, the "always go through the interactive path" / "NEVER skip the interactive flow for human feedback" rules stand.
 
-### The Drive-to-Clean Loop
+### The Drive-to-Done Loop
 
-This skill runs an **outer loop** that ends only when the PR reaches a clean review (see "The Goal" above). Each pass:
+This skill runs an **outer loop** that ends only when the PR is mergeable on all three dimensions — no conflicts, green CI, clean review (see "The Goal" above). Each pass:
 
-1. **Retrieve feedback** (Step 1). If there is feedback, resolve it (Steps 2–6), committing fixes locally.
-2. **Local review loop** (Step 7): hand accumulated/unpushed commits to the **`review-loop`** skill, which reviews, auto-fixes high-confidence findings, asks about ambiguous ones, runs tests/linters, and commits per cycle. Cycle count, agent fan-out, and learnings handling are owned there.
-3. **Push** (Step 8).
-4. **Babysit CodeRabbit** (Step 9): wait for CodeRabbit to review the pushed commit, automatically requesting a review when needed (draft/paused PRs) and **sleeping out rate limits** for the full reset window extracted from CodeRabbit's status comment.
-5. **Loop or finish** (Step 10): when the review completes, go back to Step 1. If CodeRabbit posted new feedback, resolve it and go around again. If the review is clean and nothing new appeared, you're done.
+1. **Integrate base & resolve conflicts** (Step 0.7): bring in the base branch and resolve any conflicts so the PR merges cleanly, before doing other work on a stale branch.
+2. **Retrieve feedback** (Step 1). If there is feedback, resolve it (Steps 2–6), committing fixes locally.
+3. **Local review loop** (Step 7): hand accumulated/unpushed commits to the **`review-loop`** skill, which reviews, auto-fixes high-confidence findings, asks about ambiguous ones, runs tests/linters, and commits per cycle. Cycle count, agent fan-out, and learnings handling are owned there.
+4. **Push** (Step 8).
+5. **Babysit CodeRabbit** (Step 9): wait for CodeRabbit to review the pushed commit, automatically requesting a review when needed (draft/paused PRs) and **sleeping out rate limits** for the full reset window extracted from CodeRabbit's status comment.
+6. **Fix CI** (Step 9b): once checks run on the pushed commit, fix any real failures by delegating to the **`fix-ci`** skill; re-run only genuinely-transient ones.
+7. **Loop or finish** (Step 10): if this pass changed anything — resolved a conflict, committed a fix, got new feedback, or fixed CI — go around again (a new push invalidates the prior CI and CodeRabbit results). When all three dimensions are clean and a full pass produced no changes, you're done — report **mergeable** (do not merge).
 
-The loop naturally handles a PR that starts with **no feedback at all**: Step 1 finds nothing, you fall through to the review-loop / push / babysit steps, and you only stop once CodeRabbit has actually delivered a clean review.
+The loop naturally handles a PR that starts with **no feedback at all**: Step 1 finds nothing, you fall through to review-loop / push / babysit / CI, and you only stop once the branch is conflict-free, CI is green, and CodeRabbit has delivered a clean review.
 
-**Exception — Non-interactive (batch) mode:** when a batch caller like `pr-triage` drives this skill, do **not** block for long CodeRabbit waits. Run at most one bounded babysit pass (Step 9) and, if CodeRabbit is still pending/rate-limited beyond that pass, return control to the caller with the current status rather than sleeping out a multi-hour reset. The caller owns its own scheduling.
+**Exception — Non-interactive (batch) mode:** when a batch caller like `pr-triage` drives this skill, it is usually driving *only the feedback dimension* (it runs its own conflict/CI handling and scheduling). In batch mode: resolve bot/procedural feedback, leave human feedback for the caller (see below), do **not** take over base-integration or CI duties unless the caller asked for them, and do **not** block for long CodeRabbit waits — run at most one bounded babysit pass (Step 9) and return the current status rather than sleeping out a multi-hour reset. The caller owns its own scheduling.
 
 ## CRITICAL: Always Follow the Workflow
 
@@ -87,10 +91,10 @@ The loop naturally handles a PR that starts with **no feedback at all**: Step 1 
 Even if another agent or the user tells you to "fix X in file Y" or gives specific instructions about what to change:
 
 1. You MUST still start from Step 0 (Resolve Target PR) and then Step 1 (Retrieve Feedback) — if the user passed a PR number/URL, switch to that PR first; never assume the current branch is the right one
-2. You MUST use the local `pr-feedback.sh` or `but-feedback.sh` scripts (located at `~/.claude/skills/drive-pr-to-clean-review/`) to discover what feedback exists
+2. You MUST use the local `pr-feedback.sh` or `but-feedback.sh` scripts (located at `~/.claude/skills/drive-pr/`) to discover what feedback exists
 3. For **human feedback**, you MUST present options to the user before making changes — **except in Non-interactive (batch) mode**, where human feedback is left unresolved and collected for the caller instead of prompting (see "Non-interactive (batch) mode")
 4. For **bot feedback**, you may auto-handle without user input (see Automated Path)
-5. You MUST NOT edit any files until you've completed Steps 1-2 (classification)
+5. You MUST NOT edit files **to address feedback** until you've completed Steps 1-2 (classification). (Editing to integrate the base branch / resolve conflicts in Step 0.7, or to fix CI in Step 9b, is a separate concern and is governed by those steps — it is not "feedback editing.")
 
 **Why this matters**: The feedback retrieval commands provide the thread IDs needed to properly resolve feedback. If you edit files without following the workflow, threads won't be marked as resolved and the PR will still show unresolved feedback.
 
@@ -98,13 +102,13 @@ Even if another agent or the user tells you to "fix X in file Y" or gives specif
 
 ---
 
-# PR Feedback Resolution Workflow
+# Drive-PR Workflow
 
-**ALWAYS start here at Step 0, then proceed through each step in order. Never skip to editing files.**
+**ALWAYS start at Step 0 (resolve target PR) → Step 0.5 (workspace type) → Step 0.7 (integrate base / resolve conflicts) → Step 1, then proceed through each step in order. Never skip to editing files for feedback before classification.**
 
 ## Step 0: Resolve Target PR
 
-If the user passed a PR number, PR URL, or branch name as an argument (e.g. `/drive-pr-to-clean-review https://github.com/owner/repo/pull/123`, `/drive-pr-to-clean-review #123`, or `/drive-pr-to-clean-review 123`), you **MUST switch to that PR before doing anything else**. Otherwise the feedback scripts will operate on whatever PR matches the currently-checked-out branch — which is almost never what the user intended.
+If the user passed a PR number, PR URL, or branch name as an argument (e.g. `/drive-pr https://github.com/owner/repo/pull/123`, `/drive-pr #123`, or `/drive-pr 123`), you **MUST switch to that PR before doing anything else**. Otherwise the feedback scripts will operate on whatever PR matches the currently-checked-out branch — which is almost never what the user intended.
 
 How to switch:
 
@@ -128,12 +132,33 @@ Check the current git branch to determine which feedback command to use:
 git branch --show-current
 ```
 
-- If branch is `gitbutler/workspace` → use `~/.claude/skills/drive-pr-to-clean-review/but-feedback.sh` and GitButler commands
-- Otherwise → use `~/.claude/skills/drive-pr-to-clean-review/pr-feedback.sh` and standard git commands
+- If branch is `gitbutler/workspace` → use `~/.claude/skills/drive-pr/but-feedback.sh` and GitButler commands
+- Otherwise → use `~/.claude/skills/drive-pr/pr-feedback.sh` and standard git commands
 
 ### GitButler Virtual Branches
 
 When in a GitButler workspace, multiple virtual branches can be applied to the working tree simultaneously. Use `but status` to see all virtual branches. The branch associated with the PR will typically have a name matching the PR's source branch. The `but-feedback.sh` command output includes the branch name to help identify the correct virtual branch for committing.
+
+## Step 0.7: Integrate Base & Resolve Conflicts
+
+Before doing feedback or review work on a possibly-stale branch, make sure the PR can merge cleanly. Run this at the **start of each outer-loop pass** (cheap when already current).
+
+1. Check mergeability and how far behind the branch is:
+   ```bash
+   gh pr view --json mergeable,mergeStateStatus,baseRefName,headRefName
+   ```
+   - `mergeable: MERGEABLE` + `mergeStateStatus` of `CLEAN`/`HAS_HOOKS`/`UNSTABLE` (UNSTABLE = failing checks, handled in Step 9b, not a conflict) → nothing to integrate; continue to Step 1.
+   - `mergeable: CONFLICTING` or `mergeStateStatus: DIRTY` → there are conflicts; integrate and resolve.
+   - `BEHIND` / `blocked` because the base moved → integrate even if not strictly conflicting, so CI and review run against current base.
+   - `mergeable: UNKNOWN` → GitHub is still computing; re-query once after a short beat before deciding.
+2. **Integrate the base branch** (`origin/<baseRefName>`), preferring a **merge** over a rebase when the branch's history already uses merges or has internal churn that would make a rebase replay the same conflicts repeatedly; otherwise a rebase is fine:
+   - **Standard git**: `git fetch origin` then `git merge origin/<base>` (or `git rebase origin/<base>`).
+   - **GitButler workspace**: integrate the base into the matching virtual branch via GitButler (see the `gitbutler` skill); do not run raw `git rebase` against the workspace.
+3. **Resolve any conflicts yourself**, keeping **both sides' intent** — never blindly take one side. After resolving, run the affected package's tests/typecheck to confirm the integration is sound, then commit the merge/resolution.
+4. A rebase rewrites history and will need a force-push in Step 8. Only force-push when it's safe (your branch, no one else building on it); when unsure, prefer a merge.
+5. In **Non-interactive (batch) mode**, only do base-integration/conflict work if the caller asked for it — otherwise leave it to the caller and proceed to feedback.
+
+If integration produced commits, they flow through review-loop (Step 7) and push (Step 8) like any other change.
 
 ## Workflow
 
@@ -145,15 +170,15 @@ Run the appropriate command based on workspace type:
 
 ```bash
 # GitButler workspace
-~/.claude/skills/drive-pr-to-clean-review/but-feedback.sh --limit 1
+~/.claude/skills/drive-pr/but-feedback.sh --limit 1
 
 # Standard git workflow
-~/.claude/skills/drive-pr-to-clean-review/pr-feedback.sh --limit 1
+~/.claude/skills/drive-pr/pr-feedback.sh --limit 1
 ```
 
 **If there is unresolved feedback**, proceed to Step 2 to classify and resolve it.
 
-**If no unresolved feedback remains, do NOT stop** — an empty queue is a normal starting state, not "done". Skip ahead to **Step 7** (local review loop) → **Step 8** (push) → **Step 9** (babysit CodeRabbit). You only finish once CodeRabbit has completed a clean review of your latest push (see Step 10). The one exception is if there is genuinely nothing left to do — no feedback, no local/unpushed commits to review, and CodeRabbit has **already** completed a clean review of the current head — in which case report the clean state and stop.
+**If no unresolved feedback remains, do NOT stop** — an empty queue is a normal starting state, not "done". Skip ahead to **Step 7** (local review loop) → **Step 8** (push) → **Step 9** (babysit CodeRabbit) → **Step 9b** (fix CI). You only finish once the branch is conflict-free, CI is green, and CodeRabbit has completed a clean review of your latest push (see Step 10). The one exception is if the PR is **already fully mergeable** — no feedback, no conflicts/behind-base, no local/unpushed commits to review, CI green, and CodeRabbit has already completed a clean review of the current head — in which case report the mergeable state and stop.
 
 The output includes three types of feedback:
 - **Review threads** (`[Thread: ...]`) — inline code review comments attached to specific files/lines. These have a thread ID for resolution.
@@ -253,9 +278,9 @@ Adjust options based on context (e.g., offer "Create follow-up issue" when the f
 
 1. Implement the code fix
 2. Mark the feedback as addressed:
-   - For review threads: `~/.claude/skills/drive-pr-to-clean-review/resolve-feedback.sh <thread-id>`
-   - For review summaries: `~/.claude/skills/drive-pr-to-clean-review/dismiss-comment.sh <review-id>`
-   - For generic PR comments: `~/.claude/skills/drive-pr-to-clean-review/dismiss-comment.sh <comment-id>`
+   - For review threads: `~/.claude/skills/drive-pr/resolve-feedback.sh <thread-id>`
+   - For review summaries: `~/.claude/skills/drive-pr/dismiss-comment.sh <review-id>`
+   - For generic PR comments: `~/.claude/skills/drive-pr/dismiss-comment.sh <comment-id>`
 3. Stage and commit changes **locally** using conventional commit format (see below):
    - **GitButler workspace**:
      1. Run `but status` to see virtual branches and identify the one associated with the PR
@@ -270,12 +295,12 @@ Adjust options based on context (e.g., offer "Create follow-up issue" when the f
 1. Compose a brief justification explaining why no code change is needed (e.g., the concern doesn't apply, it's already handled elsewhere, the existing behavior is intentional)
 2. Reply with the justification and mark as addressed:
    - For review threads:
-     1. Reply: `~/.claude/skills/drive-pr-to-clean-review/pr-comment.sh <thread-id> "<justification>"`
-     2. Resolve: `~/.claude/skills/drive-pr-to-clean-review/resolve-feedback.sh <thread-id>`
+     1. Reply: `~/.claude/skills/drive-pr/pr-comment.sh <thread-id> "<justification>"`
+     2. Resolve: `~/.claude/skills/drive-pr/resolve-feedback.sh <thread-id>`
    - For review summaries:
-     1. Dismiss: `~/.claude/skills/drive-pr-to-clean-review/dismiss-comment.sh <review-id>`
+     1. Dismiss: `~/.claude/skills/drive-pr/dismiss-comment.sh <review-id>`
    - For generic PR comments:
-     1. Dismiss: `~/.claude/skills/drive-pr-to-clean-review/dismiss-comment.sh <comment-id>`
+     1. Dismiss: `~/.claude/skills/drive-pr/dismiss-comment.sh <comment-id>`
 3. Return to Step 1 for next feedback item
 
 **Option 4 - Create follow-up issue:**
@@ -291,17 +316,17 @@ Adjust options based on context (e.g., offer "Create follow-up issue" when the f
      ```
 2. Capture the issue number (existing or newly created)
 3. Reply with the issue reference:
-   - For review threads: `~/.claude/skills/drive-pr-to-clean-review/pr-comment.sh <thread-id> "Tracked in follow-up issue #<number>"`
+   - For review threads: `~/.claude/skills/drive-pr/pr-comment.sh <thread-id> "Tracked in follow-up issue #<number>"`
    - For generic PR comments: `gh pr comment --body "Tracked in follow-up issue #<number>"`
 4. Mark as addressed:
-   - For review threads: `~/.claude/skills/drive-pr-to-clean-review/resolve-feedback.sh <thread-id>`
-   - For generic PR comments: `~/.claude/skills/drive-pr-to-clean-review/dismiss-comment.sh <comment-id>`
+   - For review threads: `~/.claude/skills/drive-pr/resolve-feedback.sh <thread-id>`
+   - For generic PR comments: `~/.claude/skills/drive-pr/dismiss-comment.sh <comment-id>`
 5. Return to Step 1 for next feedback item
 
 **Option 5 - Snooze:**
 
 1. Ask the user how long to snooze (e.g. 1h, 4h, 1d, 3d, 1w), or accept inline if already specified
-2. Run: `~/.claude/skills/drive-pr-to-clean-review/snooze-feedback.sh <id> <duration>` (works with both thread IDs and comment IDs)
+2. Run: `~/.claude/skills/drive-pr/snooze-feedback.sh <id> <duration>` (works with both thread IDs and comment IDs)
 3. The item will be hidden from feedback retrieval until the snooze expires. For review threads, it also auto-unsnoozes if a new comment from someone else is added.
 4. Return to Step 1 for next feedback item
 
@@ -339,7 +364,7 @@ If there was nothing new to push and the head commit is already pushed, skip the
 After the head commit is on the remote, wait for CodeRabbit to review it. **Do not poll by hand** — use the dedicated waiter, which already handles the settle period, requesting a review when CodeRabbit won't auto-review (draft or paused PRs), polling for completion, and **sleeping out rate limits for the full reset window**:
 
 ```bash
-~/.claude/skills/drive-pr-to-clean-review/wait-for-review.sh
+~/.claude/skills/drive-pr/wait-for-review.sh
 ```
 
 **Run it in the background** (`Bash` with `run_in_background: true`). CodeRabbit reviews — and especially rate-limit waits — routinely exceed a single foreground tool-call timeout, and foreground sleeps are blocked in this environment. The harness re-invokes you when the script exits.
@@ -354,26 +379,44 @@ Interpret the exit code:
 
 For a one-off, read-only "where is CodeRabbit right now?" check at any point — without waiting — use the separate **`coderabbit-status`** skill.
 
+### Step 9b: Fix Failing CI
+
+Checks run on the pushed commit. Get their status:
+
+```bash
+gh pr checks
+```
+
+- **All required checks pass** → CI is green; continue to Step 10.
+- **Checks still running** → wait for them to settle (`gh pr checks --watch`, or re-query). Because a watch can be long, run it in the background (`Bash` with `run_in_background: true`) like the CodeRabbit waiter.
+- **A required check failed** →
+  - If it's **genuinely transient** (flake, infra blip, timeout unrelated to the change), re-run just that check (`gh run rerun <run-id> --failed`) rather than touching code.
+  - If it's a **real failure**, invoke the **`fix-ci`** skill via the Skill tool to diagnose and fix it. `fix-ci` operates on the current branch's PR; let it own the fix/commit cycle. Any commits it makes flow through Step 8 (push) and re-trigger CI + CodeRabbit — i.e., another loop pass.
+
+Ignore non-required/informational checks for the "green" decision unless the user says otherwise. In **Non-interactive (batch) mode**, leave CI to the caller unless it asked you to handle it.
+
 ### Step 10: Loop or Finish
 
-When the waiter reports the review completed (exit 0), return to **Step 1** and retrieve feedback again:
+A push during this pass invalidates the prior CI and CodeRabbit results, so re-evaluate all three dimensions. Return to **Step 0.7 / Step 1** and reassess:
 
-- **CodeRabbit (or anyone) posted new feedback** → resolve it (Steps 2–6), then continue back through Steps 7–9. This is the babysit loop: resolve → review-loop → push → wait → repeat.
-- **No new feedback and CodeRabbit's latest review is clean/approved** → you've reached a clean review. Stop and report.
+- **Anything changed or is still not green** — a conflict was integrated, a fix was committed, new feedback arrived, or CI was fixed → go around again (re-integrate base, re-resolve feedback, re-push, re-wait, re-check CI). This is the drive loop: integrate → resolve → review-loop → push → babysit CodeRabbit → fix CI → repeat.
+- **All three dimensions clean and the pass produced no changes** — no conflicts/behind-base, CI green, no new feedback, and CodeRabbit's latest review is clean/approved → the PR is **mergeable**. Stop and report. **Do not merge.**
 
-Guard against infinite loops: if a full pass makes **no** code changes and produces **no** new feedback, the PR is clean — finish. If CodeRabbit keeps flagging the same item across passes without converging, stop and surface it to the user rather than looping forever.
+Guard against infinite loops: if a full pass makes **no** code changes and produces **no** new feedback while all checks are green and the branch is current, you're done. If CodeRabbit keeps flagging the same item, CI keeps failing the same way, or a conflict keeps re-appearing across passes without converging, stop and surface it to the user rather than looping forever.
 
 Final report:
 
 ```
-PR driven to a clean review.
+PR driven to a mergeable state (not merged).
+- Base: integrated <base>; conflicts resolved: C
 - Feedback resolved: N item(s)
 - `review-loop`: M commit(s) across K cycle(s)
+- CI: green (X check(s))  [or: fixed via fix-ci — F commit(s)]
 - CodeRabbit: clean review on <head-sha> (waited through R rate-limit(s), ~T total)
 - Pushed to <branch>.
 ```
 
-If anything is unresolved (review-loop cycle-limit findings, a CodeRabbit timeout, skipped human feedback in batch mode, or a non-converging item), include it so the user can decide next steps.
+If any dimension is unresolved (unresolvable conflict, CI still red, review-loop cycle-limit findings, a CodeRabbit timeout, skipped human feedback in batch mode, or a non-converging item), include it so the user can decide next steps.
 
 ## Conventional Commit Format
 
@@ -449,7 +492,7 @@ When processing a generic PR comment with multiple items:
 | `pr-comment.sh <thread-id>`                     | Reply to a thread (prompts for comment in $EDITOR) |
 | `wait-for-review.sh` (Step 9; run in background)  | Wait for CodeRabbit to finish; auto-requests review on draft/paused PRs and sleeps out rate limits |
 
-All scripts should be prefixed with the full path: `~/.claude/skills/drive-pr-to-clean-review/`
+All scripts should be prefixed with the full path: `~/.claude/skills/drive-pr/`
 
 **CodeRabbit status detection** lives in the separate **`coderabbit-status`** skill (`~/.claude/skills/coderabbit-status/coderabbit-status.sh`), which is the single source of truth for "where is CodeRabbit in its review". `wait-for-review.sh` calls that script internally. For a one-shot, read-only status check ("has CodeRabbit finished?", "is it rate limited?"), use the `coderabbit-status` skill rather than reimplementing the check here.
 

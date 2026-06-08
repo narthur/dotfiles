@@ -15,12 +15,12 @@ You report CodeRabbit's current review state for a pull request. This is a **rea
 
 ## What You Don't Do
 
-- **Do not poll or wait** for the review to finish — that's the `wait-for-review.sh` script in the `drive-pr-to-clean-review` skill. Report the status once and stop.
+- **Do not poll or wait** for the review to finish — that's the `wait-for-review.sh` script in the `drive-pr` skill. Report the status once and stop.
 - **Do not** resolve threads, dismiss comments, request reviews, or post anything to the PR.
 - **Do not** edit files or run a review loop.
 - **Do not** switch branches unless the user passed an explicit PR argument (see Step 1).
 
-If the user wants to act on CodeRabbit's feedback, point them at the `drive-pr-to-clean-review` skill. If they want to block until the review completes, point them at `wait-for-review.sh`.
+If the user wants to act on CodeRabbit's feedback, point them at the `drive-pr` skill. If they want to block until the review completes, point them at `wait-for-review.sh`.
 
 ## The Detector Script
 
@@ -30,7 +30,7 @@ This skill **owns** the status detector — the single source of truth for combi
 ~/.claude/skills/coderabbit-status/coderabbit-status.sh
 ```
 
-The `drive-pr-to-clean-review` skill's `wait-for-review.sh` also consumes this same script (via a sibling-skill relative path), so keep its CLI (`[--json]`) and output shape stable. Do not reimplement the detection logic anywhere else — always call this script.
+The `drive-pr` skill's `wait-for-review.sh` also consumes this same script (via a sibling-skill relative path), so keep its CLI (`[--json]`) and output shape stable. Do not reimplement the detection logic anywhere else — always call this script.
 
 ## Workflow
 
@@ -74,7 +74,7 @@ Translate the `status` field into a one-line headline plus a short plain-English
 | `not_started`  | ⚪ Not started                     | No CodeRabbit check and no comment yet. On a draft PR, CodeRabbit won't auto-review — a review must be requested.       |
 | `starting_up`  | 🟡 Starting up                    | Check is pending but CodeRabbit hasn't posted yet. Give it a moment.                                                   |
 | `in_progress`  | 🟡 Reviewing                      | CodeRabbit is actively reviewing right now. Check back shortly, or use `wait-for-review.sh` to block until it's done.  |
-| `completed`    | 🟢 Review complete                | CodeRabbit has finished. If they want to act on findings, suggest the `drive-pr-to-clean-review` skill.                     |
+| `completed`    | 🟢 Review complete                | CodeRabbit has finished. If they want to act on findings, suggest the `drive-pr` skill.                     |
 | `rate_limited` | 🟠 Rate limited                   | CodeRabbit hit a rate limit. Report the wait time from `wait_seconds` (e.g. "retry in ~Xm Ys") if it's > 0.            |
 | `timed_out`    | 🔴 Timed out                      | CodeRabbit's review timed out. A fresh review would need to be requested.                                              |
 | `paused`       | ⏸️ Paused                         | Auto-reviews are disabled for this PR; a manual review (`@coderabbitai review`) is needed to get one.                  |
