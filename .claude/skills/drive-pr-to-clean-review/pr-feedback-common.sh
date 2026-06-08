@@ -257,8 +257,9 @@ ${color_cmd}dismiss-comment.sh${color_reset} <comment-id> [--undismiss]
 ${color_cmd}wait-for-review.sh${color_reset} [--workspace-type TYPE]
   ${color_desc}Wait for CodeRabbit review after pushing (handles settle, draft, polling, rate limits)${color_reset}
 
-${color_cmd}coderabbit-status.sh${color_reset} [--json]
+${color_cmd}../coderabbit-status/coderabbit-status.sh${color_reset} [--json]
   ${color_desc}Check CodeRabbit's current review status (combines check + comment signals)${color_reset}
+  ${color_desc}Lives in the sibling 'coderabbit-status' skill, which owns status detection${color_reset}
 
 ${color_header}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${color_reset}
 EOF

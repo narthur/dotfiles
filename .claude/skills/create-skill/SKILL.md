@@ -69,7 +69,7 @@ Create the `SKILL.md` in the appropriate location based on scope:
 
 Skills fall into two categories with different openings:
 
-**Workflow skills** drive a multi-step interactive process (e.g., `grooming`, `resolve-pr-feedback`). Open with a role statement so the invoker adopts the right behavior:
+**Workflow skills** drive a multi-step interactive process (e.g., `grooming`, `drive-pr-to-clean-review`). Open with a role statement so the invoker adopts the right behavior:
 
 ```markdown
 # {Skill Title}

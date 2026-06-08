@@ -27,9 +27,6 @@
 
 set -euo pipefail
 
-SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SOURCE_DIR/pr-feedback-common.sh"
-
 JSON_OUTPUT=false
 
 while [[ $# -gt 0 ]]; do
@@ -125,13 +122,16 @@ if [[ -n "$cr_body" ]]; then
   # Classify the status section of the comment
   if echo "$cr_status_section" | grep -qiP "$RATE_LIMIT_PATTERNS"; then
     comment_state="rate_limited"
-    # Extract wait time from messages like "wait 45 minutes and 9 seconds"
+    # Extract the reset window from messages like "wait 45 minutes and 9 seconds",
+    # "try again in 1 hour and 12 minutes", or "please wait 2 hours". We pull the
+    # first hours/minutes/seconds figure each and sum them.
+    wait_hr=$(echo "$cr_status_section" | grep -oiP '(\d+)\s*hours?' | grep -oP '\d+' | head -1) || true
     wait_min=$(echo "$cr_status_section" | grep -oiP '(\d+)\s*minutes?' | grep -oP '\d+' | head -1) || true
     wait_sec=$(echo "$cr_status_section" | grep -oiP '(\d+)\s*seconds?' | grep -oP '\d+' | head -1) || true
-    if [[ -n "$wait_min" || -n "$wait_sec" ]]; then
-      wait_seconds=$(( ${wait_min:-0} * 60 + ${wait_sec:-0} ))
+    if [[ -n "$wait_hr" || -n "$wait_min" || -n "$wait_sec" ]]; then
+      wait_seconds=$(( ${wait_hr:-0} * 3600 + ${wait_min:-0} * 60 + ${wait_sec:-0} ))
     else
-      wait_seconds=180  # default 3 minutes
+      wait_seconds=180  # default 3 minutes when no figure is given
     fi
   elif echo "$cr_status_section" | grep -qiP "$TIMEOUT_PATTERNS"; then
     comment_state="timed_out"

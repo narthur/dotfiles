@@ -20,6 +20,10 @@ set -euo pipefail
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SOURCE_DIR/pr-feedback-common.sh"
 
+# coderabbit-status.sh now lives in the sibling `coderabbit-status` skill,
+# which owns CodeRabbit status detection. Resolve it relative to this script.
+CODERABBIT_STATUS_SH="$SOURCE_DIR/../coderabbit-status/coderabbit-status.sh"
+
 WORKSPACE_TYPE=""
 SETTLE_SECONDS=30
 FIRST_POLL_SECONDS=30   # 30s after settle = ~1 min total
@@ -91,11 +95,11 @@ check_for_new_feedback() {
 }
 
 get_status() {
-  "$SOURCE_DIR/coderabbit-status.sh" "$@"
+  "$CODERABBIT_STATUS_SH" "$@"
 }
 
 get_status_json() {
-  "$SOURCE_DIR/coderabbit-status.sh" --json
+  "$CODERABBIT_STATUS_SH" --json
 }
 
 # ── Step 1: Settle period ───────────────────────────────────────────
