@@ -1,5 +1,33 @@
 #!/bin/bash
 
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    cat <<'USAGE'
+Usage: generate-illustrations [INPUT]
+
+Generate a set of painterly illustrations for an article across a range of
+artistic styles and abstractness levels. The article text is summarized with
+an LLM, turned into image-generation prompts, and rendered via fal.ai.
+
+Input options:
+  FILE                  Read the article from FILE.
+  -c, --from-clipboard  Read the article from the system clipboard.
+  (none)                Read the article from stdin (type 'END' on a new line
+                        when finished).
+
+Other options:
+  -h, --help            Show this help and exit.
+
+Environment:
+  FAL_KEY      Required. fal.ai API key (https://fal.ai/dashboard/keys).
+               Add 'export FAL_KEY=...' to ~/.env.
+  IMAGE_MODEL  Optional. Hosted image model (default: fal-ai/flux/dev).
+
+Output:
+  Images are saved to ~/Pictures/Illustrations.
+USAGE
+    exit 0
+fi
+
 model="anthropic/claude-haiku-4-5-20251001"
 
 # Hosted image model on fal.ai (override with IMAGE_MODEL env var if desired)

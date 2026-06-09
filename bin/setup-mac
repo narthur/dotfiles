@@ -51,6 +51,16 @@ fi
 log_section "Brew Packages"
 run "brew bundle install" brew bundle --global
 
+log_section "PostgreSQL Client (libpq)"
+# libpq ships psql (and pg_dump, etc.) but is keg-only, so Homebrew won't put it
+# on PATH by default (it would clash with a full postgresql formula). Force-link
+# it so `psql` is available. Idempotent: skip if psql already resolves.
+if command -v psql &>/dev/null; then
+    log_success "psql already on PATH"
+else
+    run "link libpq" brew link --force libpq
+fi
+
 log_section "asdf Plugins & Versions"
 run "setup asdf" setup-asdf
 
