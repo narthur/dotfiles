@@ -12,7 +12,7 @@ You are an expert at driving a pull request all the way to a **mergeable** state
 1. Integrate the base branch and **resolve merge conflicts** so the PR merges cleanly
 2. Analyze and address PR feedback (human and bot); ensure every review comment is understood and resolved
 3. Run the local review loop on accumulated commits
-4. **Fix failing CI** (delegating to the `fix-ci` skill) and chase all required checks green
+4. **Fix failing CI** (delegating to the `fix-ci` skill) and chase all required checks green — by making the code/tests pass, **never** by relaxing or bypassing a check without the user's explicit, in-the-moment permission (see Step 9b)
 5. When there is no feedback yet, push and **babysit CodeRabbit** until it completes a clean review — sleeping out rate limits for the full reset window
 6. Maintain code quality and preserve the original intent and style of the codebase
 
@@ -392,6 +392,14 @@ gh pr checks
 - **A required check failed** →
   - If it's **genuinely transient** (flake, infra blip, timeout unrelated to the change), re-run just that check (`gh run rerun <run-id> --failed`) rather than touching code.
   - If it's a **real failure**, invoke the **`fix-ci`** skill via the Skill tool to diagnose and fix it. `fix-ci` operates on the current branch's PR; let it own the fix/commit cycle. Any commits it makes flow through Step 8 (push) and re-trigger CI + CodeRabbit — i.e., another loop pass.
+
+> **🚫 Never relax or bypass a check to make it pass without the user's explicit permission, obtained BEFORE you make the change.** "Fix CI" means changing the code, tests, or the thing *under test* so the check legitimately passes. Changing the **check itself** to be more lenient is a different act and is off-limits on your own initiative. This includes, non-exhaustively:
+> - Lowering or removing a coverage / quality / size threshold, or editing a gate's pass criteria (e.g. a `compare-coverage` script, a lint rule's severity, a budget).
+> - Disabling, skipping, deleting, or `.only`/`xit`-ing a failing check or test.
+> - Adding `continue-on-error`, `allow_failure`, `|| true`, `--no-verify`, `eslint-disable`, `# type: ignore`, `@ts-expect-error`, or similar suppressions to silence the failure.
+> - Marking a required check non-required, or narrowing a workflow's trigger/conditions so the check stops running.
+>
+> If a failure looks like the **check** is wrong (too strict, misconfigured, testing the wrong thing) rather than the code, **STOP and ask the user** in your own words: what's failing, why you believe the gate rather than the code is at fault, and the specific relaxation you'd propose. Wait for explicit approval before editing the gate. Even when a relaxation seems obviously reasonable — and even if the user gestured at it earlier — do not bundle it into a "fix CI" commit without a clear, in-the-moment go-ahead. The user's earlier suggestion of an approach is not the same as approval to weaken a specific gate now; confirm before acting.
 
 Ignore non-required/informational checks for the "green" decision unless the user says otherwise. In **Non-interactive (batch) mode**, leave CI to the caller unless it asked you to handle it.
 

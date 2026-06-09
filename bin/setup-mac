@@ -84,6 +84,27 @@ run "update bin" bin update bin
 run "ensure buzz installed" bash -c 'bin ensure buzz || bin install github.com/pinepeakdigital/buzz'
 run "ensure sysmon installed" bash -c 'bin ensure sysmon || bin install github.com/PinePeakDigital/sysmon'
 
+log_section "scanline"
+# scanline drives ICA scanners (e.g. the Brother DS-740D) from the CLI; used by
+# ~/bin/scan on macOS. It isn't in brew or installable via `bin` (it ships only
+# as a notarized .pkg), so extract the signed universal binary from the pkg
+# payload into ~/.local/bin — no sudo and no installer required.
+if ! command -v scanline &>/dev/null; then
+    log "scanline not found, installing..."
+    SCANLINE_VERSION="2.3"
+    SCANLINE_TMP="$(mktemp -d)"
+    run "download scanline" curl -fsSL -o "$SCANLINE_TMP/scanline.pkg" \
+        "https://github.com/klep/scanline/raw/master/scanline-${SCANLINE_VERSION}.pkg"
+    run "extract scanline" bash -c "cd '$SCANLINE_TMP' && pkgutil --expand scanline.pkg expanded && tar xf expanded/Payload"
+    run "install scanline" install -m 0755 "$SCANLINE_TMP/usr/local/bin/scanline" "$HOME/.local/bin/scanline"
+    rm -rf "$SCANLINE_TMP"
+else
+    log_success "scanline already installed"
+fi
+# The Brother DS-740D ICA scanner driver still can't be installed non-interactively
+# (system driver: needs sudo + a System Settings approval), so flag it as a manual step.
+log "Scanner driver is manual: run 'scan --check' to verify the DS-740D + ICA driver"
+
 log_section "GitHub CLI Extensions"
 gh extension list | grep -q poi || run "install gh-poi" gh extension install seachicken/gh-poi
 

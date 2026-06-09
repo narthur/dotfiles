@@ -42,4 +42,4 @@ jq -n --arg repo "$repo" --arg branch "$branch" --arg pr "$pr" '
     (if $branch == "" then empty else "Branch: "  + $branch end),
     (if $pr     == "" then empty else "PR: "      + $pr     end) ]
   | select(length > 0)
-  | {systemMessage: ("\n\n" + join("\n\n"))}'
+  | {systemMessage: ("\n\n" + join("\n"))}'

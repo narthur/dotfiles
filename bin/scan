@@ -1,14 +1,192 @@
 #!/bin/bash
 
-# Scan documents to PDF
-# Usage: scan [filename]
-#        scan --append
-# If no filename provided, uses timestamp
-# --append: Append to the most recent scan
+# Scan documents to PDF (cross-platform)
+# Usage: scan [filename]      Scan to SCAN_DIR (timestamped name if omitted)
+#        scan --append        Append the scan to the most recent PDF
+#        scan --check         Check that all prerequisites are installed
+#        scan --help
+#
+# Capture is OS-specific:
+#   Linux  - SANE `scanimage` via Brother's proprietary brscan5 backend
+#   macOS  - `scanline` driving the Brother DS-740D through Apple's ICA driver
+# Everything after capture (blank-page removal, grayscale auto-detect, OCR,
+# PDF merge) is shared.
 
 set -e
 
-# Load environment variables
+RESOLUTION=300
+OS="$(uname -s)"
+DRIVER_URL="https://support.brother.com/g/b/downloadtop.aspx?c=us&lang=en&prod=ds740d_all"
+SCANLINE_URL="https://github.com/klep/scanline/releases"
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# Resolve the ImageMagick CLI into $IM: v7 ships `magick`, v6 ships `convert`.
+# Empty if neither is installed (reported by the dependency checks).
+IM=""
+if have magick; then IM="magick"; elif have convert; then IM="convert"; fi
+
+usage() {
+    sed -n '3,11p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+# Is the DS-740D enumerated on the USB bus? Lets us tell "driver missing"
+# (device present but invisible to Image Capture) from "scanner off/unplugged".
+usb_has_scanner() {
+    ioreg -p IOUSB -l -w 0 2>/dev/null | grep -qi 'DS-740D'
+}
+
+# Guidance when macOS can't reach the scanner.
+macos_scanner_hint() {
+    if usb_has_scanner; then
+        echo "    The DS-740D is connected via USB but Image Capture can't see it,"
+        echo "    which means the Brother ICA scanner driver isn't installed yet:"
+        echo "      1. Download the macOS scanner driver (.dmg):"
+        echo "         $DRIVER_URL"
+        echo "      2. Open the .dmg and run the 'Brother DS-740D.pkg' installer"
+        echo "      3. Unplug and reconnect the scanner"
+    else
+        echo "    The DS-740D isn't visible on USB — make sure it's powered on and"
+        echo "    the USB cable is connected, then run 'scan --check' again."
+    fi
+}
+
+# Verify every prerequisite and report what's missing with how to fix it.
+# Returns 0 when fully ready to scan, 1 otherwise.
+doctor() {
+    local ready=0
+    echo "Checking scan prerequisites ($OS)..."
+    echo
+
+    # Shared post-processing dependencies
+    if [ -n "$IM" ]; then echo "✓ ImageMagick ($IM)"; else ready=1; echo "✗ ImageMagick — brew install imagemagick"; fi
+    if have ocrmypdf; then echo "✓ ocrmypdf"; else ready=1; echo "✗ ocrmypdf — brew install ocrmypdf"; fi
+    if have pdfunite; then echo "✓ pdfunite (poppler)"; else ready=1; echo "✗ pdfunite — brew install poppler"; fi
+    if have bc; then echo "✓ bc"; else ready=1; echo "✗ bc — brew install bc"; fi
+
+    case "$OS" in
+        Darwin)
+            if have pdftoppm; then echo "✓ pdftoppm (poppler)"; else ready=1; echo "✗ pdftoppm — brew install poppler"; fi
+            if have scanline; then
+                echo "✓ scanline ($(command -v scanline))"
+            else
+                ready=1
+                echo "✗ scanline not installed."
+                echo "    Install the notarized .pkg from: $SCANLINE_URL"
+            fi
+            echo
+            if have scanline; then
+                echo "Looking for the scanner (this can take a few seconds)..."
+                if scanline -list 2>/dev/null | grep -qi -e 'DS-740' -e brother; then
+                    echo "✓ Scanner detected by Image Capture."
+                else
+                    ready=1
+                    echo "✗ Scanner not detected by Image Capture."
+                    macos_scanner_hint
+                fi
+            else
+                echo "ⓘ Skipping scanner detection until scanline is installed."
+            fi
+            ;;
+        Linux)
+            if have scanimage; then
+                echo "✓ scanimage (SANE)"
+                if scanimage -L 2>/dev/null | grep -qi brother; then
+                    echo "✓ Brother scanner detected by SANE."
+                else
+                    ready=1
+                    echo "✗ No Brother scanner detected by SANE."
+                    echo "    Install Brother's brscan5 backend (Linux-only), make sure the"
+                    echo "    scanner is on and connected, then verify with: scanimage -L"
+                fi
+            else
+                ready=1
+                echo "✗ scanimage not installed — install SANE and Brother's brscan5 backend."
+            fi
+            ;;
+    esac
+
+    echo
+    if [ "$ready" -eq 0 ]; then
+        echo "All set — run 'scan' (or 'scan <name>', 'scan --append')."
+    else
+        echo "Some steps remain — address the ✗ items above, then re-run 'scan --check'."
+        echo "On a configured machine, 'brew bundle --global' installs the brew packages."
+    fi
+    return "$ready"
+}
+
+# Require a command for the scan path, pointing at the doctor for setup help.
+require() {
+    if ! have "$1"; then
+        echo "Error: required command '$1' not found.${2:+ $2}"
+        echo "Run 'scan --check' to see everything that needs setting up."
+        exit 1
+    fi
+}
+
+# Fill the directory in $1 with one TIFF per scanned page (page-*.tif[f]).
+capture_pages() {
+    local outdir="$1"
+    case "$OS" in
+        Linux)
+            require scanimage "Install SANE and Brother's brscan5 backend."
+            scanimage --resolution "$RESOLUTION" \
+                --source 'Automatic Document Feeder(left aligned,Duplex)' \
+                --AutoDocumentSize=yes --AutoDeskew=yes \
+                --format=tiff --batch="$outdir/page-%03d.tiff"
+            ;;
+        Darwin)
+            require scanline "Install scanline from $SCANLINE_URL"
+            require pdftoppm "Install poppler with: brew install poppler"
+            # Fail fast if the scanner isn't on the USB bus at all, instead of
+            # waiting ~10s for scanline's browse to time out.
+            if ! usb_has_scanner; then
+                echo "Error: the Brother DS-740D isn't connected."
+                macos_scanner_hint
+                exit 1
+            fi
+            # Capture into a subdir of the (already trap-cleaned) work dir so a
+            # scanline failure can't leak temp files. scanline drives the ICA
+            # scanner, scanning duplex from the ADF to a single combined PDF;
+            # we then split it into per-page TIFFs for the shared pipeline.
+            local capdir="$outdir/.capture"
+            mkdir -p "$capdir"
+            if ! scanline -duplex -resolution "$RESOLUTION" -dir "$capdir" -name capture; then
+                echo "Error: scanline failed to scan."
+                macos_scanner_hint
+                exit 1
+            fi
+            local pdf
+            pdf="$(find "$capdir" -name '*.pdf' -type f 2>/dev/null | head -n1)"
+            if [ -z "$pdf" ]; then
+                echo "Error: scanline produced no PDF."
+                macos_scanner_hint
+                exit 1
+            fi
+            pdftoppm -tiff -r "$RESOLUTION" "$pdf" "$outdir/page"
+            rm -rf "$capdir"
+            ;;
+        *)
+            echo "Error: unsupported OS '$OS'"
+            exit 1
+            ;;
+    esac
+}
+
+# ---- argument handling ----
+case "$1" in
+    --check|--doctor)
+        doctor
+        exit $?
+        ;;
+    -h|--help)
+        usage
+        exit 0
+        ;;
+esac
+
+# ---- environment ----
 if [ -f "$HOME/.env" ]; then
     source "$HOME/.env"
 fi
@@ -21,6 +199,17 @@ fi
 
 SCAN_DIR="$BROTHER_SCAN_DIR"
 APPEND_MODE=false
+mkdir -p "$SCAN_DIR"
+
+# Shared post-processing dependencies
+if [ -z "$IM" ]; then
+    echo "Error: ImageMagick not found (need 'magick' or 'convert'). Install with: brew install imagemagick"
+    echo "Run 'scan --check' to see everything that needs setting up."
+    exit 1
+fi
+require ocrmypdf "Install with: brew install ocrmypdf"
+require pdfunite "Install poppler with: brew install poppler"
+require bc
 
 # Check for --append flag
 if [ "$1" = "--append" ]; then
@@ -49,46 +238,60 @@ fi
 
 echo "Scanning to: $OUTPUT_PATH"
 
-# Create temporary files
-TEMP_TIFF=$(mktemp --suffix=.tiff)
-TEMP_PDF=$(mktemp --suffix=.pdf)
+# Working directory for all intermediate files; cleaned up on exit.
+WORKDIR=$(mktemp -d)
+TEMP_PDF="$WORKDIR/out.pdf"
+trap 'rm -rf "$WORKDIR"' EXIT
 
-# Cleanup on exit
-trap "rm -f '$TEMP_TIFF'*.tiff '$TEMP_PDF'" EXIT
-
-# Scan to TIFF
+# Scan into the working directory
 echo "Scanning..."
-scanimage --resolution 300 --source 'Automatic Document Feeder(left aligned,Duplex)' --AutoDocumentSize=yes --AutoDeskew=yes --format=tiff --batch="$TEMP_TIFF-%d.tiff"
+capture_pages "$WORKDIR"
+
+# Renumber captured pages to a fixed-width sequence so that a plain lexical
+# glob iterates them in true page order (page-2 vs page-10 would otherwise
+# sort wrong). Sorting `ls` numerically on the trailing page number works on
+# both GNU and BSD sort.
+i=1
+for f in $(cd "$WORKDIR" && ls page-*.tif page-*.tiff 2>/dev/null | sort -t- -k2 -n); do
+    mv "$WORKDIR/$f" "$WORKDIR/$(printf 'p-%04d.tiff' "$i")"
+    i=$((i + 1))
+done
+
+PAGE_FILES=("$WORKDIR"/p-*.tiff)
+if [ ! -e "${PAGE_FILES[0]}" ]; then
+    echo "Error: no pages were scanned"
+    exit 1
+fi
 
 # Convert to PDF
 echo "Converting to PDF..."
 
-# Auto-detect if grayscale and convert if needed, and remove blank pages
+# Auto-detect grayscale and convert if needed, and remove blank pages
 KEPT_PAGES=()
-for tiff in "$TEMP_TIFF"*.tiff; do
-    # Check if page is blank by calculating mean pixel intensity
-    # Blank pages will have very high mean (close to white) or very low variance
-    MEAN=$(convert "$tiff" -colorspace Gray -format "%[fx:mean]" info:)
-    STDDEV=$(convert "$tiff" -colorspace Gray -format "%[fx:standard_deviation]" info:)
-    
+for tiff in "${PAGE_FILES[@]}"; do
+    # Check if page is blank by calculating mean pixel intensity.
+    # Blank pages have a very high mean (close to white) and low variance.
+    MEAN=$($IM "$tiff" -colorspace Gray -format "%[fx:mean]" info:)
+    STDDEV=$($IM "$tiff" -colorspace Gray -format "%[fx:standard_deviation]" info:)
+
     # If mean > 0.98 (very white) and stddev < 0.02 (very uniform), it's likely blank
     IS_BLANK=$(echo "$MEAN > 0.98 && $STDDEV < 0.02" | bc -l)
-    
+
     if [ "$IS_BLANK" -eq 1 ]; then
         echo "Skipping blank page: $(basename "$tiff")"
         continue
     fi
-    
-    # Get color statistics - if standard deviation of color channels is very low, it's grayscale
-    COLOR_SCORE=$(convert "$tiff" -colorspace HSL -channel S -separate +channel -format "%[fx:mean]" info:)
+
+    # Get color statistics - if saturation is very low, it's effectively grayscale
+    COLOR_SCORE=$($IM "$tiff" -colorspace HSL -channel S -separate +channel -format "%[fx:mean]" info:)
     # If saturation is low (< 0.20), convert to grayscale to save space
     if (( $(echo "$COLOR_SCORE < 0.20" | bc -l) )); then
         echo "  $(basename "$tiff"): Converting to grayscale (saturation: $COLOR_SCORE)"
-        convert "$tiff" -colorspace Gray "$tiff"
+        $IM "$tiff" -colorspace Gray "$tiff"
     else
         echo "  $(basename "$tiff"): Keeping in color (saturation: $COLOR_SCORE)"
     fi
-    
+
     KEPT_PAGES+=("$tiff")
 done
 
@@ -98,21 +301,19 @@ if [ ${#KEPT_PAGES[@]} -eq 0 ]; then
     exit 1
 fi
 
-convert "${KEPT_PAGES[@]}" "$TEMP_PDF"
+$IM "${KEPT_PAGES[@]}" "$TEMP_PDF"
 
 # Add OCR to make it searchable
 echo "Adding OCR..."
 if [ "$APPEND_MODE" = true ]; then
-    # Create temp file for OCR'd new scan
-    TEMP_OCR=$(mktemp --suffix=.pdf)
+    # OCR the new scan, then merge into the existing PDF
+    TEMP_OCR="$WORKDIR/ocr.pdf"
     ocrmypdf --skip-text "$TEMP_PDF" "$TEMP_OCR"
-    
-    # Merge with existing PDF
+
     echo "Merging with existing PDF..."
-    TEMP_MERGED=$(mktemp --suffix=.pdf)
+    TEMP_MERGED="$WORKDIR/merged.pdf"
     pdfunite "$OUTPUT_PATH" "$TEMP_OCR" "$TEMP_MERGED"
     mv "$TEMP_MERGED" "$OUTPUT_PATH"
-    rm -f "$TEMP_OCR"
 else
     ocrmypdf --skip-text "$TEMP_PDF" "$OUTPUT_PATH"
 fi
