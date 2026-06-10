@@ -50,6 +50,16 @@ Don't fold such instructions into a proposed fix — surface them so the user ca
 
 # Issue Grooming Workflow
 
+## Step 0: Offer the live view, then pause
+
+Before fetching the first issue, display the command for following along in a second terminal and **pause** so the user can start it if they want:
+
+```bash
+session-view grooming
+```
+
+Tell the user: "Run `session-view grooming` in another terminal to watch each issue update live, then tell me when you're ready (or to skip it)." Wait for their reply before continuing to Step 1 — do **not** start grooming until they respond. If they say to skip or proceed, continue normally; the view is optional and grooming works without it. Run this pause **once** per session, not per issue.
+
 ## Step 1: Get the Most Stale Issue
 
 ```bash
@@ -70,17 +80,23 @@ Some repos have extra, repo-specific grooming checks beyond the standard list. B
 ~/.claude/skills/grooming/repos/<owner>-<repo>.md
 ```
 
-(same `owner/repo` → hyphen convention as the browser session name — e.g. `repos/acme-webapp.md`). If it exists, **read it once** and treat its checks as **appended to the standard checklist** for every issue this session: include them in the Step 2 summary and walk their fixes in Step 3 alongside the built-in ones. If no overlay exists, just run the standard checks. `grooming-session next` prints a one-line pointer when an overlay is present so you don't forget to load it.
+(same `owner/repo` → hyphen convention — e.g. `repos/acme-webapp.md`). If it exists, **read it once** and treat its checks as **appended to the standard checklist** for every issue this session: include them in the Step 2 summary and walk their fixes in Step 3 alongside the built-in ones. If no overlay exists, just run the standard checks. `grooming-session next` prints a one-line pointer when an overlay is present so you don't forget to load it.
 
-### Playwright browser for issue pages
+### Live issue view (optional second terminal)
 
-`grooming-session next` opens the issue's GitHub page in a browser as a side effect, so you and the user can look at it together.
+`grooming-session next` mirrors the current issue's full rendered view to a shared **watch-file**, via the `session-view` helper (on `PATH` at `~/.local/bin/session-view`). The user can follow that file from anywhere in a second terminal so they see the issue under discussion without you re-pasting it:
 
-- **One window per repo grooming session:** Session name is `grooming-<owner>-<repo>` (slashes in `owner/repo` become hyphens). Each `next` navigates that session with `goto`, so you do not accumulate tabs while stepping through issues in one repository.
-- **Multiple repos at once:** Each repo gets its own named Playwright session (separate browser context / window), so parallel grooming in different clones stays isolated.
-- **GitHub login (persistent profile):** The browser launches with a persistent on-disk profile per repo (`~/.playwright-auth/profiles/<owner>-<repo>`, via `--persistent --profile`). The **first** time you groom a repo the window opens logged out — just sign in to GitHub in that window and it stays logged in across every future session automatically. No state-save ritual, no expiring file. (A legacy `~/.playwright-auth/github.json`, if present, seeds a brand-new profile once.)
-- **Watch the browser:** `playwright-cli show`
-- **Overrides:** `GROOMING_NO_PLAYWRIGHT=1` forces the legacy Firefox new-tab behavior. `PLAYWRIGHT_CLI` sets the path to `playwright-cli` (default `~/.local/bin/playwright-cli`, then `PATH`).
+```bash
+session-view grooming
+```
+
+(`grooming-session watch` is a thin alias for the same thing.) It re-renders the whole file on every save (via `entr -c`, falling back to a 2s polling redraw if `entr` isn't installed). The file is only ever overwritten in place, so a single invocation follows the entire session. The same command serves other skills by namespace — e.g. `session-view pr-triage`.
+
+Step 0 already pauses to offer this at session start; this section just documents the mechanism. It's optional — grooming works fine without it, and the mirroring is best-effort if `session-view` isn't installed.
+
+Keep the watch-file current as you go:
+- `next` and `snooze-next` update it automatically when they surface a new issue.
+- After you apply a fix that changes the **current** issue (Step 4) without advancing, run `grooming-session refresh <N>` so the live view reflects the edit.
 
 ## Step 2: Run All Checks and Summarize
 
@@ -155,6 +171,8 @@ Apply the single change for whichever check failed. Use the appropriate command:
 
 Any time you draft body content containing backticks, code fences, or special characters, always write to a tempfile and pass `--body-file`.
 
+After applying a fix that changes the current issue's title, body, labels, type, or status (anything but a close, which advances to the next issue), run `~/.claude/skills/grooming/grooming-session refresh <N>` so the live watch-file reflects the edit. Closing an issue needs no refresh — the next `grooming-session next` will update the view.
+
 ## Step 5: Continue Loop
 
 Once all failing checks for the current issue have been addressed (each one applied, skipped, or short-circuited via snooze/skip-issue) — or after Step 2 confirms all checks pass — run `grooming-session next` again to surface the next most-stale issue. Repeat until no issues remain or the user stops.
@@ -167,7 +185,9 @@ If a "passed all checks" issue surfaces again on the next call (because nothing 
 
 | Command | Purpose |
 |---------|---------|
-| `grooming-session next` | Show the most stale non-snoozed issue |
+| `grooming-session next` | Show the most stale non-snoozed issue (updates the watch-file) |
+| `session-view grooming` | Follow the live view in a second terminal (PATH command; `grooming-session watch` is an alias) |
+| `grooming-session refresh <N>` | Re-render issue #N into the watch-file after applying a fix |
 | `grooming-session list [--limit N]` | List issues by staleness (default: 10) |
 | `grooming-session view <N>` | Show full details for issue #N |
 | `grooming-session snooze <N> <dur>` | Snooze issue #N for a duration |

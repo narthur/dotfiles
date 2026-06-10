@@ -13,7 +13,9 @@ usage() {
 Usage: $0 <command> [options]
 
 Commands:
-  next                       Show the most stale non-snoozed issue
+  next                       Show the most stale non-snoozed issue (and update the watch-file)
+  watch                      Follow the watch-file in this terminal, refreshing on every change
+  refresh <N>                Re-render issue #N into the watch-file (after applying a fix)
   list [--limit N]           List issues sorted by least recently updated (default limit: 10)
   view <N>                   Show full details for issue #N
   snooze <N> <dur>           Snooze issue #N for a duration (e.g. 1h, 4h, 1d, 3d, 1w, 1m)
@@ -70,99 +72,6 @@ may be). Refusing to continue.
 Fix (write access, lets grooming also move cards): gh auth refresh -s project
 EOF
   exit 3
-}
-
-# Legacy: open URL in Firefox without stealing focus (when xdotool exists).
-open_issue_in_firefox() {
-  local url="$1"
-  if command -v xdotool >/dev/null 2>&1; then
-    local _FOCUSED
-    _FOCUSED=$(xdotool getactivewindow 2>/dev/null || true)
-    firefox --new-tab "$url" >/dev/null 2>&1 &
-    if [[ -n "$_FOCUSED" ]]; then
-      sleep 1
-      xdotool windowfocus "$_FOCUSED" 2>/dev/null || true
-    fi
-  else
-    firefox --new-tab "$url" >/dev/null 2>&1 &
-  fi
-}
-
-issue_open_firefox_fallback() {
-  local url="$1"
-  local reason="$2"
-  echo "grooming-session: using Firefox instead of Playwright — $reason" >&2
-  ( open_issue_in_firefox "$url" ) &
-}
-
-issue_one_line_detail() {
-  local text="$1"
-  [[ -z "$text" ]] && return
-  echo "$text" | head -n 2 | tr '\n' ' ' | sed 's/[[:space:]]*$//'
-}
-
-# Open issue in Playwright (one named session per repo, single tab reused) or
-# fall back to Firefox. Mirrors the pattern in pr-triage/pr-review-session so
-# stepping through issues does not pile up browser tabs.
-open_issue_in_browser() {
-  local url="$1"
-  local repo="$2"
-  if [[ "${GROOMING_NO_PLAYWRIGHT:-}" == "1" ]]; then
-    echo "grooming-session: using Firefox instead of Playwright — GROOMING_NO_PLAYWRIGHT=1" >&2
-    ( open_issue_in_firefox "$url" ) &
-    return
-  fi
-  local default_pw="${PLAYWRIGHT_CLI:-$HOME/.local/bin/playwright-cli}"
-  local pw="$default_pw"
-  if [[ ! -x "$pw" ]]; then
-    pw=$(command -v playwright-cli 2>/dev/null || true)
-  fi
-  if [[ -z "$pw" ]]; then
-    echo "grooming-session: using Firefox instead of Playwright — playwright-cli not found (not executable at ${default_pw} and no playwright-cli on PATH; set PLAYWRIGHT_CLI if it lives elsewhere)" >&2
-    ( open_issue_in_firefox "$url" ) &
-    return
-  fi
-  local session="grooming-${repo//\//-}"
-  local auth="${HOME}/.playwright-auth/github.json"
-  # Persistent on-disk profile per repo: log in to GitHub once in the grooming
-  # window and it stays logged in across every future session — no state-save
-  # ritual, no expiring JSON file. Per-repo dir preserves multi-repo isolation
-  # (two persistent contexts can't share one profile dir concurrently).
-  local profile="${HOME}/.playwright-auth/profiles/${repo//\//-}"
-  (
-    if ! "$pw" list 2>/dev/null | grep -Fq -- "- ${session}:"; then
-      local profile_existed=1
-      [[ -d "$profile" ]] || profile_existed=0
-      mkdir -p "$profile"
-      local open_out
-      if ! open_out=$("$pw" open --headed --browser chromium --persistent --profile "$profile" -s="$session" 2>&1); then
-        local detail
-        detail=$(issue_one_line_detail "$open_out")
-        if [[ -n "$detail" ]]; then
-          issue_open_firefox_fallback "$url" "playwright-cli open --headed failed — $detail"
-        else
-          issue_open_firefox_fallback "$url" "playwright-cli open --headed failed (no stderr; check DISPLAY/Wayland and browser install)"
-        fi
-        exit 0
-      fi
-      # First creation of this persistent profile: seed it from a legacy saved
-      # auth state if one happens to exist. After that the profile carries the
-      # login itself, so this never runs again for this repo.
-      if [[ "$profile_existed" == "0" && -f "$auth" ]]; then
-        "$pw" state-load "$auth" -s="$session" >/dev/null 2>&1 || true
-      fi
-    fi
-    local goto_out
-    if ! goto_out=$("$pw" goto "$url" -s="$session" 2>&1); then
-      local gdetail
-      gdetail=$(issue_one_line_detail "$goto_out")
-      if [[ -n "$gdetail" ]]; then
-        issue_open_firefox_fallback "$url" "playwright-cli goto failed — $gdetail"
-      else
-        issue_open_firefox_fallback "$url" "playwright-cli goto failed (no stderr)"
-      fi
-    fi
-  ) &
 }
 
 ensure_snooze_file() {
@@ -297,6 +206,36 @@ print_issue_relationships() {
   fi
 }
 
+# Canonical single-source rendering of one issue (body, native issue type,
+# comments when present, relationships when present). Used for BOTH terminal
+# output and the watch-file, so the two never drift apart in format.
+render_issue() {
+  local repo="$1" num="$2"
+  gh issue view "$num"
+  # Surface the native issue type — `gh issue view` does not include it.
+  print_issue_type "$repo" "$num"
+  # Fetch comments separately (the --comments flag replaces body output, not appends).
+  local comment_count
+  comment_count=$(gh issue view "$num" --json comments --jq '.comments | length')
+  if (( comment_count > 0 )); then
+    echo ""
+    echo "=== Comments ($comment_count) ==="
+    echo ""
+    gh issue view "$num" --comments
+  fi
+  # Surface relationships (parent/sub-issues/blocked-by/blocking) when present.
+  print_issue_relationships "$repo" "$num"
+}
+
+# Mirror a rendered issue to the shared `session-view` watch-file so a second
+# terminal running `session-view grooming` follows along. Best-effort:
+# session-view is an optional PATH helper, and grooming works without it.
+publish_view() {
+  local num="$1" content="$2"
+  command -v session-view >/dev/null 2>&1 || return 0
+  printf '%s\n' "$content" | session-view write grooming "issue #$num" 2>/dev/null || true
+}
+
 # Fetch issues sorted by updated (ascending = most stale first)
 fetch_issues() {
   local limit="${1:-100}"
@@ -362,30 +301,13 @@ cmd_next() {
     echo ""
   fi
 
-  # Fetch issue body
-  gh issue view "$num"
-
-  # Surface the native issue type — `gh issue view` does not include it.
-  print_issue_type "$repo" "$num"
-
-  # Fetch comments separately (the --comments flag replaces body output, not appends)
-  local comment_count
-  comment_count=$(gh issue view "$num" --json comments --jq '.comments | length')
-  if (( comment_count > 0 )); then
-    echo ""
-    echo "=== Comments ($comment_count) ==="
-    echo ""
-    gh issue view "$num" --comments
-  fi
-
-  # Surface relationships (parent/sub-issues/blocked-by/blocking) when present.
-  print_issue_relationships "$repo" "$num"
-
-  # Open issue page in browser (Playwright with a per-repo named session,
-  # falling back to Firefox).
-  local issue_url
-  issue_url=$(gh issue view "$num" --json url -q '.url')
-  open_issue_in_browser "$issue_url" "$repo"
+  # Render the canonical issue view once: print it for the agent, and mirror
+  # the same content to the shared watch-file so a second terminal running
+  # `session-view grooming` follows along automatically.
+  local content
+  content=$(render_issue "$repo" "$num")
+  printf '%s\n' "$content"
+  publish_view "$num" "$content"
 }
 
 cmd_list() {
@@ -595,12 +517,46 @@ cmd_snooze_next() {
   cmd_next
 }
 
+# Re-render issue #N into the watch-file. Called by the grooming skill after it
+# applies a fix that changes the current issue, so the live view stays current
+# without advancing to the next issue.
+cmd_refresh() {
+  local num="${1:?Error: issue number required}"
+  local repo
+  repo=$(get_repo)
+  # Best-effort, like publish_view: if session-view isn't installed, skip the
+  # refresh without failing — Step 4 of the skill runs this after every fix, so
+  # a missing helper must not derail the grooming loop.
+  if ! command -v session-view >/dev/null 2>&1; then
+    echo "session-view not on PATH — skipping live-view refresh for #$num." >&2
+    return 0
+  fi
+  local view_path
+  view_path=$(session-view path grooming 2>/dev/null || true)
+  local content
+  content=$(render_issue "$repo" "$num")
+  publish_view "$num" "$content"
+  echo "Refreshed grooming view for #$num${view_path:+ → $view_path}"
+}
+
+# Follow the live view in this terminal. Thin alias for `session-view grooming`
+# (the PATH command you can run from anywhere); kept here for discoverability.
+cmd_watch() {
+  if ! command -v session-view >/dev/null 2>&1; then
+    echo "session-view not found on PATH. It should live at ~/.local/bin/session-view." >&2
+    exit 1
+  fi
+  exec session-view follow grooming
+}
+
 # Main dispatch
 cmd="${1:-}"
 shift || true
 
 case "$cmd" in
   next)             cmd_next "$@" ;;
+  watch)            cmd_watch "$@" ;;
+  refresh)          cmd_refresh "$@" ;;
   list)             cmd_list "$@" ;;
   view)             cmd_view "$@" ;;
   snooze)           cmd_snooze "$@" ;;

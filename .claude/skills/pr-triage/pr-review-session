@@ -23,6 +23,7 @@ Commands:
   snooze [N] <dur>  Snooze a PR for a duration (e.g. 1h, 4h, 1d, 3d, 1w). N defaults to current PR.
   reset             Reset the current session (clear state for this repo)
   status            Show session state: repo, reviewed count, current PR
+  watch             Follow the live view in this terminal (alias for 'session-view pr-triage')
 
 Session is per-repo (current directory). Run from a git repo with gh configured.
 EOF
@@ -563,6 +564,24 @@ print_pr_summary() {
   gh pr view "$pr_num" --repo "$repo"
 }
 
+# Render a PR to stdout AND mirror it to the shared `session-view` watch-file so
+# a second terminal running `session-view pr-triage` follows along. Preserves
+# print_pr_summary's exit status. Best-effort: session-view is an optional PATH
+# helper, and triage works without it.
+render_pr() {
+  local repo="$1" pr_num="$2"
+  local out rc=0
+  # Capture with `|| rc=$?` so `set -e` doesn't abort here before we record the
+  # status — the bare call site (cmd_next) runs with errexit active, and both
+  # call sites rely on render_pr returning print_pr_summary's exit code.
+  out=$(print_pr_summary "$repo" "$pr_num") || rc=$?
+  printf '%s\n' "$out"
+  if [[ $rc -eq 0 ]] && command -v session-view >/dev/null 2>&1; then
+    printf '%s\n' "$out" | session-view write pr-triage "PR #$pr_num" 2>/dev/null || true
+  fi
+  return $rc
+}
+
 cmd_list() {
   local repo="$1"
   local session
@@ -639,7 +658,7 @@ cmd_view() {
     pr_num=$(echo "$info" | jq -r '.number')
   fi
   # Show PR (update session only after we successfully load it)
-  if ! print_pr_summary "$repo" "$pr_num"; then
+  if ! render_pr "$repo" "$pr_num"; then
     exit 1
   fi
   local session
@@ -695,7 +714,7 @@ cmd_next() {
   next_num=$(echo "$filtered" | head -1 | cut -f1)
 
   write_session "$repo" "$reviewed_json" "$next_num" "$snoozed_json"
-  print_pr_summary "$repo" "$next_num"
+  render_pr "$repo" "$next_num"
 }
 
 cmd_reset() {
@@ -853,6 +872,13 @@ case "$CMD" in
   status)
     REPO=$(get_repo)
     cmd_status "$REPO"
+    ;;
+  watch)
+    if ! command -v session-view >/dev/null 2>&1; then
+      echo "session-view not found on PATH. It should live at ~/.local/bin/session-view." >&2
+      exit 1
+    fi
+    exec session-view follow pr-triage
     ;;
   *)
     echo "Unknown command: $CMD" >&2

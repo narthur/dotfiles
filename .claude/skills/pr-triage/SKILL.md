@@ -205,6 +205,16 @@ Use the **pr-review-session** script to run triage sessions: it tracks which PRs
 
 ## Workflow
 
+### Step 0: Offer the live view, then pause (interactive mode only)
+
+**Only when running interactive/step-by-step triage** (not the autonomous default — see "Autonomous Operation"). Before jumping to the first PR, display the command for following along in a second terminal and **pause** so the user can start it if they want:
+
+```bash
+session-view pr-triage
+```
+
+Tell the user: "Run `session-view pr-triage` in another terminal to watch each PR update live, then tell me when you're ready (or to skip it)." Wait for their reply before Step 1 — do **not** start triage until they respond. If they skip or proceed, continue normally; the view is optional. Run this pause **once** per session. In autonomous mode there is no one watching a terminal, so **skip Step 0 entirely** and go straight to Step 1.
+
 ### Step 1: Jump to the Top PR
 
 Start the triage loop by running:
@@ -226,6 +236,8 @@ Optional inspection (do not block the workflow on these):
 
 - `~/.claude/skills/pr-triage/pr-review-session list` — show the pending queue.
 - `~/.claude/skills/pr-triage/pr-review-session status` — show repo, reviewed count, current PR.
+
+**Live view (second terminal):** `view` and `next` mirror the current PR's rendered summary to a shared watch-file via the `session-view` helper (on `PATH`). The user follows it from anywhere with `session-view pr-triage` (or `pr-review-session watch`), re-rendered on every save. Step 0 already offers this at the start of interactive sessions; this note just documents the mechanism. It's best-effort if `session-view` isn't installed, and the same mechanism the grooming skill uses (`session-view grooming`).
 
 `reset` is reserved for when the user explicitly wants to abandon in-progress triage state. The auto-loop handles end-of-round wraparound on its own.
 
@@ -428,6 +440,7 @@ To opt out entirely (e.g. if you don't want the script touching disk), set `PR_T
 | `pr-review-session next`                    | Mark current as triaged and show next unreviewed (auto-resets when all reviewed) |
 | `pr-review-session view [N]`                | Show PR summary and details; N = number or current branch |
 | `pr-review-session status`                  | Show session state (repo, triaged count, current PR)      |
+| `session-view pr-triage`                    | Follow the live PR view in a second terminal (PATH command; `pr-review-session watch` is an alias) |
 | `pr-review-session snooze [N] <dur>`        | Snooze a PR for a duration (e.g. 1h, 1d, 1w)             |
 | `pr-review-session reset`                   | Reset the triage session for this repo                    |
 | `gh pr checkout <number>`                   | Manual checkout (only needed when `PR_TRIAGE_NO_WORKTREE=1`) |

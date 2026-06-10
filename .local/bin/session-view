@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+
+# session-view — shared "current item" watch-file for interactive skill sessions
+# (grooming, pr-triage, ...). A skill writes the rendered current item to a
+# per-(namespace, repo) file; the user follows that file in another terminal,
+# where it re-renders on every save.
+#
+# The file is overwritten IN PLACE (never mv/replaced), so a single `follow`
+# survives an entire session — the watcher keeps the same inode throughout.
+#
+# Usage:
+#   session-view <namespace>          Follow the current item for this repo's session
+#   session-view follow <namespace>   (same as above)
+#   session-view write <ns> <label>   Write stdin as the current item (called by skills)
+#   session-view path <namespace>     Print the watch-file path for this repo
+#
+# Namespaces are chosen by the writing skill, e.g. 'grooming', 'pr-triage'.
+# Run from inside the git repo whose session you want to follow.
+
+set -euo pipefail
+
+DATA_ROOT="${XDG_DATA_HOME:-$HOME/.local/share}/session-view"
+
+usage() {
+  cat <<EOF
+Usage:
+  session-view <namespace>          Follow the current item for this repo's session
+  session-view follow <namespace>   (same as above)
+  session-view write <ns> <label>   Write stdin as the current item (called by skills)
+  session-view path <namespace>     Print the watch-file path for this repo
+
+Namespaces are chosen by the writing skill, e.g. 'grooming', 'pr-triage'.
+Run from inside the git repo whose session you want to follow.
+EOF
+}
+
+get_repo() {
+  gh repo view --json nameWithOwner -q '.nameWithOwner' 2>/dev/null || {
+    echo "session-view: not in a GitHub repo or gh not configured" >&2
+    exit 1
+  }
+}
+
+# Per-(namespace, repo) watch-file path. Creates the namespace dir on demand.
+view_file() {
+  local ns="$1" repo="$2"
+  # Namespaces are simple slugs from trusted callers; reject anything that could
+  # escape DATA_ROOT (path separators / traversal) as defense-in-depth.
+  if ! [[ "$ns" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    echo "session-view: invalid namespace '$ns' (must match [A-Za-z0-9_-])" >&2
+    exit 1
+  fi
+  local dir="${DATA_ROOT}/${ns}"
+  mkdir -p "$dir"
+  echo "${dir}/${repo//\//-}.md"
+}
+
+cmd_path() {
+  local ns="${1:?session-view: namespace required}"
+  view_file "$ns" "$(get_repo)"
+}
+
+# Write stdin to the watch-file in place, with a standard header. Skills pipe
+# their already-rendered item in, so the on-disk format is identical across
+# every namespace.
+cmd_write() {
+  local ns="${1:?session-view: namespace required}"
+  local label="${2:-current item}"
+  local repo file stamp content
+  repo=$(get_repo)
+  file=$(view_file "$ns" "$repo")
+  stamp=$(date '+%Y-%m-%d %H:%M:%S')
+  content=$(cat)
+  {
+    echo "${ns} — ${label}  (view updated ${stamp})"
+    echo "Repo: ${repo}"
+    echo "============================================================"
+    echo ""
+    printf '%s\n' "$content"
+  } > "$file"
+}
+
+# Follow the watch-file in this terminal, re-rendering on every save.
+cmd_follow() {
+  local ns="${1:?session-view: namespace required}"
+  local repo file
+  repo=$(get_repo)
+  file=$(view_file "$ns" "$repo")
+  if [[ ! -s "$file" ]]; then
+    {
+      echo "No ${ns} item loaded yet for ${repo}."
+      echo "Start the ${ns} session to load one."
+    } > "$file"
+  fi
+  if command -v entr >/dev/null 2>&1; then
+    # entr only fires on change, so draw once up front, then follow with
+    # clear-on-change (`-c`). The file is overwritten in place, so entr keeps
+    # watching the same inode for the whole session.
+    clear
+    cat "$file"
+    echo "$file" | entr -c cat "$file"
+  else
+    echo "session-view: 'entr' not found — using a 2s polling view instead." >&2
+    echo "For instant on-save refresh: brew install entr" >&2
+    while true; do
+      clear
+      cat "$file"
+      sleep 2
+    done
+  fi
+}
+
+cmd="${1:-}"
+case "$cmd" in
+  follow)            shift; cmd_follow "$@" ;;
+  write)             shift; cmd_write "$@" ;;
+  path)              shift; cmd_path "$@" ;;
+  ""|-h|--help|help) usage ;;
+  *)                 cmd_follow "$cmd" ;;   # bare namespace → follow
+esac
