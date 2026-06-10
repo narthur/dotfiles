@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
 # cr-needs-review — Check whether a PR has commits not yet reviewed by CodeRabbit.
 #
+# Used only to decide whether to OFFER the manual "Request CodeRabbit review"
+# menu option (pr-triage Option 9). CodeRabbit reviews each PR once automatically
+# on open, and the policy is one review per PR (PinePeakDigital disables
+# incremental reviews; other orgs may still have them on). A fresh review is a
+# deliberate, user-chosen exception — this check never triggers an autonomous
+# request.
+#
 # Usage: cr-needs-review <pr-number>
 #
 # Exit codes:
-#   0 — PR has unreviewed commits (CodeRabbit review should be requested)
-#   1 — PR is already reviewed by CodeRabbit (no action needed)
+#   0 — PR has commits beyond CodeRabbit's last review (manual re-review available)
+#   1 — PR head is already reviewed by CodeRabbit (hide the option)
 #   2 — Usage error or API failure
 
 set -euo pipefail

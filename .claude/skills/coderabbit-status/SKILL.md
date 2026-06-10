@@ -7,6 +7,8 @@ description: "Report CodeRabbit's current review status for the current PR (or a
 
 You report CodeRabbit's current review state for a pull request. This is a **read-only, single-shot** status check — you determine where CodeRabbit is in its review and explain it plainly. You do **not** resolve feedback, wait/poll, request reviews, or edit any files.
 
+**Org context (important for interpreting status):** the working policy is **one review per PR** — the automatic review CodeRabbit posts when the PR opens. **PinePeakDigital** repos enforce this at config level (`auto_incremental_review: false`), so there a `completed` status reflects that single initial review and will **stay** `completed` against an older commit after later pushes rather than refreshing — that's expected, not a problem to fix, and a fresh review only happens if someone *manually* posts `@coderabbitai review`. **Other orgs** (`narthur`, `seedtime`, etc.) may still have incremental reviews on, so there CodeRabbit may auto-review pushes and `completed` can track the latest commit. When suggesting next steps, do **not** imply that manually re-requesting a review is routine.
+
 ## What You Do
 
 - Resolve the target PR (current branch by default, or a PR passed as an argument)
@@ -74,10 +76,10 @@ Translate the `status` field into a one-line headline plus a short plain-English
 | `not_started`  | ⚪ Not started                     | No CodeRabbit check and no comment yet. On a draft PR, CodeRabbit won't auto-review — a review must be requested.       |
 | `starting_up`  | 🟡 Starting up                    | Check is pending but CodeRabbit hasn't posted yet. Give it a moment.                                                   |
 | `in_progress`  | 🟡 Reviewing                      | CodeRabbit is actively reviewing right now. Check back shortly, or use `wait-for-review.sh` to block until it's done.  |
-| `completed`    | 🟢 Review complete                | CodeRabbit has finished. If they want to act on findings, suggest the `drive-pr` skill.                     |
-| `rate_limited` | 🟠 Rate limited                   | CodeRabbit hit a rate limit. Report the wait time from `wait_seconds` (e.g. "retry in ~Xm Ys") if it's > 0.            |
-| `timed_out`    | 🔴 Timed out                      | CodeRabbit's review timed out. A fresh review would need to be requested.                                              |
-| `paused`       | ⏸️ Paused                         | Auto-reviews are disabled for this PR; a manual review (`@coderabbitai review`) is needed to get one.                  |
+| `completed`    | 🟢 Review complete                | CodeRabbit has finished its automatic review. If they want to act on findings, suggest the `drive-pr` skill. Note: in repos with incremental reviews off (e.g. PinePeakDigital) this stays `completed` on an earlier commit after pushes — expected, not a problem; elsewhere it may refresh per push. |
+| `rate_limited` | 🟠 Rate limited                   | CodeRabbit hit a rate limit on the initial review. Report the wait time from `wait_seconds` (e.g. "retry in ~Xm Ys") if it's > 0; it should resume on its own.            |
+| `timed_out`    | 🔴 Timed out                      | CodeRabbit's review timed out. Per the one-review-per-PR policy this isn't auto-retried; a fresh review is only obtained by manually posting `@coderabbitai review` (a deliberate exception). |
+| `paused`       | ⏸️ Paused                         | Auto-reviews are disabled for this PR. A review would require manually posting `@coderabbitai review` — a deliberate exception to the one-review-per-PR default, not a routine step. |
 
 Keep the report tight — headline, one or two sentences of explanation, and the suggested next step. Mention the underlying `check_state`/`comment_state` only if they disagree in a way worth flagging (e.g. the check passed but the comment still says reviewing) or if the user asks for detail.
 
