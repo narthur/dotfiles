@@ -212,7 +212,10 @@ is_bot_command() {
   trimmed=$(echo "$body" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
 
   for pattern in "${BOT_COMMAND_PATTERNS[@]}"; do
-    if echo "$trimmed" | grep -qiP "$pattern"; then
+    # -E (POSIX extended), not -P (PCRE): macOS/BSD grep has no -P and errors
+    # out on it (exit 2), which would make every pattern silently fail to match
+    # and let bot-command comments through as if they were real feedback.
+    if echo "$trimmed" | grep -qiE "$pattern"; then
       return 0
     fi
   done

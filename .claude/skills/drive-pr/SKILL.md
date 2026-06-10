@@ -367,6 +367,8 @@ After the head commit is on the remote, wait for CodeRabbit to review it. **Do n
 ~/.claude/skills/drive-pr/wait-for-review.sh
 ```
 
+**Why you must not hand-roll this:** CodeRabbit does **not** auto-resume a review it rate-limited. When the reset window passes, nothing happens until someone posts a fresh `@coderabbitai review` — so a poll that only *watches* for a review will spin until timeout and report nothing. The waiter is the source of truth precisely because it re-requests the review after sleeping out the limit. If you ever have a reason to bypass it, you **must** replicate that: sleep the reset window, then post `@coderabbitai review`, then watch for completion. A passive watch alone is a silent dead-end.
+
 **Run it in the background** (`Bash` with `run_in_background: true`). CodeRabbit reviews — and especially rate-limit waits — routinely exceed a single foreground tool-call timeout, and foreground sleeps are blocked in this environment. The harness re-invokes you when the script exits.
 
 How the rate-limit sleep works (so you can trust it rather than reimplement it): the waiter calls the `coderabbit-status` skill's `coderabbit-status.sh --json`, which reads CodeRabbit's living first PR comment — the status document CodeRabbit edits in place — and extracts the reset window (`wait_seconds`) from phrasing like "please wait 14 minutes and 9 seconds" or "try again in 1 hour". The waiter then sleeps that long, re-requests a review, and keeps going, extending its own timeout to cover the wait. You do **not** need to parse the comment yourself.

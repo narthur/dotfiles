@@ -120,28 +120,31 @@ cr_status_section="${cr_body%%<!-- walkthrough_start -->*}"
 
 if [[ -n "$cr_body" ]]; then
   # Classify the status section of the comment
-  if echo "$cr_status_section" | grep -qiP "$RATE_LIMIT_PATTERNS"; then
+  if echo "$cr_status_section" | grep -qiE "$RATE_LIMIT_PATTERNS"; then
     comment_state="rate_limited"
     # Extract the reset window from messages like "wait 45 minutes and 9 seconds",
     # "try again in 1 hour and 12 minutes", or "please wait 2 hours". We pull the
     # first hours/minutes/seconds figure each and sum them.
-    wait_hr=$(echo "$cr_status_section" | grep -oiP '(\d+)\s*hours?' | grep -oP '\d+' | head -1) || true
-    wait_min=$(echo "$cr_status_section" | grep -oiP '(\d+)\s*minutes?' | grep -oP '\d+' | head -1) || true
-    wait_sec=$(echo "$cr_status_section" | grep -oiP '(\d+)\s*seconds?' | grep -oP '\d+' | head -1) || true
+    # NB: use POSIX-extended regex (-E) and [0-9]/[[:space:]] rather than PCRE
+    # (-P, \d, \s) — macOS/BSD grep has no -P and silently fails it (exit 2),
+    # which `|| true` would swallow, collapsing the wait window to 0.
+    wait_hr=$(echo "$cr_status_section" | grep -oiE '[0-9]+[[:space:]]*hours?' | grep -oE '[0-9]+' | head -1) || true
+    wait_min=$(echo "$cr_status_section" | grep -oiE '[0-9]+[[:space:]]*minutes?' | grep -oE '[0-9]+' | head -1) || true
+    wait_sec=$(echo "$cr_status_section" | grep -oiE '[0-9]+[[:space:]]*seconds?' | grep -oE '[0-9]+' | head -1) || true
     if [[ -n "$wait_hr" || -n "$wait_min" || -n "$wait_sec" ]]; then
       wait_seconds=$(( ${wait_hr:-0} * 3600 + ${wait_min:-0} * 60 + ${wait_sec:-0} ))
     else
       wait_seconds=180  # default 3 minutes when no figure is given
     fi
-  elif echo "$cr_status_section" | grep -qiP "$TIMEOUT_PATTERNS"; then
+  elif echo "$cr_status_section" | grep -qiE "$TIMEOUT_PATTERNS"; then
     comment_state="timed_out"
-  elif echo "$cr_status_section" | grep -qiP "$PAUSED_PATTERNS"; then
+  elif echo "$cr_status_section" | grep -qiE "$PAUSED_PATTERNS"; then
     comment_state="paused"
-  elif echo "$cr_status_section" | grep -qiP "$REVIEWING_PATTERNS"; then
+  elif echo "$cr_status_section" | grep -qiE "$REVIEWING_PATTERNS"; then
     # Check if this is a completed review (has actionable items or approval)
     # vs still in progress (walkthrough posted but review threads may still be coming)
     # A completed review will have "Actionable comments" or review thread markers
-    if echo "$cr_status_section" | grep -qiP 'Actionable comments|no issues found|no actionable comments|Changes approved|LGTM'; then
+    if echo "$cr_status_section" | grep -qiE 'Actionable comments|no issues found|no actionable comments|Changes approved|LGTM'; then
       comment_state="completed"
     else
       comment_state="reviewing"
