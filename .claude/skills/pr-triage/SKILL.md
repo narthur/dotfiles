@@ -71,9 +71,9 @@ For each eligible PR, take every applicable action, committing and pushing as yo
 - **Integrate base / resolve conflicts** — rebase or merge `origin/<base>` and resolve conflicts yourself, keeping both sides' intent. Prefer a **merge** over a rebase when the branch's history already uses merges or has internal churn that would make a rebase replay the same conflicts repeatedly. Verify with the affected package's tests/typecheck before pushing. See "Option 3 - Fix conflicts".
 - **Fix failing CI** — fix real failures in the worktree; re-run only genuinely-transient checks. See "Option 1 - Fix failing CI".
 - **Apply bot feedback** — run `/drive-pr <pr#> --non-interactive` (its Non-interactive/batch mode). It applies all **bot** and procedural feedback automatically and, critically, **does NOT pause on human feedback** — it returns the list of unresolved human threads instead. Take that list, add each human thread to the deferred items for the final request, and keep going. **Never let feedback resolution block autonomous work**: resolve what's auto-resolvable, defer the rest, and move on to the next action on this or another eligible PR.
-- **Request a CodeRabbit review** when `cr-needs-review <n>` reports unreviewed commits, so feedback is waiting by the time you finish a pass.
+- **Do not request or re-request CodeRabbit reviews.** Treat CodeRabbit as **one review per PR** — the automatic review on open. (PinePeakDigital repos enforce this with `auto_incremental_review: false`; other orgs like `narthur`/`seedtime` may still auto-review pushes, but the triage policy is the same — never request reviews autonomously.) The `/drive-pr <pr#> --non-interactive` pass above already waits once for the initial review to land and resolves whatever CodeRabbit posts — so there is nothing for triage to request. A manual re-request remains available only as an explicit, user-chosen menu action (Option 9 below); it is **never** part of autonomous triage.
 
-After any push, CI re-runs. Don't block on it — move to the next eligible PR and revisit (re-`view`) once CI settles.
+After any push, CI re-runs. Don't block on it — move to the next eligible PR and revisit (re-`view`) once CI settles. (A push does **not** trigger a new CodeRabbit review.)
 
 ### Gated actions — NEVER do automatically
 
@@ -273,7 +273,7 @@ What would you like to do?
 6. Merge PR - Merge the pull request
 7. Close PR - Close without merging
 8. Run CodeRabbit review - Run a local AI code review on this PR's changes
-9. Request CodeRabbit review - Trigger a remote CodeRabbit review via PR comment
+9. Request CodeRabbit review - Manually trigger ONE more remote CodeRabbit review (deliberate exception to the one-review-per-PR default; spends rate-limit quota)
 10. Snooze - Temporarily hide this PR and revisit later (e.g. 1h, 1d, 1w)
 11. Next - Mark reviewed and move to next unreviewed (`pr-review-session next`)
 ```
@@ -285,11 +285,11 @@ Adjust options based on PR state:
 - Hide "Fix conflicts" if no conflicts
 - Hide "Resolve feedback" if no unresolved comments
 - Only show "Run CodeRabbit review" if the PR author is NOT the current user (check with `gh api user -q .login`; i.e., it's someone else's code)
-- Only show "Request CodeRabbit review" when (1) PR author IS the current user, and (2) the `cr-needs-review` script confirms unreviewed commits exist. **Always run this check** when presenting options for the user's own PRs:
+- Only show "Request CodeRabbit review" when (1) PR author IS the current user, and (2) the `cr-needs-review` script confirms commits exist beyond CodeRabbit's last review. This is a **manual-only override** — CodeRabbit already reviewed the PR once automatically on open, so offering it here lets the user *deliberately* spend rate-limit quota on a second look. Never select it autonomously. **Always run this check** when presenting options for the user's own PRs:
   ```bash
   ~/.claude/skills/pr-triage/cr-needs-review <number>
-  # Exit 0 → needs review, SHOW the option
-  # Exit 1 → already reviewed, HIDE the option
+  # Exit 0 → commits exist beyond the last review, SHOW the option
+  # Exit 1 → head already reviewed, HIDE the option
   ```
 
 ### Step 4: Execute Selected Action
@@ -305,7 +305,7 @@ Adjust options based on PR state:
 **Option 2 - Resolve feedback:**
 
 1. Use the worktree printed by the summary — `view`/`next` already checked the PR out there.
-2. Invoke the `/drive-pr` skill to handle the rest. It has its own interactive workflow for retrieving feedback, presenting options, and implementing fixes.
+2. Invoke the `/drive-pr` skill to handle the rest. It drives the PR toward mergeable and delegates the feedback dimension to the `resolve-feedback` skill (retrieving feedback, presenting options, implementing fixes, and marking each item resolved).
 3. After the skill completes, return to PR assessment.
 
 **Option 3 - Fix conflicts:**
@@ -383,6 +383,8 @@ gh pr close <number>
 
 **Option 9 - Request CodeRabbit review:**
 
+This is a **deliberate, user-chosen exception** to the one-review-per-PR default. CodeRabbit already reviewed the PR once when it opened. In PinePeakDigital repos incremental reviews are off, so a manual request is the only way to get a fresh review of new commits; in other orgs CodeRabbit may auto-review pushes anyway. Either way this is a deliberate extra review that spends rate-limit quota. Only do this when the user explicitly picks this option; never autonomously.
+
 1. Comment on the PR to trigger a remote CodeRabbit review:
    ```bash
    gh pr comment <number> --body "@coderabbitai review"
@@ -448,7 +450,7 @@ To opt out entirely (e.g. if you don't want the script touching disk), set `PR_T
 | `gh pr merge <number>`                      | Merge the PR                                              |
 | `gh pr close <number>`                      | Close without merging                                     |
 | `gh pr edit <number> --add-reviewer <user>` | Add reviewer                                              |
-| `cr-needs-review <number>`                  | Check if PR has commits not yet reviewed by CodeRabbit    |
+| `cr-needs-review <number>`                  | Check if PR head is unreviewed — gates whether to OFFER manual Option 9 (never autonomous) |
 | `dependabot-bump-type <number>`             | Classify a Dependabot PR's bump: `minor-patch`/`major`/`unknown` |
 | `dependabot-overlap <number>`               | Exit 0 if an open human PR touches the same manifest (defer auto-merge); exit 1 if clear |
 | `failing-actions`                           | List all failing actions across PRs                       |
