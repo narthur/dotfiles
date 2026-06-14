@@ -43,6 +43,7 @@ cask "runelite"
 cask "signal"
 cask "slack"
 cask "steam"
+cask "telegram"
 cask "zed"
 # flatpak directives are Linux-only; brew bundle silently skips them on macOS
 flatpak "com.slack.Slack"
