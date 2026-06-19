@@ -7,3 +7,6 @@
 
 # Personal data tracked in dotprivate instead
 .config/backup-urls/urls.txt
+
+# Added by ggshield
+.cache_ggshield
