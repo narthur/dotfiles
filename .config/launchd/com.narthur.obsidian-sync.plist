@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.narthur.obsidian-sync</string>
+
+    <!-- Route through cron-run for consistent logging
+         (~/.local/log/obsidian-sync.log, timestamped lines). -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>${HOME}/bin/cron-run</string>
+        <string>obsidian-sync</string>
+        <string>${HOME}/bin/obsidian-sync</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>${HOME}/bin:${HOME}/.local/bin:/opt/homebrew/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>OBSIDIAN_VAULT</key>
+        <string>${HOME}/Obsidian/Main</string>
+    </dict>
+
+    <!-- Every 30 minutes, matching the old remotely-save autoRun cadence.
+         StartInterval (not calendar) so it simply runs every 1800s the Mac is
+         awake; launchd coalesces a missed interval once on wake. bisync uses a
+         lock file, and --resilient handles an overlapping run from a slow sync. -->
+    <key>StartInterval</key>
+    <integer>1800</integer>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

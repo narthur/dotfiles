@@ -1,0 +1,7 @@
+# rclone bisync filters for the Obsidian vault (obsidian-sync).
+# Excludes device-specific state, OS junk, and tool caches that should not
+# round-trip between machines via the bucket. Notes/attachments all sync.
+- .DS_Store
+- /.trash/**
+- /.playwright-cli/**
+- /.obsidian/workspace*

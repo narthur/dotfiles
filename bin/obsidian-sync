@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# obsidian-sync — two-way sync of the Obsidian vault to Backblaze B2 via rclone
+# bisync. Replaces the Obsidian "remotely-save" plugin. Run on a 30-minute
+# schedule by com.narthur.obsidian-sync (launchd), logged via cron-run.
+#
+# Usage:
+#   obsidian-sync            normal incremental two-way sync (used by launchd)
+#   obsidian-sync resync     ONE-TIME baseline; run this once by hand before
+#                            scheduling. Establishes the bisync state that
+#                            every later run compares against. Without it, a
+#                            plain run errors out (by design — no silent first
+#                            sync). "newer" wins on the baseline.
+#
+# Config:
+#   ~/.config/rclone/rclone.conf                (remote "obsidianb2", in dotfiles-private)
+#   ~/.config/rclone/obsidian-bisync-filters.txt (excludes, in dotfiles)
+#   ~/.env                                       (RCLONE_CONFIG_OBSIDIANB2_SECRET_ACCESS_KEY)
+set -euo pipefail
+
+# rclone.conf holds everything except the B2 secret key, which is exported from
+# ~/.env as RCLONE_CONFIG_OBSIDIANB2_SECRET_ACCESS_KEY. launchd does not source
+# ~/.env, so do it here (interactive shells already have it).
+[ -f "$HOME/.env" ] && . "$HOME/.env"
+
+VAULT="${OBSIDIAN_VAULT:-$HOME/Obsidian/Main}"
+REMOTE="obsidianb2:narthur-obsidian"
+FILTERS="$HOME/.config/rclone/obsidian-bisync-filters.txt"
+
+if [[ ! -d "$VAULT" ]]; then
+    echo "obsidian-sync: vault not found at $VAULT — refusing to sync" >&2
+    exit 1
+fi
+
+# Shared flags:
+#   --conflict-resolve newer / --conflict-loser num
+#       most-recently-edited copy wins; the losing copy is kept (numbered),
+#       never silently deleted — a safety net for genuine edit conflicts.
+#   --max-delete 25
+#       abort if a run would delete >25% of files on either side (guards
+#       against a missing mount or accidental mass deletion).
+#   --resilient --recover
+#       tolerate transient failures and recover from interrupted runs / stale
+#       lock files instead of demanding a manual --resync.
+args=(
+    bisync "$VAULT" "$REMOTE"
+    --filters-file "$FILTERS"
+    --compare size,modtime
+    --conflict-resolve newer
+    --conflict-loser num
+    --max-delete 25
+    --resilient
+    --recover
+    --transfers 16
+    --checkers 32
+    --log-level INFO
+)
+
+if [[ "${1:-}" == "resync" ]]; then
+    echo "obsidian-sync: establishing bisync baseline (--resync, newer wins)..."
+    exec rclone "${args[@]}" --resync --resync-mode newer
+fi
+
+exec rclone "${args[@]}"
