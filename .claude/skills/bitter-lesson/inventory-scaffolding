@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Emits a structured inventory of Claude Code scaffolding (skills, hooks, settings)
+# for the bitter-lesson audit. One JSON object per line under labeled sections.
+
+USER_SKILLS="$HOME/.claude/skills"
+PROJ_SKILLS="$PWD/.claude/skills"
+SETTINGS="$HOME/.claude/settings.json"
+
+emit_skills() {
+  local dir="$1" scope="$2"
+  [ -d "$dir" ] || return 0
+  for skill in "$dir"/*/; do
+    [ -d "$skill" ] || continue
+    local name md desc lines files has_scripts mtime
+    name="$(basename "$skill")"
+    md="$skill/SKILL.md"
+    if [ -f "$md" ]; then
+      # description from YAML frontmatter; handles inline, quoted, and block-scalar (>, |) forms
+      desc="$(awk '
+        NR==1 && $0!~/^---/ {exit}
+        /^---/ {d++; if(d==2) exit; next}
+        /^description:/ {
+          sub(/^description:[[:space:]]*/,"")
+          gsub(/\r/,"")
+          if ($0=="" || $0==">" || $0=="|" || $0==">-" || $0=="|-") { block=1; next }
+          gsub(/^"|"$/,""); print; exit
+        }
+        block && /^[[:space:]]+/ { gsub(/\r/,""); gsub(/^[[:space:]]+/,""); print; exit }
+        block { exit }
+      ' "$md")"
+      lines="$(wc -l < "$md" | tr -d ' ')"
+    else
+      desc=""
+      lines=0
+    fi
+    files="$(find "$skill" -type f | wc -l | tr -d ' ')"
+    # has_scripts: any executable file, or any non-markdown file outside references/
+    if find "$skill" -type f \( -perm -u+x -o ! -name '*.md' \) ! -path '*/references/*' | grep -q .; then
+      has_scripts=true
+    else
+      has_scripts=false
+    fi
+    # most recent mtime of any file in the skill dir (staleness signal)
+    mtime="$(find "$skill" -type f -exec stat -f '%m' {} \; 2>/dev/null | sort -nr | head -1)"
+    if [ -n "$mtime" ]; then
+      mtime="$(date -r "$mtime" '+%Y-%m-%d' 2>/dev/null || echo unknown)"
+    else
+      mtime=unknown
+    fi
+    jq -nc \
+      --arg name "$name" --arg scope "$scope" --arg path "$skill" \
+      --arg desc "$desc" --argjson lines "$lines" --argjson files "$files" \
+      --argjson has_scripts "$has_scripts" --arg mtime "$mtime" \
+      '{name:$name, scope:$scope, path:$path, desc:$desc, skill_md_lines:$lines, file_count:$files, has_scripts:$has_scripts, last_modified:$mtime}'
+  done
+}
+
+echo "=== CLAUDE_VERSION ==="
+claude --version 2>/dev/null || echo "unknown"
+
+echo "=== SKILLS_PERSONAL ==="
+emit_skills "$USER_SKILLS" personal
+
+echo "=== SKILLS_PROJECT ==="
+if [ "$PROJ_SKILLS" != "$USER_SKILLS" ]; then
+  emit_skills "$PROJ_SKILLS" project
+fi
+
+echo "=== HOOKS ==="
+if [ -f "$SETTINGS" ]; then
+  jq -c '
+    (.hooks // {}) | to_entries[] as $e
+    | ($e.value[]? ) as $matcher
+    | ($matcher.hooks[]? ) as $h
+    | {event:$e.key, matcher:($matcher.matcher // "*"), type:$h.type, command:(($h.command // "") | .[0:160])}
+  ' "$SETTINGS" 2>/dev/null || echo '{"error":"could not parse hooks"}'
+fi
+
+echo "=== SETTINGS_SUMMARY ==="
+if [ -f "$SETTINGS" ]; then
+  jq -c '{
+    model:(.model // null),
+    effortLevel:(.effortLevel // null),
+    enabledPlugins:((.enabledPlugins // []) | length),
+    permission_allow:((.permissions.allow // []) | length),
+    permission_deny:((.permissions.deny // []) | length),
+    env_keys:((.env // {}) | keys),
+    top_level_keys:(keys)
+  }' "$SETTINGS" 2>/dev/null || echo '{"error":"could not parse settings"}'
+fi
+
+echo "=== COUNTS ==="
+jq -nc --argjson p "$(emit_skills "$USER_SKILLS" personal | wc -l | tr -d ' ')" \
+       '{personal_skills:$p}'
