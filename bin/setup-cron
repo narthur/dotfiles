@@ -7,6 +7,31 @@ echo "Setting up cron..."
 mkdir -p "$HOME/.local/log"
 echo "  Created $HOME/.local/log"
 
+# macOS gates crontab writes behind Full Disk Access for the controlling
+# terminal app. Probe with a harmless round-trip (reinstall the current
+# crontab, or an empty one if none exists) so we can fail with a useful
+# message instead of the cryptic "crontab: tmp/...: Operation not permitted".
+if [[ "$(uname)" == "Darwin" ]]; then
+  current="$(crontab -l 2>/dev/null || true)"
+  if ! printf '%s\n' "$current" | crontab - 2>/dev/null; then
+    cat >&2 <<'EOF'
+✗ Cannot write crontab: Operation not permitted.
+
+On macOS, installing a crontab requires Full Disk Access for the terminal
+app running this script (e.g. Warp, Terminal, iTerm, Ghostty).
+
+To fix:
+  1. Open System Settings → Privacy & Security → Full Disk Access
+  2. Enable your terminal app (add it with + if it's not listed)
+  3. Fully quit and reopen the terminal (the change needs a relaunch)
+  4. Re-run: setup-cron
+
+Your existing crontab was left unchanged.
+EOF
+    exit 1
+  fi
+fi
+
 envsubst < "$HOME/.config/crontab" | crontab -
 echo "  Installed crontab from ~/.config/crontab"
 

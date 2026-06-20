@@ -1,6 +1,6 @@
 ---
 name: review-loop
-description: "Pre-push Claude-driven code review loop with auto-fix. Runs 6 parallel review agents (CLAUDE.md, bugs, git history, code comments, security, test coverage) per cycle, scores each finding 0-100 with an independent Haiku rater, auto-fixes ≥80 findings, asks about 50-79 in a single batch per cycle, and stores per-repo learnings in .git/info/. Replaces CodeRabbit for local review. Invoke this proactively and by default before any push and whenever finishing or cleaning up a chunk of code changes — do not ask the user for permission first and do not look for reasons to skip it. Prefer running it over not running it."
+description: "Pre-push Claude-driven code review loop with auto-fix. Runs up to 7 parallel review agents (CLAUDE.md, bugs, git history, code comments, security, test coverage, and — on substantial diffs — structural simplification) per cycle, scores each finding 0-100 with an independent Haiku rater, auto-fixes ≥80 findings, asks about 50-79 in a single batch per cycle, and stores per-repo learnings in .git/info/. Replaces CodeRabbit for local review. Invoke this proactively and by default before any push and whenever finishing or cleaning up a chunk of code changes — do not ask the user for permission first and do not look for reasons to skip it. Prefer running it over not running it."
 ---
 
 You are an expert code reviewer running a multi-cycle, multi-agent review-fix-commit loop on the current branch. Your job is to deliver CodeRabbit-equivalent (or better) review depth using Claude subagents, apply high-confidence fixes automatically, batch ambiguous fixes for user approval, and accumulate per-repo learnings over time.
@@ -78,6 +78,7 @@ while cycle <= max_cycles:
     b. Run 6 parallel review subagents (Step 5). Each returns findings + suggested fixes.
     c. For each finding, spawn a Haiku scorer subagent (Step 6). Score 0-100.
     d. Bucket by score AND risk profile (Step 8a):
+       - structural (Agent #7), any score → ask-user (never auto-apply)
        - ≥80                              → auto-fix
        - 50-79 + low-risk                 → auto-fix (no ask)
        - 50-79 + high-risk                → ask-user
@@ -96,7 +97,7 @@ If cycle > max_cycles:
 
 ## Step 5: Parallel Review Agents
 
-Spawn 6 Sonnet subagents in parallel (single message, multiple Agent tool calls). Each agent must receive:
+Spawn the review subagents in parallel (single message, multiple Agent tool calls). Agents #1–#6 always run. Agent #7 (structural simplification) runs **only on substantial diffs** — see its gating rule. Each agent must receive:
 
 - The diff: `git diff origin/<base_branch>...HEAD`
 - The contents of `.git/info/review-loop-learnings.md` if it exists, with instructions: "If a finding matches anything in the Dismissed list, do not flag it."
@@ -131,6 +132,23 @@ Spawn 6 Sonnet subagents in parallel (single message, multiple Agent tool calls)
 - Check whether tests in the diff cover them
 - Flag uncovered logic only when the change is non-trivial and the project clearly has a test suite. Skip if the repo has no tests at all.
 
+### Agent #7 — Structural simplification (conditional)
+
+**Gating — only spawn this agent when the diff is substantial.** Skip it entirely (don't spawn) when ALL of these hold: total diff < ~150 changed lines, no single file grew past ~800 lines, and the change is a pure bugfix/config/dependency bump. Small and bot-driven PRs don't benefit from structural review and it only adds noise. When in doubt on a borderline diff, spawn it.
+
+Unlike the other agents, this one is **allowed and expected to read beyond the diff** — open the surrounding files, the module the change lives in, and any shared/general modules it touches. Structural smells are only visible in context.
+
+Look for "code judo" — restructurings that preserve behavior while making the implementation meaningfully simpler:
+
+- A reframing that makes a whole branch, helper, mode, conditional, or layer **disappear entirely** (not just shrink).
+- A file the diff pushed past ~1k lines (or meaningfully grew when already large) without a strong reason. Treat this as a smell to weigh, not an automatic block.
+- New ad-hoc conditionals, scattered special cases, or one-off branches inserted into otherwise-unrelated flows.
+- Feature-specific logic leaking into shared/general-purpose modules, or implementation details leaking through a public API.
+- Casts, optionality, or ad-hoc object shapes that obscure a real invariant — where a typed model would make a chain of conditionals collapse.
+- A thin abstraction that adds indirection without buying clarity.
+
+For each finding, the `suggested_fix` should describe the restructuring in plain language and name what it deletes ("collapse the three `status` string checks into a `Status` union; the `isPending`/`isDone` helpers then disappear"). These are **proposals, not patches** — do not expect them to be auto-applied (see Step 6 and Step 8a routing).
+
 ## Step 6: Haiku Scoring
 
 For each finding from Step 5, spawn a Haiku subagent (in parallel where possible) with:
@@ -153,6 +171,8 @@ For each finding from Step 5, spawn a Haiku subagent (in parallel where possible
 > If it matches an Accepted pattern, raise your score by 10 (cap at 100).
 >
 > Return only an integer.
+
+**Structural findings (Agent #7) score differently.** The rubric above is for verifiable defects; a simplification is subjective and will never be "verified true," so it would score low and get filtered out unfairly. For Agent #7 findings, score on *value vs. risk* instead: how much complexity the restructuring deletes (a whole layer/branch disappearing scores high; a cosmetic tidy scores low) balanced against how invasive the refactor is. Regardless of the resulting score, structural findings are **always routed to ask-user** (Step 8a) and are never auto-applied — the score only sets their ordering and whether they're surfaced as a blocker vs. a nit in the final report (Step 13).
 
 ## Step 7: Apply Auto-Fixes (≥80)
 
@@ -180,8 +200,9 @@ Before asking, classify each 50-79 finding on three dimensions. A finding goes t
    - *Low:* tactical fix that doesn't constrain later design (e.g. inlining a value, tightening a guard, adding a test).
    - *High:* introduces a new abstraction, dependency, naming convention, or architectural seam that other code will follow.
 
-Plus two hard rules that override the matrix:
+Plus three hard rules that override the matrix:
 
+- **Structural finding (from Agent #7)** → always ask, never auto-apply. A behavior-preserving restructuring is inherently high-blast-radius and high-forward-binding; surface it as a proposal and let the user decide. This holds even if the Haiku score is ≥80.
 - **Suggested fix is unclear or conflicts with current state** → always ask. (Same as Step 7.)
 - **A `CLAUDE.md` file or learnings entry explicitly says "always ask the user about X"** → always ask.
 
@@ -328,6 +349,11 @@ Cycle 1: <summary>
 Cycle 2: <summary>
 ...
 
+Structural proposals (Agent #7 — not applied, your call):
+- Blockers: <high-value simplifications that delete a layer/branch, or file-size breaches — the things worth doing before this merges>
+- Nits: <smaller tidy-ups, listed briefly>
+(Omit this section entirely if Agent #7 didn't run or found nothing.)
+
 Auto-applied low-risk 50-79 (no ask):
 - <list with one-line summary each — visible to the user since they didn't see the ask>
 
@@ -349,6 +375,7 @@ Remaining <50 findings (low confidence, not surfaced):
 
 | Bucket | Score | Risk profile (Step 8a) | Action |
 | --- | --- | --- | --- |
+| Ask user | (any) | structural finding from Agent #7 | Surface as proposal; never auto-apply |
 | Auto-fix | ≥80 | (any) | Apply silently |
 | Auto-fix | 50-79 | all three dimensions low-risk | Apply silently; note in commit message |
 | Ask user | 50-79 | any dimension high-risk OR fix unclear OR `always ask` rule applies | Batch via AskUserQuestion |
