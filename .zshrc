@@ -34,3 +34,6 @@ eval "$(zoxide init zsh)"
 # bun
 export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
+
+# Starship prompt - must be last
+eval "$(starship init zsh)"
