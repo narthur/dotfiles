@@ -73,9 +73,19 @@ runs_json=$(gh run list --limit 20 --json conclusion,name,workflowName,databaseI
 BUDGETS_JSON="$budgets_json" USAGE_JSON="$usage_json" RUNS_JSON="$runs_json" \
 	OWNER="$owner" OTYPE="$otype" python3 <<'PY'
 import os, json, sys
+from datetime import datetime, timezone
 
 owner = os.environ["OWNER"]
 otype = os.environ["OTYPE"]
+
+# Actions budgets/included-minutes are measured against calendar-month usage
+# (UTC) — the billing usage API buckets everything on the 1st of the month — so
+# accrued spend rolls back to $0 (and a budget block lifts) at 00:00 UTC on the
+# 1st of next month.
+_now = datetime.now(timezone.utc)
+_reset = datetime(_now.year + (_now.month == 12), (_now.month % 12) + 1, 1, tzinfo=timezone.utc)
+_days = (_reset - _now).days
+reset_str = f"{_reset:%Y-%m-%d} 00:00 UTC (~{_days} day(s) away)"
 budgets = json.loads(os.environ.get("BUDGETS_JSON") or "{}").get("budgets", [])
 usage   = json.loads(os.environ.get("USAGE_JSON")   or "{}").get("usageItems", [])
 runs    = json.loads(os.environ.get("RUNS_JSON")    or "[]")
@@ -97,6 +107,7 @@ if ab:
 else:
     print("Actions budget: none configured.")
 print(f"Recent startup_failure runs (this repo): {len(startup_failures)}")
+print(f"Monthly reset (spend → $0): {reset_str}")
 print()
 
 url = (f"https://github.com/organizations/{owner}/settings/billing/budgets"
@@ -105,7 +116,7 @@ url = (f"https://github.com/organizations/{owner}/settings/billing/budgets"
 
 blocked = False
 reason = ""
-fix = f"Fix: raise/disable the Actions budget or wait for the monthly reset → {url}"
+fix = f"Fix: raise/disable the Actions budget, or wait for the reset on {reset_str} → {url}"
 if blocking_budget and signature:
     blocked, reason = True, (
         f"Workflows are failing at startup AND a blocking Actions budget (${amt}) exists. "
