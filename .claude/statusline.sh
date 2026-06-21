@@ -17,7 +17,7 @@ input="$(cat)"
 jqr() { printf '%s' "$input" | jq -r "$1" 2>/dev/null; }
 
 # ANSI colors (dim/cyan/yellow/green/red). \033 keeps it portable.
-DIM=$'\033[2m'; CYAN=$'\033[36m'; YEL=$'\033[33m'; GRN=$'\033[32m'; RED=$'\033[31m'; RST=$'\033[0m'
+DIM=$'\033[2m'; CYAN=$'\033[36m'; YEL=$'\033[33m'; GRN=$'\033[32m'; RED=$'\033[31m'; BLU=$'\033[34m'; RST=$'\033[0m'
 SEP=" ${DIM}·${RST} "
 
 # --- core fields -----------------------------------------------------------
@@ -55,7 +55,15 @@ if [ -n "${git_part:-}" ]; then
       mv "${pr_cache}.tmp" "$pr_cache" 2>/dev/null ) >/dev/null 2>&1 &
   fi
   pr_url="$(cat "$pr_cache" 2>/dev/null || true)"
-  [ -n "$pr_url" ] && pr_part="${DIM}${pr_url}${RST}"
+  if [ -n "$pr_url" ]; then
+    # Short, clickable label instead of the full URL (which runs off the edge).
+    # OSC 8 hyperlink: terminals that support it make "pr #N" clickable; the
+    # rest just show the text. (Markdown links don't render in a status line.)
+    pr_num="${pr_url##*/}"
+    osc8_open=$'\033]8;;'"${pr_url}"$'\033\\'
+    osc8_close=$'\033]8;;\033\\'
+    pr_part="${BLU}${osc8_open}pr #${pr_num}${osc8_close}${RST}"
+  fi
 fi
 
 # --- context-window pressure (best-effort; field exists only in some versions)
@@ -81,9 +89,9 @@ custom=""
 # --- assemble --------------------------------------------------------------
 parts=()
 [ -n "$model" ]    && parts+=("${CYAN}${model}${RST}")
+[ -n "$pr_part" ]  && parts+=("$pr_part")
 [ -n "$dir_name" ] && parts+=("${dir_name}")
 [ -n "$git_part" ] && parts+=("$git_part")
-[ -n "$pr_part" ]  && parts+=("$pr_part")
 [ -n "$ctx_part" ] && parts+=("$ctx_part")
 [ -n "$custom" ]   && parts+=("$custom")
 

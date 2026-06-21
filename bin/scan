@@ -1,8 +1,10 @@
 #!/bin/bash
 
 # Scan documents to PDF (cross-platform)
-# Usage: scan [filename]      Scan to SCAN_DIR (timestamped name if omitted)
+# Usage: scan [filename]      Scan to SCAN_DIR; with no name the finished PDF is
+#                             auto-named from its contents via pdf-rename
 #        scan --append        Append the scan to the most recent PDF
+#        scan --no-rename     Skip content-based auto-naming (keep timestamp name)
 #        scan --check         Check that all prerequisites are installed
 #        scan --help
 #
@@ -27,7 +29,7 @@ IM=""
 if have magick; then IM="magick"; elif have convert; then IM="convert"; fi
 
 usage() {
-    sed -n '3,11p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '3,13p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 # Is the DS-740D enumerated on the USB bus? Lets us tell "driver missing"
@@ -186,6 +188,19 @@ case "$1" in
         ;;
 esac
 
+# Pull option flags out of the args, leaving the optional positional filename
+# (or --append) for the logic below. Default: content-name plain scans.
+RENAME=true
+ARGS=()
+for a in "$@"; do
+    case "$a" in
+        --no-rename) RENAME=false ;;
+        --rename)    RENAME=true ;;
+        *)           ARGS+=("$a") ;;
+    esac
+done
+set -- "${ARGS[@]}"
+
 # ---- environment ----
 if [ -f "$HOME/.env" ]; then
     source "$HOME/.env"
@@ -199,6 +214,7 @@ fi
 
 SCAN_DIR="$BROTHER_SCAN_DIR"
 APPEND_MODE=false
+AUTO_NAME=false
 mkdir -p "$SCAN_DIR"
 
 # Shared post-processing dependencies
@@ -226,6 +242,7 @@ else
     # Generate filename
     if [ -z "$1" ]; then
         FILENAME="scan_$(date +%Y%m%d_%H%M%S).pdf"
+        AUTO_NAME=true   # only auto-named scans get content-based renaming
     else
         FILENAME="$1"
         # Add .pdf extension if not present
@@ -308,14 +325,25 @@ echo "Adding OCR..."
 if [ "$APPEND_MODE" = true ]; then
     # OCR the new scan, then merge into the existing PDF
     TEMP_OCR="$WORKDIR/ocr.pdf"
-    ocrmypdf --skip-text "$TEMP_PDF" "$TEMP_OCR"
+    ocrmypdf --rotate-pages --deskew --skip-text "$TEMP_PDF" "$TEMP_OCR"
 
     echo "Merging with existing PDF..."
     TEMP_MERGED="$WORKDIR/merged.pdf"
     pdfunite "$OUTPUT_PATH" "$TEMP_OCR" "$TEMP_MERGED"
     mv "$TEMP_MERGED" "$OUTPUT_PATH"
 else
-    ocrmypdf --skip-text "$TEMP_PDF" "$OUTPUT_PATH"
+    ocrmypdf --rotate-pages --deskew --skip-text "$TEMP_PDF" "$OUTPUT_PATH"
+fi
+
+# Content-based naming for plain `scan` (the OCR step above gives the PDF a text
+# layer, so pdf-rename can read it). Explicit names and --append keep their path.
+# Best-effort: a naming miss must never fail an otherwise-good scan.
+if [ "$APPEND_MODE" = false ] && [ "$AUTO_NAME" = true ] && [ "$RENAME" = true ] && have pdf-rename; then
+    echo "Naming from contents (pdf-rename)..."
+    NEWBASE=$(pdf-rename --apply "$OUTPUT_PATH" 2>/dev/null | sed -n 's/^[[:space:]]*-> //p' | head -n1)
+    if [ -n "$NEWBASE" ] && [ -f "$SCAN_DIR/$NEWBASE" ]; then
+        OUTPUT_PATH="$SCAN_DIR/$NEWBASE"
+    fi
 fi
 
 echo "✓ Scan saved: $OUTPUT_PATH"
