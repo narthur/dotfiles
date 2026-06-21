@@ -1,6 +1,6 @@
 ---
 name: fix-ci
-description: "Address failing CI checks for the PR associated with the currently-checked-out git branch. Use when asked to fix CI, address failing checks, fix the build, or investigate why CI is failing."
+description: "Address failing CI checks for the PR associated with the currently-checked-out git branch. Use when asked to fix CI, address failing checks, fix the build, or investigate why CI is failing — including when checks fail to *start* (startup_failure, 0 jobs, 'workflow file issue'), which is often an account-level GitHub Actions budget/minutes block rather than a code problem (it diagnoses this before trying to fix code)."
 ---
 
 # Fix CI Skill
@@ -82,6 +82,20 @@ Capture:
 - PR number
 - Head commit SHA (`headRefOid`)
 - Branch name (`headRefName`)
+
+### Step 2.5: Triage — Did the checks even *start*? (may be unfixable in code)
+
+**Before** entering the fix loop, rule out an account-level block. This skill assumes there are failure *logs* to analyze — but when an org/user hits an Actions **spending budget** (with "block further usage" on) or runs out of included **minutes**, GitHub fails every new run at *startup*: `conclusion: startup_failure`, **0 jobs**, **0s** duration, and a misleading "this run likely failed because of a workflow file issue." There are no logs, and no code change fixes it.
+
+The tell vs. genuinely-broken workflow YAML: broken YAML fails only the *one* bad workflow, whereas a budget/minutes block fails **≥2 different workflows at once**. If you see that pattern (or any `startup_failure` with 0 jobs), run the checker — it reads the real billing budgets + usage (works with a `read:org` token) and combines them with the live run signature:
+
+```bash
+~/.claude/skills/fix-ci/check-actions-budget.sh
+```
+
+- **Exit code 2** → Actions is blocked (budget/minutes). **Stop. Do not enter the fix loop** — there is nothing to fix in code. Report the verdict to the user verbatim (it includes the budget settings URL) and let them raise/disable the budget or wait for the monthly reset.
+- **Exit code 0** → not blocked at startup; proceed to the fix loop normally.
+- **Exit code 65** → couldn't read billing (token scope). Fall back to the heuristic above and tell the user; don't burn cycles re-running.
 
 ### Step 3: Begin Fix Cycle (loop up to cycle limit)
 

@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+#
+# check-actions-budget.sh — Decide whether GitHub Actions is BLOCKED by a
+# spending budget / exhausted minutes for the current repo's owner, so a session
+# never has to guess why CI "won't start."
+#
+# Why this exists: when an org/user hits an Actions budget with "block further
+# usage" enabled (or runs out of included minutes with overage disabled), GitHub
+# fails every new workflow run at *startup* — `conclusion: startup_failure`, 0
+# jobs, 0s, and a misleading "this run likely failed because of a workflow file
+# issue" message. That looks identical to broken YAML but is account-level and
+# unfixable in code.
+#
+# This script reads the real billing budgets + usage (works with a `read:org`
+# token; the *old* /settings/billing/actions endpoint that needed admin:org is
+# gone) AND checks recent runs for the startup-failure signature, then prints a
+# combined verdict.
+#
+# Usage:  check-actions-budget.sh [owner]
+#   owner — org or user login. Defaults to the current repo's owner.
+#
+# Exit codes:
+#   2  Actions is (very likely) blocked — this is why CI won't start.
+#   0  Checked; Actions does not appear blocked at startup right now.
+#   64 Could not determine owner.
+#   65 Could not read billing (token scope / access) — fall back to the heuristic.
+set -euo pipefail
+
+owner="${1:-}"
+if [ -z "$owner" ]; then
+	owner=$(gh repo view --json owner -q .owner.login 2>/dev/null || true)
+fi
+if [ -z "$owner" ]; then
+	echo "Could not determine repo owner. Pass one explicitly:" >&2
+	echo "  check-actions-budget.sh <org-or-user>" >&2
+	exit 64
+fi
+
+# Organization vs User accounts use different billing paths.
+otype=$(gh api "/users/$owner" -q .type 2>/dev/null || echo "Organization")
+if [ "$otype" = "Organization" ]; then
+	base="/organizations/$owner/settings/billing"
+else
+	base="/users/$owner/settings/billing"
+fi
+
+year=$(date -u +%Y)
+month=$((10#$(date -u +%m))) # strip leading zero without octal surprises
+
+budgets_json=$(gh api "$base/budgets" 2>/dev/null || true)
+usage_json=$(gh api "$base/usage?year=$year&month=$month" 2>/dev/null || true)
+
+if [ -z "$budgets_json" ] && [ -z "$usage_json" ]; then
+	echo "⚠️  Could not read billing for '$owner' (token scope or access)."
+	echo "    The new billing endpoints need 'read:org'. Grant it with:"
+	echo "      gh auth refresh -h github.com -s read:org"
+	echo "    Without billing access, the only signal is the startup_failure heuristic:"
+	echo "    if >=2 different workflows fail at startup (0 jobs, 0s) at once, it's almost"
+	echo "    always an account-level block (minutes/budget), not your code."
+	exit 65
+fi
+
+# Recent runs for THIS repo, to detect the live startup-failure signature.
+runs_json=$(gh run list --limit 20 --json conclusion,name,workflowName,databaseId 2>/dev/null || echo '[]')
+
+BUDGETS_JSON="$budgets_json" USAGE_JSON="$usage_json" RUNS_JSON="$runs_json" \
+	OWNER="$owner" OTYPE="$otype" python3 <<'PY'
+import os, json, sys
+
+owner = os.environ["OWNER"]
+otype = os.environ["OTYPE"]
+budgets = json.loads(os.environ.get("BUDGETS_JSON") or "{}").get("budgets", [])
+usage   = json.loads(os.environ.get("USAGE_JSON")   or "{}").get("usageItems", [])
+runs    = json.loads(os.environ.get("RUNS_JSON")    or "[]")
+
+amins = sum(i["quantity"]  for i in usage if i.get("product") == "actions" and i.get("unitType") == "Minutes")
+anet  = sum(i["netAmount"] for i in usage if i.get("product") == "actions")
+ab    = next((b for b in budgets if b.get("budget_product_sku") == "actions"), None)
+
+startup_failures = [r for r in runs if r.get("conclusion") == "startup_failure"]
+signature = len(startup_failures) >= 2  # >=2 distinct runs blocked at startup
+
+print(f"Owner: {owner} ({otype})")
+print(f"Actions usage this month: {amins:,.0f} min | net/overage spend: ${anet:,.2f}")
+
+blocking_budget = bool(ab and ab.get("prevent_further_usage"))
+amt = ab.get("budget_amount") if ab else None
+if ab:
+    print(f"Actions budget: ${amt} | block-when-reached: {ab.get('prevent_further_usage')}")
+else:
+    print("Actions budget: none configured.")
+print(f"Recent startup_failure runs (this repo): {len(startup_failures)}")
+print()
+
+url = (f"https://github.com/organizations/{owner}/settings/billing/budgets"
+       if otype == "Organization"
+       else "https://github.com/settings/billing/budgets")
+
+blocked = False
+reason = ""
+fix = f"Fix: raise/disable the Actions budget or wait for the monthly reset → {url}"
+if blocking_budget and signature:
+    blocked, reason = True, (
+        f"Workflows are failing at startup AND a blocking Actions budget (${amt}) exists. "
+        f"Billing data lags, but at ${anet:,.2f} this is the cause: the budget was reached "
+        f"and GitHub is blocking all Actions runs."
+    )
+elif blocking_budget and amt is not None and anet >= amt * 0.97:
+    blocked, reason = True, (
+        f"Actions spend (~${anet:,.2f}) has reached the ${amt} blocking budget; "
+        f"GitHub will block further runs (note: billing lags, so real usage may be higher)."
+    )
+elif signature:
+    blocked, reason = True, (
+        "Multiple workflows are failing at startup (0 jobs), but no blocking Actions budget "
+        "was found. Cause is still account-level — check that Actions is enabled for the repo/org, "
+        "the account has a valid payment method, and no org policy disabled Actions."
+    )
+    fix = f"Fix: check Actions status & payment method → {url.rsplit('/', 1)[0]}"
+
+if blocked:
+    print("🛑 ACTIONS APPEARS BLOCKED — this is why CI won't start. NOT a code problem.")
+    print(f"   {reason}")
+    print(f"   {fix}")
+    sys.exit(2)
+
+if blocking_budget and amt is not None:
+    print(f"✅ Actions not blocked at startup right now. Heads-up: ${anet:,.2f} of the ${amt} "
+          f"blocking budget used — CI will stop if it reaches ${amt}.")
+    print(f"   Budget settings → {url}")
+else:
+    print("✅ Actions does not appear blocked at startup right now.")
+    if signature is False and runs:
+        print("   (No startup_failure signature in recent runs.)")
+sys.exit(0)
+PY
