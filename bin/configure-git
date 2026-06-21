@@ -6,6 +6,7 @@ gh extension install seachicken/gh-poi
 gh alias set --clobber agents '!open "https://github.com/copilot/agents"'
 gh alias set --clobber co 'pr checkout'
 gh alias set --clobber ic '!gh-ic "$@"'
+gh alias set --clobber budget '!gh-budget "$@"'
 gh alias set --clobber watch-prs '!watch -n 10 gh pr list'
 gh alias set --clobber stale 'issue list --search "sort:updated-asc -label:snooze"'
 gh alias set --clobber open-stale '!gh issue view $(gh issue list --search "sort:updated-asc -label:snooze" --limit 1 --json number --jq ".[0].number") --web'

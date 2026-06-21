@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# check-actions-budget.sh — Decide whether GitHub Actions is BLOCKED by a
-# spending budget / exhausted minutes for the current repo's owner, so a session
-# never has to guess why CI "won't start."
+# gh-budget — Decide whether GitHub Actions is BLOCKED by a spending budget /
+# exhausted minutes for a repo's owner, so you (or a coding agent) never have to
+# guess why CI "won't start."
 #
 # Why this exists: when an org/user hits an Actions budget with "block further
 # usage" enabled (or runs out of included minutes with overage disabled), GitHub
@@ -11,12 +11,12 @@
 # issue" message. That looks identical to broken YAML but is account-level and
 # unfixable in code.
 #
-# This script reads the real billing budgets + usage (works with a `read:org`
-# token; the *old* /settings/billing/actions endpoint that needed admin:org is
-# gone) AND checks recent runs for the startup-failure signature, then prints a
+# This reads the real billing budgets + usage (works with a `read:org` token;
+# the *old* /settings/billing/actions endpoint that needed admin:org is gone)
+# AND checks recent runs for the startup-failure signature, then prints a
 # combined verdict.
 #
-# Usage:  check-actions-budget.sh [owner]
+# Usage:  gh budget [owner]      (or: gh-budget [owner])
 #   owner — org or user login. Defaults to the current repo's owner.
 #
 # Exit codes:
@@ -26,13 +26,20 @@
 #   65 Could not read billing (token scope / access) — fall back to the heuristic.
 set -euo pipefail
 
+case "${1:-}" in
+-h | --help)
+	sed -n '3,27p' "$0" | sed 's/^# \{0,1\}//'
+	exit 0
+	;;
+esac
+
 owner="${1:-}"
 if [ -z "$owner" ]; then
 	owner=$(gh repo view --json owner -q .owner.login 2>/dev/null || true)
 fi
 if [ -z "$owner" ]; then
 	echo "Could not determine repo owner. Pass one explicitly:" >&2
-	echo "  check-actions-budget.sh <org-or-user>" >&2
+	echo "  gh budget <org-or-user>" >&2
 	exit 64
 fi
 

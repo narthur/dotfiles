@@ -87,10 +87,10 @@ Capture:
 
 **Before** entering the fix loop, rule out an account-level block. This skill assumes there are failure *logs* to analyze — but when an org/user hits an Actions **spending budget** (with "block further usage" on) or runs out of included **minutes**, GitHub fails every new run at *startup*: `conclusion: startup_failure`, **0 jobs**, **0s** duration, and a misleading "this run likely failed because of a workflow file issue." There are no logs, and no code change fixes it.
 
-The tell vs. genuinely-broken workflow YAML: broken YAML fails only the *one* bad workflow, whereas a budget/minutes block fails **≥2 different workflows at once**. If you see that pattern (or any `startup_failure` with 0 jobs), run the checker — it reads the real billing budgets + usage (works with a `read:org` token) and combines them with the live run signature:
+The tell vs. genuinely-broken workflow YAML: broken YAML fails only the *one* bad workflow, whereas a budget/minutes block fails **≥2 different workflows at once**. If you see that pattern (or any `startup_failure` with 0 jobs), run the checker (`~/bin/gh-budget`, also available as `gh budget`) — it reads the real billing budgets + usage (works with a `read:org` token) and combines them with the live run signature:
 
 ```bash
-~/.claude/skills/fix-ci/check-actions-budget.sh
+gh-budget
 ```
 
 - **Exit code 2** → Actions is blocked (budget/minutes). **Stop. Do not enter the fix loop** — there is nothing to fix in code. Report the verdict to the user verbatim (it includes the budget settings URL) and let them raise/disable the budget or wait for the monthly reset.
