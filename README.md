@@ -13,7 +13,7 @@ Personal dotfiles and scripts for Linux and macOS.
   - Initializes zoxide for directory navigation
 
 - **`.env`** - Environment variables for shell scripts
-  - `PROJECTS_DIR` - `/mnt/backup/ProgrammingProjects`
+  - `PROJECTS_DIR` - `/mnt/backup/code`
   - `Z_EXPERIMENTS_DIR` - Path to z-experiments project
   - `OBSIDIAN_VAULT` - Path to main Obsidian vault
   - `OBSIDIAN_DAILY_NOTES` - Path to daily notes directory

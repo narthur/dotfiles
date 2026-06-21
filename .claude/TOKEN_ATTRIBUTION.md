@@ -11,9 +11,9 @@ The orchestration system tracks token usage per repository using **git repo iden
 A shared resolver (`~/.claude/hooks/resolve-git-repo.sh`) extracts the `org/repo` identifier from a directory's git origin remote URL. If the directory isn't a git repo (or has no remote), it falls back to the absolute path.
 
 Examples:
-- `/mnt/backup/ProgrammingProjects/project-a` → `OrgName/project-a`
+- `/mnt/backup/code/project-a` → `OrgName/project-a`
 - `/var/tmp/worktrees/feature-branch/project-a` → `OrgName/project-a`
-- `/mnt/backup/ProgrammingProjects/project-b/packages/api` → `OrgName/project-b`
+- `/mnt/backup/code/project-b/packages/api` → `OrgName/project-b`
 - `/home/username` → `/home/username` (fallback, no git remote)
 
 ### Token Tracking Hook

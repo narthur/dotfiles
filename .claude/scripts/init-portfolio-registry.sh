@@ -1,10 +1,10 @@
 #!/bin/bash
 # Initialize Portfolio Registry from existing projects
-# Scans /mnt/backup/ProgrammingProjects and creates registry with all projects disabled by default
+# Scans /mnt/backup/code and creates registry with all projects disabled by default
 
 set -euo pipefail
 
-PROJECTS_DIR="/mnt/backup/ProgrammingProjects"
+PROJECTS_DIR="/mnt/backup/code"
 REGISTRY_FILE="${HOME}/.claude/portfolio-registry.json"
 
 echo "Scanning projects in ${PROJECTS_DIR}..."

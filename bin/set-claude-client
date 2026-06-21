@@ -71,7 +71,7 @@ case "${1:-}" in
             echo "Usage: $0 set <repo-path> <client-name>"
             echo ""
             echo "Example:"
-            echo "  $0 set /mnt/backup/ProgrammingProjects/myproject myclient"
+            echo "  $0 set /mnt/backup/code/myproject myclient"
             exit 1
         fi
         
@@ -171,7 +171,7 @@ case "${1:-}" in
         echo "  set-claude-client list"
         echo ""
         echo "  # Set client for a project"
-        echo "  set-claude-client set /mnt/backup/ProgrammingProjects/myapp myclient"
+        echo "  set-claude-client set /mnt/backup/code/myapp myclient"
         echo ""
         echo "  # Interactive mode (recommended)"
         echo "  set-claude-client interactive"
