@@ -41,7 +41,6 @@ mas "Dashlane", id: 517914548
 cask "activitywatch"
 cask "claude"
 cask "xbar"
-cask "jordanbaird-ice"
 cask "copilot-cli"
 cask "discord"
 cask "font-jetbrains-mono-nerd-font"
