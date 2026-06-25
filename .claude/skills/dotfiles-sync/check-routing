@@ -101,14 +101,44 @@ else
     done
 fi
 
+# Find skill directories on disk that are untracked in BOTH repos.
+# ponytail: the top-level find above is -maxdepth 1, so it never descends into
+# .claude/skills/ — untracked skills would otherwise go unseen. Made worse by
+# `status.showUntrackedFiles=no` on the dotfiles repo, which also hides them
+# from plain `git status`. So scan the skills dir explicitly here.
+echo -e "\n${YELLOW}Checking for untracked skills...${NC}"
+untracked_skills=()
+if [[ -d "$HOME/.claude/skills" ]]; then
+    all_tracked=$(printf '%s\n%s\n' "$dotfiles_tracked" "$dotprivate_tracked")
+    for dir in "$HOME"/.claude/skills/*/; do
+        [[ -d "$dir" ]] || continue
+        name=$(basename "$dir")
+        # A skill counts as tracked if either repo tracks any file under it.
+        if ! echo "$all_tracked" | grep -q "^\.claude/skills/$name/"; then
+            untracked_skills+=("$name")
+        fi
+    done
+fi
+
+if [[ ${#untracked_skills[@]} -eq 0 ]]; then
+    echo -e "${GREEN}✓ No untracked skills${NC}"
+else
+    echo -e "${YELLOW}Found ${#untracked_skills[@]} skill(s) untracked in both repos:${NC}"
+    echo -e "${YELLOW}(some may be plugin/third-party skills you intend to leave untracked):${NC}"
+    for name in "${untracked_skills[@]}"; do
+        echo -e "  - $name"
+    done
+fi
+
 # Summary
 echo -e "\n${BLUE}=== Summary ===${NC}"
 echo "  Dotfiles tracked: $(echo "$dotfiles_tracked" | wc -l | xargs)"
 echo "  Dotprivate tracked: $(echo "$dotprivate_tracked" | wc -l | xargs)"
 echo "  Duplicates: ${#duplicates[@]}"
 echo "  Untracked on disk: ${#untracked_both[@]}"
+echo "  Untracked skills: ${#untracked_skills[@]}"
 
-if [[ ${#duplicates[@]} -eq 0 ]] && [[ ${#untracked_both[@]} -eq 0 ]]; then
+if [[ ${#duplicates[@]} -eq 0 ]] && [[ ${#untracked_both[@]} -eq 0 ]] && [[ ${#untracked_skills[@]} -eq 0 ]]; then
     echo -e "\n${GREEN}✓ No routing issues detected${NC}"
     exit 0
 else
