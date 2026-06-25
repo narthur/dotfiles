@@ -31,6 +31,25 @@
 
 set -euo pipefail
 
+# Load ~/.env (if present) so an opt-out flag set there is honoured even though
+# this runs in a non-interactive shell that wouldn't otherwise read it.
+if [[ -f "$HOME/.env" ]]; then
+  # shellcheck disable=SC1091
+  set -a; . "$HOME/.env" 2>/dev/null || true; set +a
+fi
+
+# Opt out of the CodeRabbit wait entirely (e.g. no active CodeRabbit
+# subscription). Set CODERABBIT_WAITER_DISABLED=1 in your environment or ~/.env.
+# Exits 0 — same as a draft PR: there's simply nothing to wait for, so the
+# caller (drive-pr) proceeds straight to CI/feedback without blocking.
+# Lowercase via tr for portability (macOS ships bash 3.2, which lacks ${v,,}).
+_crw_disabled="${CODERABBIT_WAITER_DISABLED:-}"
+_crw_lc=$(printf '%s' "$_crw_disabled" | tr '[:upper:]' '[:lower:]')
+if [[ -n "$_crw_disabled" && "$_crw_lc" != "0" && "$_crw_lc" != "false" && "$_crw_lc" != "no" ]]; then
+  echo "[wait-for-review] CODERABBIT_WAITER_DISABLED set — skipping the CodeRabbit wait." >&2
+  exit 0
+fi
+
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # coderabbit-status.sh lives in the sibling `coderabbit-status` skill, which
@@ -58,6 +77,11 @@ Options:
   --workspace-type TYPE   Set workspace type (gitbutler or standard).
                           Auto-detects from git branch if not specified.
   -h, --help              Show this help
+
+Environment:
+  CODERABBIT_WAITER_DISABLED  If set (and not 0/false/no), skip the wait
+                              entirely and exit 0. Read from the environment or
+                              ~/.env. Use when you have no CodeRabbit subscription.
 
 Exit codes:
   0  Initial review completed (check for feedback), or draft PR (nothing to wait for)

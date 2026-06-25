@@ -133,7 +133,7 @@ for i in "${!MEMBERS_GITHUB[@]}"; do
   if [[ -n "$nb_id" && -n "$NARTHBUGZ_CLIENT_NAME" && -n "$AUTH_HEADER" ]]; then
     curl -s --max-time 60 --compressed \
       -H "Authorization: ${AUTH_HEADER}" \
-      "https://narthbugz-api.onrender.com/users/${nb_id}/entries?sort=-start&size=200" \
+      "https://api.narthbugz.com/users/${nb_id}/entries?sort=-start&size=200" \
       | jq "[.data[]?
           | select(.startTime[:10] >= \"${PERIOD_START}\" and .startTime[:10] <= \"${PERIOD_END}\")
           | select(.clientName == \"${NARTHBUGZ_CLIENT_NAME}\")

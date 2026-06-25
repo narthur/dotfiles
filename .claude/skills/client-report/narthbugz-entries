@@ -25,7 +25,7 @@ AUTH_HEADER="Basic $(echo -n "${NARTHBUGZ_EMAIL}:${NARTHBUGZ_TOKEN}" | base64 -w
 
 curl -s --max-time 60 --compressed \
   -H "Authorization: ${AUTH_HEADER}" \
-  "https://narthbugz-api.onrender.com/users/${USER_ID}/entries?sort=-start&size=200" \
+  "https://api.narthbugz.com/users/${USER_ID}/entries?sort=-start&size=200" \
   | jq "[.data[]?
       | select(.startTime[:10] >= \"${PERIOD_START}\" and .startTime[:10] <= \"${PERIOD_END}\")
       | select(.clientName == \"${CLIENT_NAME}\")
