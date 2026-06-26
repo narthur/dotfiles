@@ -55,8 +55,20 @@ if [[ -z "$COMMENT_ID" ]]; then
 fi
 
 if [[ "$UNDISMISS" == true ]]; then
+  if unminimize_comment_github "$COMMENT_ID"; then
+    echo "✓ Restored comment on GitHub: $COMMENT_ID"
+  else
+    echo "Note: could not un-collapse on GitHub; cleared local state only." >&2
+  fi
   undismiss_comment_state "$COMMENT_ID"
   echo "✓ Undismissed comment: $COMMENT_ID"
 else
+  # Actually collapse it on GitHub (visible to humans + hidden from retrieval),
+  # falling back to local-only tracking when minimizing isn't permitted.
+  if minimize_comment_github "$COMMENT_ID"; then
+    echo "✓ Collapsed comment on GitHub (minimized as resolved): $COMMENT_ID"
+  else
+    echo "Note: could not collapse on GitHub (insufficient permission or unsupported subject); tracking locally only." >&2
+  fi
   dismiss_comment_state "$COMMENT_ID"
 fi

@@ -199,7 +199,7 @@ After each action, return to Step 1 for the next item until the queue is empty (
 3. Work each remaining actionable point: bot-authored → auto-handle (Step 2a); human-authored → interactive (Steps 2b–5).
 4. Only dismiss the review/comment (`dismiss-comment.sh`) **after all its points are addressed**.
 
-**Note:** unlike review threads, review summaries and generic comments cannot be "resolved" on GitHub. `dismiss-comment.sh` tracks them as addressed in local state; they remain visible in the conversation.
+**Note:** review summaries and generic comments can't be "resolved" the way review threads can, but `dismiss-comment.sh` now **collapses them on GitHub** via the `minimizeComment` mutation (classifier `RESOLVED`) — which both visibly marks them addressed and hides them from retrieval (`pr-feedback.sh` skips `isMinimized`). It also records local state as a fallback, so if minimizing isn't permitted (e.g. insufficient repo permission) the item is still tracked as addressed locally.
 
 ## Completion
 

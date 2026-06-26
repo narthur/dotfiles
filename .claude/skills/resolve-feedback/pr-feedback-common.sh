@@ -182,6 +182,39 @@ undismiss_comment_state() {
   echo "$updated" > "$DISMISSED_STATE_FILE"
 }
 
+# Collapse a comment/review on GitHub via the minimizeComment mutation
+# (classifier RESOLVED). GitHub can't "resolve" a top-level comment the way it
+# resolves a review thread, but it can minimize it, which both hides it from
+# pr-feedback.sh (it skips isMinimized) and visibly marks it addressed.
+# Best-effort and idempotent: returns 1 (no fatal error) when the subject can't
+# be minimized — e.g. insufficient repo permission — so callers fall back to
+# local-only dismissal. Works for IssueComment, PullRequestReviewComment, and
+# PullRequestReview subject IDs.
+minimize_comment_github() {
+  local comment_id="$1" result err is_min
+  result=$(gh api graphql -f query='
+    mutation($id: ID!) {
+      minimizeComment(input: {subjectId: $id, classifier: RESOLVED}) {
+        minimizedComment { isMinimized }
+      }
+    }' -f id="$comment_id" 2>&1) || return 1
+  err=$(echo "$result" | jq -r '.errors[0].message // empty' 2>/dev/null)
+  [[ -n "$err" ]] && return 1
+  is_min=$(echo "$result" | jq -r '.data.minimizeComment.minimizedComment.isMinimized' 2>/dev/null)
+  [[ "$is_min" == "true" ]]
+}
+
+# Un-collapse a previously minimized comment/review. Best-effort.
+unminimize_comment_github() {
+  local comment_id="$1"
+  gh api graphql -f query='
+    mutation($id: ID!) {
+      unminimizeComment(input: {subjectId: $id}) {
+        unminimizedComment { isMinimized }
+      }
+    }' -f id="$comment_id" >/dev/null 2>&1
+}
+
 # Check if a comment is dismissed.
 # Returns: 0 = dismissed (skip), 1 = not dismissed (include)
 is_comment_dismissed() {
