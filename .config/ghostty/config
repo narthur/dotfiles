@@ -1,2 +1,3 @@
 font-family = "JetBrainsMono Nerd Font"
 macos-titlebar-style = "tabs"
+keybind = cmd+shift+e=equalize_splits

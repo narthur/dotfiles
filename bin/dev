@@ -1,0 +1,27 @@
+#!/usr/bin/env zsh
+# dev [path] — attach or create a per-repo tmux environment.
+# Resume: an existing session is just reattached. First run builds it from
+# ~/.config/tmux/projects/<repo>.sh if present, else a default 3-pane layout.
+set -e
+dir="${1:-$PWD}"
+root="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || echo "$dir")"
+name="${root:t}"                       # repo dir basename
+sess="${name//[.:]/_}"                 # tmux dislikes . and :
+
+# Already running? just attach (this is "resume")
+if tmux has-session -t "$sess" 2>/dev/null; then
+  exec tmux ${TMUX:+switch-client} ${TMUX:-attach} -t "$sess"
+fi
+
+# Build it. Per-project override wins; else default 3-pane layout.
+proj="$HOME/.config/tmux/projects/$name.sh"
+if [ -f "$proj" ]; then
+  TMUX_SESS="$sess" TMUX_ROOT="$root" source "$proj"
+else
+  tmux new-session  -d -s "$sess" -c "$root" -n main
+  tmux send-keys    -t "${sess}:main" 'claude' C-m          # pane 1: claude
+  tmux split-window -h -t "${sess}:main" -c "$root"         # pane 2: dev server
+  tmux split-window -v -t "${sess}:main" -c "$root"         # pane 3: tests
+  tmux select-pane  -t "${sess}:main.1"
+fi
+exec tmux ${TMUX:+switch-client} ${TMUX:-attach} -t "$sess"
