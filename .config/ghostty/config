@@ -1,3 +1,5 @@
 font-family = "JetBrainsMono Nerd Font"
 macos-titlebar-style = "tabs"
 keybind = cmd+shift+e=equalize_splits
+# Let Ghostty (not tmux) own shift+click so cmd+shift+click opens links inside tmux
+mouse-shift-capture = never
