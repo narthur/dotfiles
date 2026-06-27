@@ -37,3 +37,10 @@ export PATH="$BUN_INSTALL/bin:$PATH"
 
 # Starship prompt - must be last
 eval "$(starship init zsh)"
+
+# --- Interactive shell upgrades (fzf-tab, fzf, zsh-autosuggestions, atuin) ---
+# order matters: fzf-tab needs compinit first; atuin after fzf so it wins Ctrl-R
+source /opt/homebrew/opt/fzf-tab/share/fzf-tab/fzf-tab.zsh
+source <(fzf --zsh)
+source /opt/homebrew/share/zsh-autosuggestions/zsh-autosuggestions.zsh
+eval "$(atuin init zsh)"
