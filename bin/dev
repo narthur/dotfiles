@@ -3,14 +3,30 @@
 # Resume: an existing session is just reattached. First run builds it from
 # ~/.config/tmux/projects/<repo>.sh if present, else a default 3-pane layout.
 set -e
+# Land the client on a session: switch if we're already inside tmux, else attach.
+_land() { [ -n "$TMUX" ] && exec tmux switch-client -t "$1" || exec tmux attach -t "$1"; }
+rebuild=0
+[[ "$1" == "-r" || "$1" == "--rebuild" ]] && { rebuild=1; shift; }
 dir="${1:-$PWD}"
 root="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || echo "$dir")"
 name="${root:t}"                       # repo dir basename
 sess="${name//[.:]/_}"                 # tmux dislikes . and :
 
-# Already running? just attach (this is "resume")
+# Already running?
 if tmux has-session -t "$sess" 2>/dev/null; then
-  exec tmux ${TMUX:+switch-client} ${TMUX:-attach} -t "$sess"
+  if (( rebuild )); then               # -r: tear down so the project script re-runs
+    if [ -n "$TMUX" ]; then
+      # Can't kill our own session from a pane inside it. Hand the kill+rebuild to
+      # a persistent parking session, then move our client there while it runs;
+      # the fresh `dev` switches us back once the new layout is up.
+      tmux has-session -t _park 2>/dev/null || tmux new-session -d -s _park
+      tmux send-keys -t _park "tmux kill-session -t '$sess'; dev '$root'" C-m
+      exec tmux switch-client -t _park
+    fi
+    tmux kill-session -t "$sess"       # not attached: drop it and rebuild below
+  else
+    _land "$sess"   # just resume
+  fi
 fi
 
 # Build it. Per-project override wins; else default 3-pane layout.
@@ -24,4 +40,4 @@ else
   tmux split-window -v -t "${sess}:main" -c "$root"         # pane 3: tests
   tmux select-pane  -t "${sess}:main.1"
 fi
-exec tmux ${TMUX:+switch-client} ${TMUX:-attach} -t "$sess"
+_land "$sess"
