@@ -5,6 +5,7 @@ tap "modem-dev/tap"
 tap "supabase/tap"
 tap "withgraphite/tap"
 brew "act"
+brew "bash" # tmux2k needs bash 4+ (macOS ships 3.2)
 brew "bc"
 brew "cliclick"
 brew "imagemagick"
