@@ -5,12 +5,60 @@
 set -e
 # Land the client on a session: switch if we're already inside tmux, else attach.
 _land() { [ -n "$TMUX" ] && exec tmux switch-client -t "$1" || exec tmux attach -t "$1"; }
+
+# Recursively SIGKILL a pid + all descendants — the only reliable way to stop
+# pnpm/vite/esbuild trees, which orphan grandchildren on SIGHUP.
+_reap_tree() { local k; for k in $(pgrep -P "$1" 2>/dev/null); do _reap_tree "$k"; done; kill -KILL "$1" 2>/dev/null || true; }
+# Reap every pane's process tree in a session, then kill the session.
+_kill_session() { local p; for p in $(tmux list-panes -s -t "$1" -F '#{pane_pid}' 2>/dev/null); do _reap_tree "$p"; done; tmux kill-session -t "$1" 2>/dev/null || true; }
+# SIGKILL orphaned (ppid 1) dev servers left stranded by a dead tmux daemon.
+_clean_orphans() {
+  local pids
+  pids=$(ps -axo pid,ppid,command | awk '$2==1 && /astro|vite|wrangler|esbuild|pnpm.*(dev|preview)|tsx.*watch/ && !/Applications/ {print $1}')
+  [ -z "$pids" ] && { echo "no orphans"; return 0; }
+  local p; for p in ${(f)pids}; do _reap_tree "$p"; done   # ${(f)} = split on newlines (zsh won't word-split a plain $var)
+  echo "reaped $(echo $pids|wc -w|tr -d ' ') orphan trees"
+  return 0
+}
+
+case "$1" in
+  --kill-session) _kill_session "$2"; exit 0 ;;        # used by the rebuild park-trick
+  stop)  shift; d="${1:-$PWD}"; r="$(git -C "$d" rev-parse --show-toplevel 2>/dev/null || echo "$d")"
+         _kill_session "${${r:t}//[.:]/_}"; exit 0 ;;
+  clean) _clean_orphans; exit 0 ;;
+esac
+
+# Fresh tmux daemon (post-reboot/crash)? Sweep orphans the dead server stranded.
+tmux info &>/dev/null || _clean_orphans
+
 rebuild=0
 [[ "$1" == "-r" || "$1" == "--rebuild" ]] && { rebuild=1; shift; }
+
+# -w <feature>: create (or reattach to) a worktree + branch, then build its session.
+if [[ "$1" == "-w" || "$1" == "--worktree" ]]; then
+  feat="$2"; [ -n "$feat" ] || { echo "usage: dev -w <feature>" >&2; exit 1; }
+  cdir="$(git -C "$PWD" rev-parse --git-common-dir 2>/dev/null)" || { echo "dev -w: not in a git repo" >&2; exit 1; }
+  mroot="$(cd "$cdir/.." && pwd)"
+  wt="$mroot.worktrees/$feat"          # ponytail: sibling dir; same-named worktrees across repos collide on session name
+  if [ ! -d "$wt" ]; then
+    if git -C "$mroot" show-ref --verify --quiet "refs/heads/$feat"; then
+      git -C "$mroot" worktree add "$wt" "$feat"      # existing branch
+    else
+      git -C "$mroot" worktree add -b "$feat" "$wt"   # new branch off HEAD
+    fi
+  fi
+  set -- "$wt"                          # hand off to the normal build/attach path
+fi
+
 dir="${1:-$PWD}"
 root="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || echo "$dir")"
-name="${root:t}"                       # repo dir basename
+name="${root:t}"                       # repo dir basename (per-worktree)
 sess="${name//[.:]/_}"                 # tmux dislikes . and :
+# Linked worktrees get their own session but should inherit the *main* repo's
+# layout script, so key the project lookup on the common dir's repo, not $name.
+repo="$name"
+cdir="$(git -C "$dir" rev-parse --git-common-dir 2>/dev/null)" \
+  && repo="$(cd "$dir" && cd "$cdir/.." && print -r -- ${PWD:t})"
 
 # Already running?
 if tmux has-session -t "$sess" 2>/dev/null; then
@@ -20,17 +68,17 @@ if tmux has-session -t "$sess" 2>/dev/null; then
       # a persistent parking session, then move our client there while it runs;
       # the fresh `dev` switches us back once the new layout is up.
       tmux has-session -t _park 2>/dev/null || tmux new-session -d -s _park
-      tmux send-keys -t _park "tmux kill-session -t '$sess'; dev '$root'" C-m
+      tmux send-keys -t _park "dev --kill-session '$sess'; dev '$root'" C-m
       exec tmux switch-client -t _park
     fi
-    tmux kill-session -t "$sess"       # not attached: drop it and rebuild below
+    _kill_session "$sess"              # not attached: drop it and rebuild below
   else
     _land "$sess"   # just resume
   fi
 fi
 
 # Build it. Per-project override wins; else default 3-pane layout.
-proj="$HOME/.config/tmux/projects/$name.sh"
+proj="$HOME/.config/tmux/projects/$repo.sh"
 if [ -f "$proj" ]; then
   TMUX_SESS="$sess" TMUX_ROOT="$root" source "$proj"
 else
