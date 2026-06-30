@@ -2,6 +2,22 @@
 # ports.5s.sh — xbar plugin. Lists listening localhost servers.
 # Dev projects show: <dir> - <type> - <port>; everything else: <proc> - <port>.
 
+SELF="$HOME/.config/xbar/plugins/ports.5s.sh"
+
+# Cleanup action (clicked from the dropdown): TERM every listener whose parent has
+# exited (reparented to launchd, ppid 1) and whose cwd is under ~/code.
+# ponytail: kills the listener pid only; orphaned child procs die on next refresh.
+if [ "$1" = "cleanup" ]; then
+  killed=0
+  for pid in $(lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null | awk 'NR>1{print $2}' | sort -u); do
+    [ "$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')" = "1" ] || continue
+    cwd=$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)
+    case "$cwd" in "$HOME/code"/*) kill "$pid" 2>/dev/null && killed=$((killed+1));; esac
+  done
+  osascript -e "display notification \"Killed $killed orphaned ~/code server(s)\" with title \"Ports\"" 2>/dev/null
+  exit 0
+fi
+
 echo "Ports"
 echo "---"
 
@@ -28,9 +44,16 @@ lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null \
   fi
 
   if [ -n "$type" ]; then
-    label="${cwd/#$HOME/~} - $type"
+    # quoted ~ stays literal; ${cwd/#$HOME/~} would tilde-expand back to $HOME in bash 5.
+    case "$cwd" in
+      "$HOME"/*) label="~${cwd#$HOME} - $type";;
+      *)         label="$cwd - $type";;
+    esac
   else
     label="$proc"
   fi
   echo "$label - $port | href=http://localhost:$port"
 done
+
+echo "---"
+echo "🧹 Clean up orphaned ~/code servers | bash=\"$SELF\" param1=cleanup terminal=false refresh=true"
