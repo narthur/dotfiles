@@ -27,10 +27,35 @@ echo "---"
 lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null \
   | awk 'NR>1 {n=split($9,a,":"); print $2, a[n], $1}' \
   | sort -u -k1,1 | while read -r pid port proc; do
+  # A `wrangler dev` instance is one dev server but shows up as three listeners:
+  # its cli process plus two workerd children — a stable ProxyWorker on the
+  # user-facing port and a runtime worker on an ephemeral port (+ inspector).
+  # Collapse them into a single row keyed on the wrangler cli pid.
+  gkey=""
+  if [ "$proc" = "workerd" ]; then
+    gkey=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+  elif ps -o command= -p "$pid" 2>/dev/null | grep -q 'wrangler.*dev'; then
+    gkey="$pid"
+  fi
+  if [ -n "$gkey" ]; then
+    case " $seen_wrangler " in *" $gkey "*) continue;; esac
+    seen_wrangler="$seen_wrangler $gkey"
+    # Report the ProxyWorker's user-facing port: the lowest listening port in the
+    # tree. ponytail: min-port heuristic; holds because 8080/8787 sit below the
+    # inspector (9229+) and ephemeral (49152+) ports the runtime/cli grab.
+    lo=$(for c in "$gkey" $(pgrep -P "$gkey" 2>/dev/null); do
+           lsof -nP -a -p "$c" -iTCP -sTCP:LISTEN 2>/dev/null \
+             | awk 'NR>1{n=split($9,a,":"); print a[n]}'
+         done | sort -n | head -1)
+    [ -n "$lo" ] && port="$lo"
+    pid="$gkey"   # label from the cli's cwd (the package dir)
+  fi
   cwd=$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)
 
   type=""
-  if [ -n "$cwd" ]; then
+  if [ -n "$gkey" ]; then
+    type="workers"   # a grouped wrangler dev instance — the cwd may also hold vite.config.ts for tests
+  elif [ -n "$cwd" ]; then
     if   [ -f "$cwd/astro.config.mjs" ] || [ -f "$cwd/astro.config.ts" ]; then type="astro"
     elif [ -f "$cwd/next.config.js" ]  || [ -f "$cwd/next.config.mjs" ];  then type="next"
     elif [ -f "$cwd/vite.config.ts" ]  || [ -f "$cwd/vite.config.js" ];   then type="vite"

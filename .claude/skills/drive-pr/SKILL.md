@@ -17,6 +17,7 @@ You are an expert at driving a pull request all the way to a **mergeable** state
 4. **Fix failing CI** (delegating to the `fix-ci` skill) and chase all required checks green — by making the code/tests pass, **never** by relaxing or bypassing a check without the user's explicit, in-the-moment permission (see Step 9b)
 5. Wait **once** for CodeRabbit's initial automatic review to land (CodeRabbit reviews each PR a single time, when it opens) and resolve its feedback — never re-requesting a review or waiting for CodeRabbit again after later pushes
 6. Maintain code quality and preserve the original intent and style of the codebase
+7. **Keep the PR description accurate** once the diff has settled — feedback fixes and review-loop edits routinely make the original body stale (see Step 9c)
 
 ## The Goal: A Mergeable PR (not just "no feedback right now")
 
@@ -24,6 +25,7 @@ You are an expert at driving a pull request all the way to a **mergeable** state
 
 - **No conflicts** with the base branch, and the branch is current enough to merge cleanly (`mergeable` / `mergeStateStatus` is healthy).
 - **CI is green** — all required checks pass (genuinely-transient failures may be re-run; real failures must be fixed).
+- **Accurate description** — the PR body still matches what the branch actually does after all feedback/review edits, and any **breaking changes** (public API contract or CLI behavior) in the diff are listed (see Step 9c). A body that describes a superseded approach, or omits a breaking change, is not "done."
 - **Clean review** — no unresolved review threads/summaries/actionable comments (the `resolve-feedback` skill reports the queue empty), and the local `review-loop` has nothing left to fix (or only Info-level findings). CodeRabbit's automatic review (posted when the PR opened) must have its feedback resolved, but you do **not** wait for CodeRabbit to re-review your latest push. Treat CodeRabbit as **one review per PR** regardless of repo. (PinePeakDigital repos enforce this via `auto_incremental_review: false`, so a push truly produces no new review. Other orgs — `narthur`, `seedtime`, etc. — may still have incremental reviews on, so CodeRabbit might auto-review a push; if it does, you'll pick that feedback up through the next `resolve-feedback` pass — but you still never *wait* for it.)
 
 If the branch has conflicts or CI is red, that is **not** "done" — address it. If CodeRabbit's initial review simply hasn't landed yet (the PR was just opened and CodeRabbit is mid-review), wait it out **once** — but never re-request a review or sit through a rate-limit reset chasing one. An empty feedback queue at the start of a run is a valid, common starting state, **not** a reason to stop. Reaching all three does **not** trigger a merge — report mergeable and stop.
@@ -45,7 +47,8 @@ This skill runs an **outer loop** that ends only when the PR is mergeable on all
 4. **Push** (Step 8).
 5. **Wait for CodeRabbit's initial review** (Step 9): only on the first pass, and only if CodeRabbit's automatic review hasn't landed yet, wait (passively) for it so its feedback is captured. Skip on every later pass — you never *wait* for a re-review and never re-request one.
 6. **Fix CI** (Step 9b): once checks run on the pushed commit, fix any real failures by delegating to the **`fix-ci`** skill; re-run only genuinely-transient ones.
-7. **Loop or finish** (Step 10): if this pass changed anything — resolved a conflict, committed a fix, got new feedback, or fixed CI — go around again (a new push invalidates the prior CI results; CodeRabbit will **not** re-review). When all three dimensions are clean and a full pass produced no changes, you're done — report **mergeable** (do not merge).
+7. **Sync PR description** (Step 9c): once the diff has settled (no more pending changes this pass), reconcile the PR body with what the branch actually does now.
+8. **Loop or finish** (Step 10): if this pass changed anything — resolved a conflict, committed a fix, got new feedback, or fixed CI — go around again (a new push invalidates the prior CI results; CodeRabbit will **not** re-review). When all three dimensions are clean and a full pass produced no changes, you're done — report **mergeable** (do not merge).
 
 The loop naturally handles a PR that starts with **no feedback at all**: `resolve-feedback` reports an empty queue (you wait once for CodeRabbit's initial review if it's still mid-flight), you fall through to review-loop / push / CI, and you only stop once the branch is conflict-free, CI is green, and all feedback — including CodeRabbit's one review — is resolved.
 
@@ -203,12 +206,38 @@ gh pr checks
 
 Ignore non-required/informational checks for the "green" decision unless the user says otherwise. In **batch mode**, leave CI to the caller unless it asked you to handle it.
 
+## Step 9c: Sync the PR Description (incl. Breaking Changes)
+
+Feedback fixes (Step 1) and review-loop edits (Step 7) routinely make the original PR body stale — it may describe an approach that was changed, list changes that were dropped, or omit changes added while addressing review. Once **this pass produced no further code changes** (you're about to finish, or looping only to wait on checks), reconcile the body with reality.
+
+1. Get what the branch actually does now vs. what the body claims:
+   ```bash
+   gh pr view --json title,body
+   gh pr diff            # the real, current diff
+   ```
+2. Compare. If the body still accurately summarizes the current diff, **do nothing** — don't churn the description for style. Only rewrite when it's factually out of date: wrong/removed approach, changes described that no longer exist, or significant changes now present but unmentioned.
+3. **Scan the diff for breaking changes** and make sure the body lists them. A breaking change is anything that would break an existing caller/user who upgrades without changing their code — e.g.:
+   - **Public API contract**: removed/renamed exported function, type, field, or endpoint; changed signature, parameter order, or required params; changed return/response shape; changed status codes or error semantics; tightened validation.
+   - **CLI behavior**: removed/renamed command, flag, or subcommand; changed default; changed output format that scripts parse; changed exit codes.
+   - **Config / data / wire formats**: renamed/removed config keys or env vars; changed defaults; schema/migration that isn't backward-compatible; changed serialization.
+
+   If the diff has any, the body must carry a clearly-labeled **`## Breaking changes`** section (use the repo template's equivalent if it has one) listing each as a bullet: *what broke* and *what callers must do to migrate*. If the diff has none, don't add an empty section. Judge from the actual diff, not the commit messages — a change flagged `feat` can still break a contract. When genuinely unsure whether something is public/breaking (e.g. an internal-but-exported helper), list it and say the exposure is uncertain rather than omit it.
+4. If it's stale, update it — **preserving the repo's PR template and section structure** (don't flatten headings, checklists, "Closes #", or `<!-- -->` markers). Edit only the claims that drifted; keep the author's voice and any human-added context. Rewrite the title too if the scope changed enough that it's misleading.
+   ```bash
+   gh pr edit --body-file <file>     # write the reconciled body to a temp file first
+   gh pr edit --title "<new title>"  # only if the title is now misleading
+   ```
+   Write the body via `--body-file` (not inline `--body`) to keep markdown/newlines intact. Use `$CLAUDE_JOB_DIR/tmp` for the temp file.
+5. In **batch mode** (e.g. `pr-triage`), still do this — an auto-merged PR with a wrong description or an unlisted breaking change is exactly what leaves the stale-description mess. Note the update (and any breaking changes found) in your returned status.
+
+This is a **description** sync, not a feedback reply: don't summarize the review discussion in the body, and don't announce "updated after feedback" — just make the description true.
+
 ## Step 10: Loop or Finish
 
 A push during this pass invalidates the prior CI results (but **not** CodeRabbit's — it won't re-review), so re-evaluate conflicts, CI, and feedback. Return to **Step 0.7 / Step 1** and reassess:
 
 - **Anything changed or is still not green** — a conflict was integrated, a fix committed, new feedback arrived, or CI was fixed → go around again. Do **not** wait on CodeRabbit again. This is the drive loop: integrate → resolve-feedback → review-loop → push → fix CI → repeat.
-- **All three dimensions clean and the pass produced no changes** — no conflicts/behind-base, CI green, no unresolved feedback (including CodeRabbit's one review) → the PR is **mergeable**. Stop and report. **Do not merge.**
+- **All dimensions clean and the pass produced no changes** — no conflicts/behind-base, CI green, no unresolved feedback (including CodeRabbit's one review), and the description reconciled with the final diff (Step 9c) → the PR is **mergeable**. Stop and report. **Do not merge.**
 
 Guard against infinite loops: if a full pass makes **no** code changes and produces **no** new feedback while all checks are green and the branch is current, you're done. If CI keeps failing the same way, or a conflict keeps re-appearing without converging, stop and surface it.
 
@@ -221,6 +250,7 @@ PR driven to a mergeable state (not merged).
 - `review-loop`: M commit(s) across K cycle(s)
 - CI: green (X check(s))  [or: fixed via fix-ci — F commit(s)]
 - CodeRabbit: initial review resolved (N item(s))  [or: review still pending — not blocking]
+- Description: synced to final diff  [or: already accurate — unchanged]
 - Pushed to <branch>.
 ```
 

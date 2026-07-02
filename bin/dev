@@ -88,4 +88,5 @@ else
   tmux split-window -v -t "${sess}:main" -c "$root"         # pane 3: tests
   tmux select-pane  -t "${sess}:main.1"
 fi
+tmux rename-window -t "$sess" "$root"   # tab shows launch cwd; manual rename also disables auto-rename
 _land "$sess"
