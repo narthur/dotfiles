@@ -2,6 +2,8 @@
 # dev [path] — attach or create a per-repo tmux environment.
 # Resume: an existing session is just reattached. First run builds it from
 # ~/.config/tmux/projects/<repo>.sh if present, else a default 3-pane layout.
+#
+# Docs: Obsidian Fieldnotes → "Tmux Dev Environment & Worktree Automation".
 set -e
 # Land the client on a session: switch if we're already inside tmux, else attach.
 _land() { [ -n "$TMUX" ] && exec tmux switch-client -t "$1" || exec tmux attach -t "$1"; }
@@ -47,6 +49,7 @@ if [[ "$1" == "-w" || "$1" == "--worktree" ]]; then
       git -C "$mroot" worktree add -b "$feat" "$wt"   # new branch off HEAD
     fi
   fi
+  "$HOME/bin/worktree-seed" "$wt"       # gitignored runtime state (env files, wrangler state, deps)
   set -- "$wt"                          # hand off to the normal build/attach path
 fi
 
@@ -77,16 +80,48 @@ if tmux has-session -t "$sess" 2>/dev/null; then
   fi
 fi
 
+# Derive the dev/test watcher commands for a repo so the default layout can start
+# them with no per-project script: package manager from the lockfile, script
+# presence from package.json. Empty output => nothing to start (leave a free pane).
+_pm() {
+  [ -f "$1/bun.lockb" ] && { echo bun; return; }
+  [ -f "$1/pnpm-lock.yaml" ] && { echo pnpm; return; }
+  [ -f "$1/yarn.lock" ] && { echo yarn; return; }
+  echo npm
+}
+_has_script() { node -e "process.exit(require('$1/package.json').scripts?.['$2']?0:1)" 2>/dev/null; }
+_dev_cmd() {   # $1=root $2=pm
+  _has_script "$1" dev || return 0
+  [ "$2" = npm ] && echo "npm run dev" || echo "$2 dev"
+}
+_test_cmd() {  # $1=root $2=pm — vitest/jest watch by default; bun uses its built-in runner
+  [ "$2" = bun ] && { echo "bun test --watch"; return 0; }
+  _has_script "$1" test || return 0
+  [ "$2" = npm ] && echo "npm test" || echo "$2 test"
+}
+
 # Build it. Per-project override wins; else default 3-pane layout.
 proj="$HOME/.config/tmux/projects/$repo.sh"
 if [ -f "$proj" ]; then
   TMUX_SESS="$sess" TMUX_ROOT="$root" source "$proj"
 else
+  # Default layout: claude | dev | test. The launcher derives + starts each
+  # watcher (no per-project script) and stashes it in @cmd so Claude Code can
+  # relocate it into a worktree cwd (see devpanes / the devpanes-reconcile hook).
+  # @role/@cmd are per-pane user options that survive whatever runs in the pane.
+  pm=$(_pm "$root"); dcmd=$(_dev_cmd "$root" "$pm"); tcmd=$(_test_cmd "$root" "$pm")
   tmux new-session  -d -s "$sess" -c "$root" -n main
-  tmux send-keys    -t "${sess}:main" 'claude --continue || claude' C-m  # pane 1: resume, else fresh
-  tmux split-window -h -t "${sess}:main" -c "$root"         # pane 2: dev server
-  tmux split-window -v -t "${sess}:main" -c "$root"         # pane 3: tests
-  tmux select-pane  -t "${sess}:main.1"
+  c=$(tmux display -p -t "${sess}:main" '#{pane_id}')
+  tmux set -p -t "$c" @role claude
+  tmux send-keys    -t "$c" 'claude --continue || claude' C-m   # pane 1: resume, else fresh
+  d=$(tmux split-window -h -t "$c" -c "$root" -P -F '#{pane_id}')   # pane 2: dev server
+  tmux set -p -t "$d" @role dev
+  [ -n "$dcmd" ] && { tmux set -p -t "$d" @cmd "$dcmd"; tmux send-keys -t "$d" "$dcmd" C-m; }
+  e=$(tmux split-window -v -t "$d" -c "$root" -P -F '#{pane_id}')   # pane 3: tests
+  tmux set -p -t "$e" @role test
+  [ -n "$tcmd" ] && { tmux set -p -t "$e" @cmd "$tcmd"; tmux send-keys -t "$e" "$tcmd" C-m; }
+  tmux split-window -v -t "$e" -c "$root"   # pane 4: scratch terminal (unlabeled -> Claude leaves it)
+  tmux select-pane  -t "$c"
 fi
 tmux rename-window -t "$sess" "$root"   # tab shows launch cwd; manual rename also disables auto-rename
 _land "$sess"

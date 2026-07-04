@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# devpanes — report the tmux dev-pane state for the session Claude runs in, so
+# Claude can enforce the invariant: every watcher pane runs in Claude's own cwd.
+#
+#   devpanes         print SELF (Claude's cwd + pane id) then one PANE line per
+#                    sibling pane: PANE|pane_id|title|cwd|current_command
+#   devpanes --gate  exit 0 iff this looks like a dev session (in tmux, >1 pane,
+#                    a watcher running). Used by the SessionStart hook to stay
+#                    silent in every non-dev Claude session.
+#   devpanes --reconcile [cwd]
+#                    relocate this repo's dev-session watcher panes onto <cwd>
+#                    (default $PWD). Resolves the target tmux session from git —
+#                    the worktree's own session, else the main repo's — so it
+#                    works from ANY session, including a background/child one
+#                    with no $TMUX, driving tmux over the default socket. Only
+#                    panes whose cwd differs from the target are moved.
+#
+# ponytail: role is command-sniffed today; once the launcher stamps pane titles
+# via `select-pane -T`, prefer the title and drop the sniff.
+#
+# Docs: Obsidian Fieldnotes → "Tmux Dev Environment & Worktree Automation".
+
+# --reconcile runs BEFORE the tmux-membership gate below: it derives its target
+# session from git, not from being inside a pane, so it must not require $TMUX.
+if [ "${1:-}" = "--reconcile" ]; then
+  command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1 || exit 0
+  target="${2:-$PWD}"
+  wt_root="$(git -C "$target" rev-parse --show-toplevel 2>/dev/null)" || exit 0
+  cdir="$(git -C "$target" rev-parse --git-common-dir 2>/dev/null)" || exit 0
+  case "$cdir" in /*) ;; *) cdir="$(cd "$target" && cd "$cdir" && pwd)" ;; esac
+  main_root="$(cd "$cdir/.." && pwd)"
+  # dev names each session after a git toplevel basename (. : -> _). Prefer the
+  # worktree's own session (dev -w gives each its own); else the main repo's
+  # session (Claude's .claude/worktrees children share it).
+  sess=""
+  for cand in "${wt_root##*/}" "${main_root##*/}"; do
+    cand="${cand//[.:]/_}"
+    tmux has-session -t "$cand" 2>/dev/null && { sess="$cand"; break; }
+  done
+  [ -n "$sess" ] || exit 0
+  # Move each stamped (@cmd) pane whose cwd differs from the worktree root.
+  # Empty-@cmd panes (claude + scratch) are never touched; a pane already at the
+  # target is left exactly as-is (running, or intentionally stopped).
+  while IFS='|' read -r pid cmd cwd; do
+    [ -n "$cmd" ] || continue
+    [ "$cwd" = "$wt_root" ] && continue
+    tmux send-keys -t "$pid" C-c
+    tmux send-keys -t "$pid" "cd $(printf '%q' "$wt_root") && $cmd" C-m
+    echo "reconciled $pid -> $wt_root: $cmd"
+  done < <(tmux list-panes -t "$sess" -F '#{pane_id}|#{@cmd}|#{pane_current_path}')
+  exit 0
+fi
+
+[ -n "${TMUX:-}" ] || { [ "${1:-}" = "--gate" ] && exit 1; echo "devpanes: not in tmux" >&2; exit 1; }
+
+self_pane="${TMUX_PANE:-$(tmux display-message -p '#{pane_id}')}"
+sess="$(tmux display-message -t "$self_pane" -p '#{session_name}' 2>/dev/null)" || exit 1
+
+# A pane is "idle" if it's sitting at a bare shell. Anything else is running
+# something — a dev server, test watcher, whatever it reports as.
+idle_re='^(zsh|bash|sh|fish|tmux|-zsh|-bash|login)$'
+
+# Gate = "is this a dev environment Claude should manage?". Fire if a sibling
+# pane carries a dev/test @role (a `dev`-built managed pane, even when idle and
+# awaiting its first command) OR is running something (a scripted repo's live
+# watcher). A false positive just makes Claude run `devpanes` and no-op; a false
+# negative silently drops the whole behavior — so we lean toward firing.
+if [ "${1:-}" = "--gate" ]; then
+  n=0; hit=1
+  while IFS='|' read -r pid role cmd; do
+    n=$((n + 1))
+    [ "$pid" = "$self_pane" ] && continue
+    case "$role" in dev|test) hit=0 ;; esac
+    [[ "$cmd" =~ $idle_re ]] || hit=0
+  done < <(tmux list-panes -t "$sess" -F '#{pane_id}|#{@role}|#{pane_current_command}')
+  { [ "$n" -gt 1 ] && [ "$hit" -eq 0 ]; } && exit 0 || exit 1
+fi
+
+echo "SELF|$(pwd)|$self_pane"
+tmux list-panes -t "$sess" -F 'PANE|#{pane_id}|#{@role}|#{@cmd}|#{pane_current_path}|#{pane_current_command}'

@@ -44,3 +44,6 @@ source /opt/homebrew/opt/fzf-tab/share/fzf-tab/fzf-tab.zsh
 source <(fzf --zsh)
 source /opt/homebrew/share/zsh-autosuggestions/zsh-autosuggestions.zsh
 eval "$(atuin init zsh)"
+
+# Disable Claude Code mouse click capture (stops accidental prompt submits; keeps scroll + restores terminal link/text selection)
+export CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1

@@ -1,0 +1,39 @@
+#!/usr/bin/env zsh
+# worktree-seed [dir] — copy the gitignored runtime state a linked worktree
+# needs from its main checkout: env files (.env*, .dev.vars*), wrangler local
+# state (D1/KV/R2 sqlite, incl. applied migrations), then install deps if
+# node_modules is missing. Idempotent: never overwrites anything that exists.
+#
+# Docs: Obsidian Fieldnotes → "Tmux Dev Environment & Worktree Automation".
+set -e
+wt="${1:-$PWD}"
+cdir="$(cd "$wt" && git rev-parse --git-common-dir)"
+main="$(cd "$wt" && cd "$cdir/.." && pwd)"
+wt="$(cd "$wt" && git rev-parse --show-toplevel)"
+[ "$main" = "$wt" ] && { echo "worktree-seed: $wt is the main checkout, nothing to do"; exit 0; }
+
+# Env-ish ignored files, preserving relative paths. --directory keeps git from
+# enumerating node_modules file-by-file (single dir entry, filtered out).
+git -C "$main" ls-files --others --ignored --exclude-standard --directory \
+  | grep -Ev '(^|/)node_modules/' \
+  | grep -E '(^|/)(\.env[^/]*|\.dev\.vars[^/]*)$' \
+  | while IFS= read -r f; do
+      [ -e "$wt/$f" ] && continue
+      mkdir -p "$wt/${f:h}" && cp "$main/$f" "$wt/$f" && echo "seeded $f"
+    done
+
+# ponytail: top level + one packages/* level covers my repos; deepen if a repo
+# ever nests workers further down.
+for d in "$main"/.wrangler/state(N/) "$main"/packages/*/.wrangler/state(N/); do
+  rel="${d#$main/}"
+  [ -e "$wt/$rel" ] && continue
+  mkdir -p "$wt/${rel:h}" && cp -R "$d" "$wt/${rel:h}/" && echo "seeded $rel"
+done
+
+if [ -f "$wt/package.json" ] && [ ! -d "$wt/node_modules" ]; then
+  if   [ -f "$wt/pnpm-lock.yaml" ];    then (cd "$wt" && pnpm install --prefer-offline)
+  elif [ -f "$wt/bun.lockb" ];         then (cd "$wt" && bun install)
+  elif [ -f "$wt/yarn.lock" ];         then (cd "$wt" && yarn install)
+  elif [ -f "$wt/package-lock.json" ]; then (cd "$wt" && npm install)
+  fi
+fi
