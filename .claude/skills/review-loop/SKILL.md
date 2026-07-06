@@ -102,7 +102,12 @@ Spawn the review subagents in parallel (single message, multiple Agent tool call
 - The diff: `git diff origin/<base_branch>...HEAD`
 - The contents of `.git/info/review-loop-learnings.md` if it exists, with instructions: "If a finding matches anything in the Dismissed list, do not flag it."
 - The agent's specific focus (one of the six below)
+- The style default below (verbatim)
 - A required output shape: a JSON-like list of `{file, line_range, description, suggested_fix, reasoning}`
+
+**Style default (pass to every review agent):**
+
+> The user prefers an immutable style as the default: `const` over `let`-reassignment, expression forms (`??`/`||` short-circuit chains, ternaries, `map`/`filter`/`reduce`) over accumulate-and-mutate flows. Flag diff-introduced mutable patterns ONLY when they collapse cleanly into an immutable form with identical behavior. Do NOT flag mutability that is clearly more readable (deep nesting to avoid it, unwieldy expression) or measurably faster (hot loops, large-array copies) — those are the legitimate exceptions, not violations.
 
 ### Agent #1 — CLAUDE.md compliance
 - List all relevant `CLAUDE.md` files (root + every directory touched by the diff)
@@ -146,6 +151,7 @@ Look for "code judo" — restructurings that preserve behavior while making the 
 - Feature-specific logic leaking into shared/general-purpose modules, or implementation details leaking through a public API.
 - Casts, optionality, or ad-hoc object shapes that obscure a real invariant — where a typed model would make a chain of conditionals collapse.
 - A thin abstraction that adds indirection without buying clarity.
+- A mutable accumulate-and-reassign flow (per the style default) big enough that restructuring it is invasive — small local cases belong to the always-on agents via the style default, not here.
 
 For each finding, the `suggested_fix` should describe the restructuring in plain language and name what it deletes ("collapse the three `status` string checks into a `Status` union; the `isPending`/`isDone` helpers then disappear"). These are **proposals, not patches** — do not expect them to be auto-applied (see Step 6 and Step 8a routing).
 
