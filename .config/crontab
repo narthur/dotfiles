@@ -4,8 +4,6 @@
 PATH=$HOME/bin:$HOME/.local/bin:/opt/homebrew/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin
 
 */10 * * * * cron-run sync-work-time $HOME/bin/sync-work-time
-0 * * * * cron-run dashlane-sync dcli sync
-0 */6 * * * cron-run sync-claude-tokens $HOME/bin/sync-claude-tokens
 0 */6 * * * cron-run aw-export-snapshot $HOME/bin/aw-export-snapshot
 
 # Moved to launchd (~/.config/launchd/, installed via setup-launchd):
