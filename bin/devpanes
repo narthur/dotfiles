@@ -77,4 +77,15 @@ if [ "${1:-}" = "--gate" ]; then
 fi
 
 echo "SELF|$(pwd)|$self_pane"
-tmux list-panes -t "$sess" -F 'PANE|#{pane_id}|#{@role}|#{@cmd}|#{pane_current_path}|#{pane_current_command}'
+# One PANE line per pane; for stamped (@cmd) watchers, also scrape the pane's
+# scrollback for the URL its server bound to and emit a URL line. The port a
+# watcher lands on isn't predictable (Vite et al. drift off a taken port so
+# concurrent worktrees coexist), but it IS printed in the pane — so read it
+# rather than guess a default. Caveat: only sees URLs still in scrollback.
+while IFS='|' read -r pid role cmd cwd curcmd; do
+  echo "PANE|$pid|$role|$cmd|$cwd|$curcmd"
+  [ -n "$cmd" ] || continue
+  url=$(tmux capture-pane -p -S -200 -t "$pid" 2>/dev/null \
+        | grep -oE 'https?://(localhost|127\.0\.0\.1):[0-9]+' | tail -1)
+  [ -n "$url" ] && echo "URL|$pid|$url"
+done < <(tmux list-panes -t "$sess" -F '#{pane_id}|#{@role}|#{@cmd}|#{pane_current_path}|#{pane_current_command}')

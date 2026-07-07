@@ -28,7 +28,12 @@ wt="$(printf '%s' "$input" | jq -r '.tool_response // empty' \
 [ -n "$wt" ] && [ -d "$wt" ] || exit 0
 
 "$HOME/bin/worktree-seed" "$wt" 2>&1 | sed 's/^/[worktree-seed] /'
-# Pane-following is handled separately, on UserPromptSubmit (devpanes-follow.sh),
-# so the watchers track whichever session you last messaged — not every worktree
-# any background job happens to create.
+
+# Then move this repo's watcher panes onto the just-entered worktree NOW, so a
+# mid-session switch is reflected immediately instead of waiting for the next
+# UserPromptSubmit (devpanes-follow.sh still covers switching sessions between
+# messages). devpanes --reconcile is git-located and tmux-independent, no-ops
+# when there's no dev session / no stamped panes, and only moves panes whose cwd
+# actually differs — so firing here as well as on the next message is harmless.
+"$HOME/bin/devpanes" --reconcile "$wt" 2>&1 | sed 's/^/[devpanes] /' || true
 exit 0
