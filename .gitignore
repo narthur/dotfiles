@@ -8,5 +8,9 @@
 # Personal data tracked in dotprivate instead
 .config/backup-urls/urls.txt
 
+# Pilot skill runtime state (recreated lazily; skill defs live in dotprivate)
+.claude/skills/pilot/dismissed.json
+.claude/skills/pilot/architecture.json
+
 # Added by ggshield
 .cache_ggshield
