@@ -25,7 +25,15 @@ age=$(( now - mtime ))
 # Synthetic input: a lone Command tap. Resets the HID idle timer aw-watcher-afk
 # reads, but is a no-op in virtually every app. Requires Accessibility permission
 # (System Settings > Privacy & Security > Accessibility); silently no-ops without it.
-if [ -x "$CLICLICK" ]; then
+#
+# Skip it inside the bedtime window (21:30-04:00). Faking not-afk there would feed
+# the `abed` do-less goal (bedtime-beemind counts aw-watcher-afk not-afk minutes),
+# recording laptop-active time while Claude runs unattended/phone-driven and you're
+# off the machine. Daytime tracking, the heartbeat, and caffeinate are unaffected.
+hhmm=$((10#$(date +%H%M)))   # 10# so 0930-style leading zeros aren't parsed as octal
+in_bedtime=0
+{ [ "$hhmm" -ge 2130 ] || [ "$hhmm" -lt 400 ]; } && in_bedtime=1
+if [ -x "$CLICLICK" ] && [ "$in_bedtime" -eq 0 ]; then
   "$CLICLICK" kd:cmd ku:cmd >/dev/null 2>&1
 fi
 
