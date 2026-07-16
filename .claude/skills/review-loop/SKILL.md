@@ -97,7 +97,7 @@ Before entering the main loop, check the diff size. Step 0's `context.sh` alread
 
 When in doubt (any logic touched, or borderline size), do NOT take the fast path — run the full loop. The fan-out's value is independent perspectives on substantial code; a typo or a version bump doesn't earn six agents plus scorers.
 
-**Fast path:** still run the Step 4a static-analysis pass (it's a deterministic subprocess, near-zero token cost, and catches secrets/SAST), then spawn **one** review subagent covering the union of Agents #1 (CLAUDE.md), #2 (bugs), #4 (comments), and #5 (security) — pass it the diff, the learnings file, and the style default. Score its findings with **one** batched Haiku scorer (Step 6), then run Steps 7–14 exactly as normal (auto-fix / ask / test / commit / evidence gate / push). Report it as a single fast-path cycle. If that reviewer surfaces anything that changes program logic (an applied fix that isn't doc/config/comment-only), fall back to the full loop from cycle 1 — the fast path's premise (no logic under review) no longer holds.
+**Fast path:** still run the Step 4a static-analysis pass (it's a deterministic subprocess, near-zero token cost, and catches secrets/SAST), then spawn **one** review subagent (`model: sonnet` — a sub-30-line, logic-free diff doesn't earn the top tier) covering the union of Agents #1 (CLAUDE.md), #2 (bugs), #4 (comments), and #5 (security) — pass it the diff, the learnings file, and the style default. Score its findings with **one** batched Haiku scorer (Step 6), then run Steps 7–14 exactly as normal (auto-fix / ask / test / commit / evidence gate / push). Report it as a single fast-path cycle. If that reviewer surfaces anything that changes program logic (an applied fix that isn't doc/config/comment-only), fall back to the full loop from cycle 1 — the fast path's premise (no logic under review) no longer holds.
 
 ## Step 4: Main Loop
 
@@ -163,39 +163,46 @@ Spawn the review subagents in parallel (single message, multiple Agent tool call
 - The style default below (verbatim)
 - A required output shape: a JSON-like list of `{file, line_range, description, suggested_fix, reasoning}`
 
+**Model tier (pass to the Agent tool's `model` param):** don't run the whole fan-out at the session tier — most agents don't need it.
+
+- **Deep-reasoning agents — leave unpinned** (they inherit the session model, so they're Opus when you're on Opus): **#2 bugs**, **#5 security**, **#7 structural**. A missed inference here is a missed real defect; these earn the top tier.
+- **Shallow / bounded agents — pin to `sonnet`**: **#1 CLAUDE.md**, **#3 git history**, **#4 comments**, **#6 test coverage**, **#8 observability**. These are rule-lookup, pattern-match, or bounded-scope tasks where Sonnet returns the same findings for a fraction of the cost.
+
+This only ever pins *down* (Sonnet ≤ a typical Opus session), so it's pure savings on an Opus run and a no-op if the session is already Sonnet. If you're deliberately running the whole review on Haiku, drop the pins — `sonnet` would pin those agents *up*.
+
 **Style default (pass to every review agent):**
 
 > The user prefers an immutable style as the default: `const` over `let`-reassignment, expression forms (`??`/`||` short-circuit chains, ternaries, `map`/`filter`/`reduce`) over accumulate-and-mutate flows. Flag diff-introduced mutable patterns ONLY when they collapse cleanly into an immutable form with identical behavior. Do NOT flag mutability that is clearly more readable (deep nesting to avoid it, unwieldy expression) or measurably faster (hot loops, large-array copies) — those are the legitimate exceptions, not violations.
 
-### Agent #1 — CLAUDE.md compliance
+### Agent #1 — CLAUDE.md compliance `[model: sonnet]`
 - List all relevant `CLAUDE.md` files (root + every directory touched by the diff)
 - Read them
 - Flag changes that violate stated guidance. Skip guidance that's clearly only for code-writing, not code review.
 
-### Agent #2 — Bug scan
+### Agent #2 — Bug scan `[model: session tier — unpinned]`
 - Read only the diff (don't pull in extra context)
 - Look for obvious correctness bugs: off-by-ones, null/undefined access, async race conditions, wrong loop bounds, copy-paste errors, mutation-of-arguments, missing returns, incorrect error handling
 - Ignore false-positive-prone categories: linter/typechecker territory (the Step 4a static-analysis pass owns this), formatting, missing imports
 
-### Agent #3 — Git history
+### Agent #3 — Git history `[model: sonnet]`
 - For each significantly-modified region, run `git log -p -L <range>:<file>` or `git blame` on the original lines
 - Flag changes that revert past intentional fixes (look for "fix" / "revert" / issue refs in the history)
 - Flag changes that ignore conditions that prior commits added on purpose
 
-### Agent #4 — Code comments compliance
+### Agent #4 — Code comments compliance `[model: sonnet]`
 - For each modified file, read existing comments (in-line, doc comments, header)
 - Flag changes that violate explicit guidance in comments (e.g. "// must stay alphabetized", "# do not call from main thread")
 
-### Agent #5 — Security
+### Agent #5 — Security `[model: session tier — unpinned]`
 - Look for: injection risks (SQL, command, template), hardcoded secrets/keys/tokens, missing auth checks on routes/handlers, unsafe deserialization (pickle, eval, yaml.load), path traversal, missing CSRF/CORS where relevant, broken access control
 - Be specific about the vulnerability class and how an attacker triggers it
 
-### Agent #6 — Test coverage
+### Agent #6 — Test coverage `[model: sonnet]`
 - Identify substantive logic changes (not pure refactors, not formatting)
 - Check whether tests in the diff cover them
 - Flag uncovered logic only when the change is non-trivial and the project clearly has a test suite. Skip if the repo has no tests at all.
 
-### Agent #7 — Structural simplification (conditional)
+### Agent #7 — Structural simplification (conditional) `[model: session tier — unpinned]`
 
 **Gating — only spawn this agent when the diff is substantial.** Skip it entirely (don't spawn) when ALL of these hold: total diff < ~150 changed lines, no single file grew past ~800 lines, and the change is a pure bugfix/config/dependency bump. Small and bot-driven PRs don't benefit from structural review and it only adds noise. When in doubt on a borderline diff, spawn it.
 
@@ -213,7 +220,7 @@ Look for "code judo" — restructurings that preserve behavior while making the 
 
 For each finding, the `suggested_fix` should describe the restructuring in plain language and name what it deletes ("collapse the three `status` string checks into a `Status` union; the `isPending`/`isDone` helpers then disappear"). These are **proposals, not patches** — do not expect them to be auto-applied (see Step 6 and Step 8a routing).
 
-### Agent #8 — Observability coverage (conditional)
+### Agent #8 — Observability coverage (conditional) `[model: sonnet]`
 
 **Gating — only spawn this agent when BOTH hold:** the diff is substantial/risky (same threshold as Agent #7), AND the repo already has an observability convention — a logger, metrics client, or error reporter visible in the surrounding files. **Skip entirely** if the project logs nothing; don't invent a convention where none exists. As with #7, when in doubt on a borderline diff, spawn it.
 
