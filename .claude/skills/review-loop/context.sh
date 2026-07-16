@@ -17,8 +17,14 @@ base_branch=$(gh pr view --json baseRefName -q .baseRefName 2>/dev/null || true)
 [ -n "$base_branch" ] && git fetch origin "$base_branch" >/dev/null 2>&1 || true
 
 learnings=""
+learnings_entries=0
 lf=".git/info/review-loop-learnings.md"
-[ -f "$lf" ] && learnings=$(cat "$lf")
+if [ -f "$lf" ]; then
+  learnings=$(cat "$lf")
+  learnings_entries=$(grep -c '^- ' "$lf" 2>/dev/null || echo 0)
+fi
+
+today=$(date +%F)
 
 diffstat=""
 changed_lines=0
@@ -29,7 +35,8 @@ if [ -n "$base_branch" ]; then
 fi
 
 BASE_BRANCH="$base_branch" WORKSPACE="$workspace" LEARNINGS="$learnings" \
-DIFFSTAT="$diffstat" CHANGED_LINES="$changed_lines" python3 - <<'PY'
+DIFFSTAT="$diffstat" CHANGED_LINES="$changed_lines" TODAY="$today" \
+LEARN_ENTRIES="$learnings_entries" python3 - <<'PY'
 import json, os, re, pathlib
 
 def pkg_scripts():
@@ -69,6 +76,8 @@ elif pathlib.Path(".rubocop.yml").exists():
     lint_cmd, lint_fix = "rubocop -A", True
 
 changed = int(os.environ.get("CHANGED_LINES") or 0)
+learn_entries = int(os.environ.get("LEARN_ENTRIES") or 0)
+LEARN_COMPACTION_THRESHOLD = 40  # sweep before the ~50-entry cap so it self-heals early
 print(json.dumps({
     "workspace": os.environ["WORKSPACE"],
     "base_branch": os.environ["BASE_BRANCH"] or None,
@@ -76,6 +85,9 @@ print(json.dumps({
     "lint_cmd": lint_cmd,
     "lint_fix": lint_fix,
     "learnings": os.environ.get("LEARNINGS") or None,
+    "learnings_entries": learn_entries,
+    "learnings_compaction_due": learn_entries >= LEARN_COMPACTION_THRESHOLD,
+    "today": os.environ.get("TODAY"),
     "diff_stat": os.environ.get("DIFFSTAT") or None,
     "changed_lines": changed,
     "fast_path_eligible_by_size": 0 < changed < 30,

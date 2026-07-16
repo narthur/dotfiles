@@ -19,6 +19,7 @@ It emits a single JSON blob and performs Steps 1–3 and the Step 3b *sizing* de
 - `base_branch` — the resolved base; `null` means all three fallbacks failed → ask the user (Step 1)
 - `test_cmd`, `lint_cmd`, `lint_fix` — detected commands (Step 3); `null` test_cmd → warn once per Step 3
 - `learnings` — contents of the learnings file, or `null` (Step 2)
+- `learnings_entries`, `learnings_compaction_due`, `today` — entry count, whether the staleness sweep should run (Step 2a), and today's date for the sweep's age math
 - `diff_stat`, `changed_lines` — branch diff size
 - `fast_path_eligible_by_size` — `true` if the diff is under ~30 changed lines (the *size* half of Step 3b's gate; you still judge whether logic was touched)
 
@@ -73,6 +74,20 @@ If the file exists, hold its contents in mind for the entire session — pass th
 - **Accepted patterns**: types of issues the user has explicitly confirmed matter in this repo
 
 If the file does not exist, that's fine — start with no learnings.
+
+## Step 2a: Learnings Staleness Sweep (triggered)
+
+The learnings file is re-shipped to every review agent on every cycle, so its size is a direct, recurring token cost — and left alone it only grows and goes stale (entries for code that's since been deleted, one-offs no one has hit in months). Age-based pruning (Step 11) doesn't fix this: it evicts *old* entries, not *irrelevant* ones. This sweep evicts by **relevance** and runs automatically when the file gets big enough to be worth it.
+
+**Trigger:** run this sweep only when Step 0's `learnings_compaction_due` is `true` (the file has ≥40 entries — below that, the cost isn't worth a subagent). It runs **once, here at load time**, before the review agents, so the entire run uses the slimmed file. Skip it entirely otherwise.
+
+**How:** spawn **one** compaction subagent (`model: sonnet` — bounded editing task). Give it the learnings file contents, `today` (from Step 0), and the repo's tracked file list (`git ls-files`). Instruct it to rewrite the file, evicting in this order and reporting counts:
+
+1. **Dead-path eviction** — drop any non-PATTERN entry that cites `(file: <path>)` where `<path>` is not in `git ls-files`. The code it was about is gone; the note is dead weight. (PATTERN entries are path-agnostic rules — never dead-path-evict them.)
+2. **Stale one-off eviction** — drop non-PATTERN entries whose date is more than **90 days** before `today`. A one-off that hasn't been re-confirmed in a quarter (see the freshness rule in Step 11 — active entries get their date bumped when they actually match) has aged out of relevance. PATTERN entries are exempt; they're the durable rules that justify the file's existence.
+3. **Dedup + promote** — apply Step 11's dedup and "promote 3+ near-duplicates into one PATTERN" rules across the whole file, not just against the newest entry.
+
+Then it rewrites the file (same two-section structure) and returns a one-line summary: `dropped N (D dead-path, S stale), promoted P, now E entries`. Surface that line in the final report (Step 14). If the sweep can't run (subagent unavailable), fall back to Step 11's age-based cap — don't block the review.
 
 ## Step 3: Detect Test & Lint Commands
 
@@ -386,14 +401,14 @@ The learnings file is loaded into every future cycle's agent prompts, so its siz
 
 **Before adding a new entry, dedup.** Read the file. If a similar entry already exists:
 
-- **Same topic, same direction** (e.g. "don't flag X in this repo" already covers what you'd write) → do nothing. Just refresh the date on the existing entry if you want to mark it as still active.
+- **Same topic, same direction** (e.g. "don't flag X in this repo" already covers what you'd write) → don't add a duplicate, but **do bump the existing entry's date to today**. This is the freshness signal the Step 2a sweep's 90-day horizon depends on: an entry that keeps matching stays fresh and survives; one that never re-matches ages out and gets evicted. Skipping the bump would let live entries look stale.
 - **Same topic, narrower scope** (your new entry is a specific instance of an existing PATTERN) → don't add it. The PATTERN already covers it.
 - **Same topic, broader scope** (your new entry generalises 2+ existing entries) → replace the narrower entries with one PATTERN entry. Note the consolidation date.
 - **Different topic** → add a new entry.
 
 **Promote on repetition.** If you've added three or more narrow entries that share a theme, replace them with one PATTERN entry that captures the rule. Don't let the file accumulate near-duplicates.
 
-**Cap at ~50 entries.** When exceeded, prune in this order:
+**Cap at ~50 entries.** The primary maintenance mechanism is the **Step 2a staleness sweep** — relevance-based eviction (dead paths, unused one-offs) triggered automatically at ≥40 entries, which normally keeps the file well under the cap. This age-based cap is the **fallback** for the rare case the file still exceeds ~50 (e.g. the sweep couldn't run). When exceeded, prune in this order:
 1. Oldest non-PATTERN dismissed entries (the specific one-off skips).
 2. Oldest non-PATTERN accepted entries.
 3. PATTERN entries last, and only if redundant with a newer one.
@@ -503,6 +518,8 @@ Auto-applied low-risk 50-79 (no ask):
 - <list with one-line summary each — visible to the user since they didn't see the ask>
 
 Static-analysis (Step 4a): autofixed <count>; security/secret/SAST findings <resolved/surfaced>; quality residue by tool: <tool=N, …>; skipped tools: <list or none>.
+
+Learnings sweep (Step 2a): <ran — dropped N (D dead-path, S stale), promoted P, now E entries | not triggered — <E> entries>.
 
 Remaining 50-79 findings the user skipped or didn't address:
 - <list>
