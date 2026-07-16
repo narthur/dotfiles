@@ -69,6 +69,17 @@ Search for project-standard test and lint commands. Check (in this order):
 
 Record what you found. If no test command can be detected, warn the user once at the start: "No test command detected — fix-induced regressions won't be caught between cycles." Same for lint.
 
+## Step 3b: Trivial-diff fast path
+
+Before entering the main loop, size the full branch diff (`git diff --stat origin/<base_branch>...HEAD`). If **all** of these hold, skip the 6-way fan-out and run a **single combined reviewer** instead:
+
+- fewer than ~30 changed lines, and
+- no single hunk touches program logic — the diff is confined to docs, comments, config/manifest values, dependency-version bumps, or string/copy edits.
+
+When in doubt (any logic touched, or borderline size), do NOT take the fast path — run the full loop. The fan-out's value is independent perspectives on substantial code; a typo or a version bump doesn't earn six agents plus scorers.
+
+**Fast path:** still run the Step 4a static-analysis pass (it's a deterministic subprocess, near-zero token cost, and catches secrets/SAST), then spawn **one** review subagent covering the union of Agents #1 (CLAUDE.md), #2 (bugs), #4 (comments), and #5 (security) — pass it the diff, the learnings file, and the style default. Score its findings with **one** batched Haiku scorer (Step 6), then run Steps 7–14 exactly as normal (auto-fix / ask / test / commit / evidence gate / push). Report it as a single fast-path cycle. If that reviewer surfaces anything that changes program logic (an applied fix that isn't doc/config/comment-only), fall back to the full loop from cycle 1 — the fast path's premise (no logic under review) no longer holds.
+
 ## Step 4: Main Loop
 
 ```
@@ -77,7 +88,11 @@ max_cycles = 3
 
 while cycle <= max_cycles:
     a. Run the static-analysis pass (Step 4a below): the static-analysis skill (--diff --fix) plus the project linter --fix if detected. Stage what changed; collect the deterministic tool findings.
-    b. Run 6 parallel review subagents (Step 5). Each returns findings + suggested fixes.
+    b. Run 6 parallel review subagents (Step 5) over this cycle's REVIEW SCOPE (see below). Each returns findings + suggested fixes.
+       REVIEW SCOPE:
+         - cycle 1: the full branch diff, `git diff origin/<base_branch>...HEAD` — nothing has been reviewed yet.
+         - cycles 2+: only the changes THIS loop has made since it last reviewed, i.e. `git diff <sha-at-end-of-prev-cycle>...HEAD` (the fix commit(s) from the previous cycle). The rest of the branch was already reviewed in cycle 1; re-reviewing it re-pays the whole cost for code that didn't change. Reviewing the fix delta still catches fix-induced regressions, which is the only new risk a later cycle introduces.
+       Record the current HEAD sha at the end of each cycle (Step 10) so the next cycle can diff against it.
     c. For each finding, spawn a Haiku scorer subagent (Step 6). Score 0-100.
     d. Bucket by score AND risk profile (Step 8a):
        - structural (Agent #7), any score → ask-user (never auto-apply)
@@ -123,7 +138,7 @@ It detects the repo's languages/configs and runs the curated analyzer set (ESLin
 
 Spawn the review subagents in parallel (single message, multiple Agent tool calls). Agents #1–#6 always run. Agents #7 (structural simplification) and #8 (observability coverage) run **only on substantial diffs** — see each agent's gating rule. Each agent must receive:
 
-- The diff: `git diff origin/<base_branch>...HEAD`
+- The diff for **this cycle's review scope** (Step 4 loop, step b): `git diff origin/<base_branch>...HEAD` on cycle 1, or `git diff <prev-cycle-sha>...HEAD` on cycles 2+. Where an agent below says "the diff", it means this cycle's scope. (Agents #3/#7/#8 still read *beyond* the diff as their rules describe — the scope only bounds what's treated as "changed and under review", not what context they may open.)
 - The contents of `.git/info/review-loop-learnings.md` if it exists, with instructions: "If a finding matches anything in the Dismissed list, do not flag it."
 - The agent's specific focus (one of the six below)
 - The style default below (verbatim)
@@ -195,13 +210,17 @@ Findings here are verifiable (the failure path either surfaces something or it d
 
 ## Step 6: Haiku Scoring
 
-For each finding from Step 5, spawn a Haiku subagent (in parallel where possible) with:
+**Score per review agent, not per finding.** Spawn **one Haiku scorer subagent per review agent that returned findings** (so the scorers run in parallel, one alongside each finder). Each scorer receives that agent's *entire* finding-list and scores every finding in a single pass. Do NOT spawn one scorer per finding — that re-ships the diff once per finding and is the loop's biggest token sink. If a single agent returned an unusually large batch (>~12 findings), split it across two scorer calls to keep each pass careful, but never go back to one-per-finding.
 
-- The original diff
+The scorers stay independent from the finders (a fresh context that didn't generate the findings), so the quality intent — an independent rater — is preserved; you're only collapsing redundant diff copies.
+
+Give each scorer:
+
+- **Only the diff hunks the findings reference** — not the whole diff. Slice the relevant `git diff` hunks for the files/line-ranges in this agent's findings. (For Agent #3/#7/#8 findings that cite code beyond the diff, include that cited region too.)
 - The relevant `CLAUDE.md` paths
-- The finding (`{file, line_range, description, reasoning}`)
+- The finding-list (each `{file, line_range, description, reasoning}`)
 - The learnings file contents
-- This rubric (verbatim):
+- This rubric (verbatim), instructing it to **return one integer per finding, keyed by finding**, scoring each independently of the others in the batch:
 
 > Score this finding 0-100 for confidence that it is a real, actionable issue in this PR.
 >
@@ -211,10 +230,10 @@ For each finding from Step 5, spawn a Haiku subagent (in parallel where possible
 > - **75**: Highly confident. Verified real, likely to bite in practice. Important to functionality, or directly named in CLAUDE.md.
 > - **100**: Absolutely certain. Verified, will hit frequently, evidence is direct.
 >
-> If this finding matches anything in the learnings file's Dismissed section, score 0.
-> If it matches an Accepted pattern, raise your score by 10 (cap at 100).
+> If a finding matches anything in the learnings file's Dismissed section, score it 0.
+> If it matches an Accepted pattern, raise that finding's score by 10 (cap at 100).
 >
-> Return only an integer.
+> Return a score for every finding in the batch, each keyed to its finding (e.g. by index or file:line), as an integer 0-100. Score each finding independently — do not let one finding's score anchor another's.
 
 **Structural findings (Agent #7) score differently.** The rubric above is for verifiable defects; a simplification is subjective and will never be "verified true," so it would score low and get filtered out unfairly. For Agent #7 findings, score on *value vs. risk* instead: how much complexity the restructuring deletes (a whole layer/branch disappearing scores high; a cosmetic tidy scores low) balanced against how invasive the refactor is. Regardless of the resulting score, structural findings are **always routed to ask-user** (Step 8a) and are never auto-applied — the score only sets their ordering and whether they're surfaced as a blocker vs. a nit in the final report (Step 14).
 
@@ -308,6 +327,8 @@ but commit <branch> -m "fix(review): cycle <N> — <short summary>"
 ```
 
 Summary should mention the agent categories whose findings drove the cycle (e.g. "security + bug scan + CLAUDE.md").
+
+After committing, record this commit's sha (`git rev-parse HEAD`) as the previous-cycle marker so the next cycle's review scope (Step 4 loop, step b) diffs against it. If the cycle made no commit (nothing to fix), the marker stays where it was.
 
 ## Step 11: Capture Learnings
 
