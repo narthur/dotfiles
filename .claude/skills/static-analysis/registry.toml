@@ -1,0 +1,231 @@
+# Static-analysis tool registry. One table per tool.
+# Fields:
+#   exts        list of file extensions (no dot) that make the tool applicable.
+#               Special value ["*"] = runs on all repos (secrets/SAST).
+#   configs     glob(s); if any repo file's basename matches, tool is applicable
+#               even without a matching ext, and (within a group) wins selection.
+#   group       overlap group; at most ONE tool per group runs.
+#   priority    within a group, highest priority among config-matched tools wins.
+#   default     within a group, the fallback when no member has a config present.
+#   runners     ordered runner specs; first whose base command exists is used.
+#               kinds: path:BIN  npx:PKG  bunx:PKG  uvx:PKG  pipx:PKG  go:PKG
+#   cmd         args appended after the resolved runner base. "{target}" expands
+#               to the path/file list.
+#   target      how {target} is filled: dir | files | dockerfiles | workflows
+#   count       parser key (see COUNTERS in static-analysis.py); "" = exit+lines
+#   fix         optional args for --fix (autofix), "{target}" expands as above
+#   accepts_files  true if the tool can be given an explicit changed-file list
+#                  (used by --diff/--staged); false => always whole-repo
+#   ondemand    true => only runs with its config present or an explicit flag
+#   needs       optional gate: "rails" (Gemfile mentions rails)
+#   install_hint  shown when the tool is skipped (not installed, no ephemeral run)
+
+# ---- JS/TS linters (overlap group: one wins by repo config) ----
+[biome]
+group = "js-lint"
+priority = 30
+exts = ["ts","tsx","js","jsx","mjs","cjs","json","jsonc","svelte","astro","vue"]
+configs = ["biome.json","biome.jsonc"]
+runners = ["npx:@biomejs/biome", "bunx:@biomejs/biome", "path:biome"]
+cmd = ["check", "--reporter=json", "{target}"]
+fix = ["check", "--write", "{target}"]
+target = "dir"
+count = "biome"
+accepts_files = true
+install_hint = "npm i -D @biomejs/biome"
+
+[eslint]
+group = "js-lint"
+priority = 20
+exts = ["ts","tsx","js","jsx","mjs","cjs","svelte","astro","vue"]
+configs = ["eslint.config.js","eslint.config.mjs","eslint.config.cjs","eslint.config.ts",".eslintrc",".eslintrc.js",".eslintrc.cjs",".eslintrc.json",".eslintrc.yml",".eslintrc.yaml"]
+runners = ["npx:eslint", "bunx:eslint", "path:eslint"]
+cmd = ["-f", "json", "{target}"]
+fix = ["--fix", "{target}"]
+target = "dir"
+count = "eslint"
+accepts_files = true
+install_hint = "npm i -D eslint"
+
+[oxlint]
+group = "js-lint"
+priority = 0
+default = true
+exts = ["ts","tsx","js","jsx","mjs","cjs","vue","astro","svelte"]
+runners = ["npx:oxlint", "bunx:oxlint", "path:oxlint"]
+cmd = ["-f", "json", "{target}"]
+fix = ["--fix", "{target}"]
+target = "dir"
+count = "oxlint"
+accepts_files = true
+install_hint = "npm i -D oxlint"
+
+# ---- Ruby ----
+[rubocop]
+exts = ["rb","rake","erb","gemspec"]
+configs = [".rubocop.yml","Gemfile"]
+runners = ["path:rubocop"]
+cmd = ["--format", "json", "{target}"]
+fix = ["-a", "{target}"]
+target = "dir"
+count = "rubocop"
+accepts_files = true
+install_hint = "gem install rubocop  (or add to Gemfile)"
+
+[brakeman]
+exts = ["rb"]
+needs = "rails"
+runners = ["path:brakeman"]
+cmd = ["-f", "json", "-q", "--no-progress", "."]
+target = "dir"
+count = "brakeman"
+accepts_files = false
+install_hint = "gem install brakeman"
+
+# ---- Python ----
+[ruff]
+exts = ["py","pyi","ipynb"]
+runners = ["path:ruff", "uvx:ruff"]
+cmd = ["check", "--output-format", "json", "{target}"]
+fix = ["check", "--fix", "{target}"]
+target = "dir"
+count = "ruff"
+accepts_files = true
+install_hint = "uv tool install ruff"
+
+# ---- Go ----
+[golangci-lint]
+exts = ["go"]
+runners = ["path:golangci-lint"]
+cmd = ["run", "--output.json.path=stdout", "./..."]
+target = "dir"
+count = "golangci"
+accepts_files = false
+install_hint = "brew install golangci-lint"
+
+[govulncheck]
+exts = ["go"]
+runners = ["path:govulncheck", "go:golang.org/x/vuln/cmd/govulncheck@latest"]
+cmd = ["-json", "./..."]
+target = "dir"
+count = "govulncheck"
+accepts_files = false
+install_hint = "go install golang.org/x/vuln/cmd/govulncheck@latest"
+
+# ---- Styles ----
+[stylelint]
+exts = ["css","scss","sass","less"]
+needs_config = true
+configs = [".stylelintrc",".stylelintrc.json",".stylelintrc.js",".stylelintrc.cjs",".stylelintrc.yml","stylelint.config.js","stylelint.config.cjs","stylelint.config.mjs"]
+runners = ["npx:stylelint", "bunx:stylelint", "path:stylelint"]
+cmd = ["--formatter", "json", "{target}"]
+fix = ["--fix", "{target}"]
+target = "styleglob"
+count = "stylelint"
+accepts_files = true
+install_hint = "npm i -D stylelint"
+
+# ---- Markup / docs ----
+[markdownlint]
+exts = ["md","markdown"]
+runners = ["npx:markdownlint-cli2", "bunx:markdownlint-cli2", "path:markdownlint-cli2"]
+cmd = ["{target}"]
+fix = ["--fix", "{target}"]
+target = "mdglob"
+count = ""
+accepts_files = true
+install_hint = "npm i -g markdownlint-cli2"
+
+[htmlhint]
+exts = ["html","htm"]
+runners = ["npx:htmlhint", "bunx:htmlhint", "path:htmlhint"]
+cmd = ["--format", "json", "{target}"]
+target = "files"
+count = "generic_json"
+accepts_files = true
+install_hint = "npm i -g htmlhint"
+
+# ---- Config / CI ----
+[yamllint]
+exts = ["yml","yaml"]
+runners = ["path:yamllint", "uvx:yamllint"]
+cmd = ["-d", "relaxed", "--no-warnings", "-f", "parsable", "{target}"]
+target = "files"
+count = ""
+accepts_files = true
+install_hint = "uv tool install yamllint"
+
+[actionlint]
+exts = ["yml","yaml"]
+configs = [".github"]
+runners = ["path:actionlint"]
+cmd = []
+target = "none"
+count = ""
+accepts_files = false
+diff_gate = ".github/"
+install_hint = "brew install actionlint"
+
+[zizmor]
+exts = ["yml","yaml"]
+configs = [".github"]
+runners = ["path:zizmor", "uvx:zizmor"]
+cmd = ["--format", "json", ".github/workflows"]
+target = "none"
+count = "zizmor"
+accepts_files = false
+diff_gate = ".github/"
+install_hint = "uv tool install zizmor"
+
+# ---- SQL (on-demand) ----
+[sqlfluff]
+exts = ["sql"]
+ondemand = true
+configs = [".sqlfluff"]
+runners = ["path:sqlfluff", "uvx:sqlfluff"]
+cmd = ["lint", "--format", "json", "{target}"]
+fix = ["fix", "--force", "{target}"]
+target = "dir"
+count = "sqlfluff"
+accepts_files = true
+install_hint = "uv tool install sqlfluff"
+
+# ---- Shell ----
+[shellcheck]
+exts = ["sh","bash","ksh","dash"]
+runners = ["path:shellcheck"]
+cmd = ["-f", "json", "{target}"]
+target = "files"
+count = "generic_json"
+accepts_files = true
+install_hint = "brew install shellcheck"
+
+# ---- Docker ----
+[hadolint]
+exts = []
+configs = ["Dockerfile"]
+runners = ["path:hadolint"]
+cmd = ["-f", "json", "{target}"]
+target = "dockerfiles"
+count = "generic_json"
+accepts_files = true
+install_hint = "brew install hadolint"
+
+# ---- All-files: secrets + SAST ----
+[gitleaks]
+exts = ["*"]
+runners = ["path:gitleaks"]
+cmd = ["dir", ".", "--report-format", "json", "--report-path", "{report}", "--no-banner", "--exit-code", "0"]
+target = "none"
+count = "gitleaks"
+accepts_files = false
+install_hint = "brew install gitleaks"
+
+[semgrep]
+exts = ["*"]
+runners = ["path:semgrep", "uvx:semgrep", "pipx:semgrep"]
+cmd = ["--config", "auto", "--json", "--quiet", "--error", "{target}"]
+target = "dir"
+count = "semgrep"
+accepts_files = true
+install_hint = "uv tool install semgrep"

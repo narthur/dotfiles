@@ -1,6 +1,6 @@
 ---
 name: review-loop
-description: "Pre-push Claude-driven code review loop with auto-fix. Runs up to 8 parallel review agents (CLAUDE.md, bugs, git history, code comments, security, test coverage, and — on substantial diffs — structural simplification and observability coverage) per cycle, scores each finding 0-100 with an independent Haiku rater, auto-fixes ≥80 findings, asks about 50-79 in a single batch per cycle, and stores per-repo learnings in .git/info/. Replaces CodeRabbit for local review. Invoke this proactively and by default before any push and whenever finishing or cleaning up a chunk of code changes — do not ask the user for permission first and do not look for reasons to skip it. Prefer running it over not running it."
+description: "Pre-push Claude-driven code review loop with auto-fix. Runs up to 8 parallel review agents (CLAUDE.md, bugs, git history, code comments, security, test coverage, and — on substantial diffs — structural simplification and observability coverage) per cycle, scores each finding 0-100 with an independent Haiku rater, auto-fixes ≥80 findings, asks about 50-79 in a single batch per cycle, and stores per-repo learnings in .git/info/. Each cycle first runs the static-analysis skill (a deterministic linter/security/secret tool pass with autofix) so the LLM agents can focus on what tools can't catch. On clean exit, a final manual-testing evidence gate verifies the PR carries proof the changed functionality actually works — and produces that proof itself (local dev servers + playwright + surge-image-upload) when missing. Replaces CodeRabbit for local review. Invoke this proactively and by default before any push and whenever finishing or cleaning up a chunk of code changes — do not ask the user for permission first and do not look for reasons to skip it. Prefer running it over not running it."
 ---
 
 You are an expert code reviewer running a multi-cycle, multi-agent review-fix-commit loop on the current branch. Your job is to deliver CodeRabbit-equivalent (or better) review depth using Claude subagents, apply high-confidence fixes automatically, batch ambiguous fixes for user approval, and accumulate per-repo learnings over time.
@@ -57,6 +57,8 @@ If the file does not exist, that's fine — start with no learnings.
 
 ## Step 3: Detect Test & Lint Commands
 
+The broad analyzer set (linters, security, secrets) is handled deterministically by the static-analysis pass (Step 4a) — you don't need to detect per-tool commands for it. What you're detecting here is the **test** command and any **project-specific** lint/format/typecheck script (Prettier, `tsc`, a custom `npm run lint`) that static-analysis doesn't replicate and that runs alongside it.
+
 Search for project-standard test and lint commands. Check (in this order):
 
 1. Root `CLAUDE.md` — look for explicit "test command" / "lint command" instructions
@@ -74,7 +76,7 @@ cycle = 1
 max_cycles = 3
 
 while cycle <= max_cycles:
-    a. Run linter --fix (if detected). Stage and remember which files changed.
+    a. Run the static-analysis pass (Step 4a below): the static-analysis skill (--diff --fix) plus the project linter --fix if detected. Stage what changed; collect the deterministic tool findings.
     b. Run 6 parallel review subagents (Step 5). Each returns findings + suggested fixes.
     c. For each finding, spawn a Haiku scorer subagent (Step 6). Score 0-100.
     d. Bucket by score AND risk profile (Step 8a):
@@ -83,7 +85,7 @@ while cycle <= max_cycles:
        - 50-79 + low-risk                 → auto-fix (no ask)
        - 50-79 + high-risk                → ask-user
        - <50                              → skip
-    e. If auto-fix bucket is empty AND no lint --fix changes this cycle → EXIT LOOP (clean).
+    e. If auto-fix bucket is empty AND the static-analysis pass made no changes and surfaced no unresolved security/secret/SAST findings → EXIT LOOP (clean).
     f. Apply auto-fix bucket via Edit (Step 7).
     g. If ask-user bucket is non-empty, batch them into one AskUserQuestion (Step 8b). Apply approved fixes.
     h. If test command detected, run tests (Step 9). On failure → STOP LOOP, report.
@@ -94,6 +96,28 @@ while cycle <= max_cycles:
 If cycle > max_cycles:
     Report: "Reached cycle limit (3). Remaining findings below."
 ```
+
+On a clean loop exit, run the manual-testing evidence gate (Step 13) before the final report/auto-push (Step 14). If the gate's testing uncovers a real issue, fix + commit + restart the loop from cycle 1 (see Step 13c).
+
+## Step 4a: Static-analysis pass (deterministic tools)
+
+Loop step (a). Runs at the top of every cycle, before the review agents. This is the deterministic counterpart to the LLM review — the review agents (Step 5) deliberately ignore linter/typechecker territory because this pass owns it.
+
+**1. Run the static-analysis skill, scoped to the diff, with autofix:**
+
+```bash
+python3 ~/.claude/skills/static-analysis/static-analysis.py . --diff --fix --exit-zero
+```
+
+It detects the repo's languages/configs and runs the curated analyzer set (ESLint/Biome/oxlint, Ruff, RuboCop, Stylelint, golangci-lint, govulncheck, gitleaks, Semgrep, actionlint, zizmor, markdownlint, hadolint, shellcheck, …), applies safe autofixers, and writes `.static-analysis/summary.json` + `report.md` (git-ignored — never appears in the diff). Stage whatever the autofixers changed.
+
+**2. Then run the project linter --fix if one was detected** (Step 3) — it catches formatting (Prettier), type-checking (tsc), and custom lint rules the analyzer set doesn't replicate. Stage those changes too.
+
+**3. Read `.static-analysis/summary.json` and fold the *remaining* (non-autofixed) findings into the cycle:**
+
+- **Security / secrets / SAST** — findings from `gitleaks`, `semgrep`, `brakeman`, `govulncheck`, `zizmor`: treat each as a high-confidence (≥80) finding. **Do not Haiku-score them** — the tool already verified them. Attempt a fix and route through Step 7 / Step 8a exactly like a review-agent finding (the risk profile still decides auto-apply vs. ask). These are the ones that matter.
+- **Quality / style residue** — anything the autofixers couldn't fix: don't run it through the agents or Haiku (deterministic, mostly low-value). Carry the per-tool counts into the final report (Step 14).
+- **Skipped tools** — if the run skipped analyzers (not installed, no ephemeral runner) and you can prompt the user (main interactive agent, not a headless subagent), offer once to install them (use each entry's `install_hint`) and re-run. In a subagent run, just note the skips in the report; never block.
 
 ## Step 5: Parallel Review Agents
 
@@ -117,7 +141,7 @@ Spawn the review subagents in parallel (single message, multiple Agent tool call
 ### Agent #2 — Bug scan
 - Read only the diff (don't pull in extra context)
 - Look for obvious correctness bugs: off-by-ones, null/undefined access, async race conditions, wrong loop bounds, copy-paste errors, mutation-of-arguments, missing returns, incorrect error handling
-- Ignore false-positive-prone categories: linter/typechecker territory, formatting, missing imports
+- Ignore false-positive-prone categories: linter/typechecker territory (the Step 4a static-analysis pass owns this), formatting, missing imports
 
 ### Agent #3 — Git history
 - For each significantly-modified region, run `git log -p -L <range>:<file>` or `git blame` on the original lines
@@ -192,7 +216,7 @@ For each finding from Step 5, spawn a Haiku subagent (in parallel where possible
 >
 > Return only an integer.
 
-**Structural findings (Agent #7) score differently.** The rubric above is for verifiable defects; a simplification is subjective and will never be "verified true," so it would score low and get filtered out unfairly. For Agent #7 findings, score on *value vs. risk* instead: how much complexity the restructuring deletes (a whole layer/branch disappearing scores high; a cosmetic tidy scores low) balanced against how invasive the refactor is. Regardless of the resulting score, structural findings are **always routed to ask-user** (Step 8a) and are never auto-applied — the score only sets their ordering and whether they're surfaced as a blocker vs. a nit in the final report (Step 13).
+**Structural findings (Agent #7) score differently.** The rubric above is for verifiable defects; a simplification is subjective and will never be "verified true," so it would score low and get filtered out unfairly. For Agent #7 findings, score on *value vs. risk* instead: how much complexity the restructuring deletes (a whole layer/branch disappearing scores high; a cosmetic tidy scores low) balanced against how invasive the refactor is. Regardless of the resulting score, structural findings are **always routed to ask-user** (Step 8a) and are never auto-applied — the score only sets their ordering and whether they're surfaced as a blocker vs. a nit in the final report (Step 14).
 
 ## Step 7: Apply Auto-Fixes (≥80)
 
@@ -339,11 +363,57 @@ If the user says "remember X", "always check Y here", "this repo cares about Z",
 
 If the user explicitly says "remember globally" or "remember for all repos", offer to also write to `~/.claude/projects/-home-narthur/memory/` as a separate auto-memory entry.
 
-## Step 13: Final Report and Auto-Push
+## Step 13: Manual-Testing Evidence Gate
+
+Runs **only after everything else passes** — a clean loop exit (auto-fix bucket empty, tests green, no unresolved high-risk findings). It is the last gate before Step 14's report/auto-push.
+
+**Skip entirely** (say so in one line in the final report) when either:
+
+- **No PR exists** for the branch (`gh pr view` fails) — there's nowhere to check or attach evidence.
+- **The diff changes no runtime functionality** — docs, comments, config, dependency bumps, CI-only changes, or pure refactors already pinned by tests. The gate is about *changed behavior*, and when in doubt, run it.
+
+### 13a: Check the PR for existing evidence
+
+Read the PR body and comments:
+
+```bash
+gh pr view --json body,comments
+```
+
+**Sufficient evidence** = artifacts demonstrating this PR's changed functionality actually working: screenshots/recordings of the changed UI states, command transcripts with real output (curl against a dev server, CLI invocations), or test-session notes with concrete inputs and observed outputs. A bare claim ("tested locally ✅") is **not** sufficient, and evidence must cover the *changes in this PR*, not the app generally. Evidence found → gate passes; go to Step 14.
+
+### 13b: Do the manual testing yourself
+
+No sufficient evidence → produce it:
+
+1. Stand up whatever the changes need locally, per repo convention (check CLAUDE.md / package.json scripts — e.g. `pnpm dev`; seed env/data as the repo's docs describe).
+2. Exercise **each functional change the PR makes** — not a generic smoke test:
+   - UI changes → the **playwright** skill: drive the changed flows and `playwright-cli screenshot` at the states that prove the new behavior.
+   - API/CLI changes → real requests/invocations; capture the command and the actual response verbatim.
+3. Save evidence as you go — screenshots to the scratchpad, transcripts verbatim.
+
+### 13c: Outcome
+
+**Everything works** → publish the evidence to the PR:
+
+1. Images → public URLs via the **surge-image-upload** skill: `~/.claude/skills/surge-image-upload/upload.sh <files>`.
+2. Post one PR comment (`gh pr comment`) with a `## Manual testing evidence` section: what was tested and how, embedded screenshots, transcripts in fenced blocks, and the environment (local dev, commit SHA tested).
+3. Gate passes → Step 14.
+
+**Testing finds a real issue** (broken behavior, error, regression):
+
+1. **Stop the review immediately** — post no evidence, push nothing.
+2. Fix the issue and commit it (`fix(<scope>): <description>`).
+3. **Restart the loop from Step 4, cycle 1** — the fix is new, unreviewed code and goes through the full review before the gate runs again.
+4. Cap gate-triggered restarts at **2 per invocation**. At the cap, stop, report the unresolved issues, and don't auto-push.
+
+**Can't test** (required secret/service unavailable, dev environment broken) → don't fake or hand-wave it: treat the gate as **not passed**, skip the auto-push, and report exactly what was attempted, what blocked it, and what the user needs to provide.
+
+## Step 14: Final Report and Auto-Push
 
 ### When to auto-push
 
-If the loop exits **clean** (auto-fix bucket empty, no test failures, no skipped high-risk findings), push automatically:
+If the loop exits **clean** (auto-fix bucket empty, no test failures, no skipped high-risk findings) **and the Step 13 gate passed or was skipped**, push automatically:
 
 - **Standard git:** `git push`
 - **GitButler workspace:** `but push <branch-name>`
@@ -357,6 +427,7 @@ If the push fails (network error, branch protection, missing upstream, non-fast-
 - **The user explicitly skipped a 50-79 finding without "remember as dismissal pattern".** That's an unresolved ambiguity the user might still want to think about; let them push when ready.
 - **No upstream configured for the branch.** Don't infer one; report and stop.
 - **Branch is the repo's default branch (main/master).** Never auto-push to main; surface the unusual state instead.
+- **The Step 13 evidence gate is blocked or hit its restart cap.** Untested (or known-broken) functionality doesn't get pushed on your say-so.
 
 When skipping the auto-push, end the report with `Next step: <reason>; push when ready.` Don't pretend it was a clean exit.
 
@@ -364,6 +435,7 @@ When skipping the auto-push, end the report with `Next step: <reason>; push when
 
 ```
 review-loop complete: <N> cycle(s), <M> commits, pushed: <yes|no — reason>.
+Evidence gate: <passed — existing evidence | passed — evidence captured & posted (link) | skipped — <no PR | no functional changes> | blocked — <reason>>.
 
 Cycle 1: <summary>
 Cycle 2: <summary>
@@ -376,6 +448,8 @@ Structural proposals (Agent #7 — not applied, your call):
 
 Auto-applied low-risk 50-79 (no ask):
 - <list with one-line summary each — visible to the user since they didn't see the ask>
+
+Static-analysis (Step 4a): autofixed <count>; security/secret/SAST findings <resolved/surfaced>; quality residue by tool: <tool=N, …>; skipped tools: <list or none>.
 
 Remaining 50-79 findings the user skipped or didn't address:
 - <list>
