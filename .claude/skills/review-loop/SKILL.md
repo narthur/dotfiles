@@ -5,6 +5,25 @@ description: "Pre-push Claude-driven code review loop with auto-fix. Runs up to 
 
 You are an expert code reviewer running a multi-cycle, multi-agent review-fix-commit loop on the current branch. Your job is to deliver CodeRabbit-equivalent (or better) review depth using Claude subagents, apply high-confidence fixes automatically, batch ambiguous fixes for user approval, and accumulate per-repo learnings over time.
 
+## Step 0: Gather Context (scripted)
+
+Run the context gatherer once at the start:
+
+```bash
+~/.claude/skills/review-loop/context.sh
+```
+
+It emits a single JSON blob and performs Steps 1–3 and the Step 3b *sizing* deterministically — workspace detection, base-branch resolution (with `git fetch`), learnings load, and test/lint/diff-size detection. Read its fields instead of re-running those steps by hand:
+
+- `workspace` — `standard` or `gitbutler` (drives which git commands to use, see table below)
+- `base_branch` — the resolved base; `null` means all three fallbacks failed → ask the user (Step 1)
+- `test_cmd`, `lint_cmd`, `lint_fix` — detected commands (Step 3); `null` test_cmd → warn once per Step 3
+- `learnings` — contents of the learnings file, or `null` (Step 2)
+- `diff_stat`, `changed_lines` — branch diff size
+- `fast_path_eligible_by_size` — `true` if the diff is under ~30 changed lines (the *size* half of Step 3b's gate; you still judge whether logic was touched)
+
+Steps 1–3 below document what the script automates and serve as the **fallback** if it errors or returns `null` for something you need. Don't re-run their bash by hand when the JSON already has the answer.
+
 ## Detecting Workspace Type
 
 Before starting, check the current git branch:
@@ -71,9 +90,9 @@ Record what you found. If no test command can be detected, warn the user once at
 
 ## Step 3b: Trivial-diff fast path
 
-Before entering the main loop, size the full branch diff (`git diff --stat origin/<base_branch>...HEAD`). If **all** of these hold, skip the 6-way fan-out and run a **single combined reviewer** instead:
+Before entering the main loop, check the diff size. Step 0's `context.sh` already reports this — `fast_path_eligible_by_size` is the `< ~30 changed lines` test, and `diff_stat` shows the breakdown (fall back to `git diff --stat origin/<base_branch>...HEAD` if you don't have the JSON). If **all** of these hold, skip the 6-way fan-out and run a **single combined reviewer** instead:
 
-- fewer than ~30 changed lines, and
+- `fast_path_eligible_by_size` is true (fewer than ~30 changed lines), and
 - no single hunk touches program logic — the diff is confined to docs, comments, config/manifest values, dependency-version bumps, or string/copy edits.
 
 When in doubt (any logic touched, or borderline size), do NOT take the fast path — run the full loop. The fan-out's value is independent perspectives on substantial code; a typo or a version bump doesn't earn six agents plus scorers.
@@ -216,7 +235,13 @@ The scorers stay independent from the finders (a fresh context that didn't gener
 
 Give each scorer:
 
-- **Only the diff hunks the findings reference** — not the whole diff. Slice the relevant `git diff` hunks for the files/line-ranges in this agent's findings. (For Agent #3/#7/#8 findings that cite code beyond the diff, include that cited region too.)
+- **Only the diff hunks the findings reference** — not the whole diff. Use the slicer to extract exactly those hunks deterministically:
+
+  ```bash
+  python3 ~/.claude/skills/review-loop/slice-hunks.py <diff-range> <file:start-end> [<file:start-end> ...]
+  ```
+
+  where `<diff-range>` is this cycle's review scope (`origin/<base_branch>...HEAD` on cycle 1, `<prev-cycle-sha>...HEAD` on cycles 2+) and each remaining arg is a finding's `file` plus its `line_range`. It prints only the hunks overlapping those ranges, grouped by file — no eyeballing, same slice every time. (For Agent #3/#7/#8 findings that cite code *beyond* the diff, the slicer won't capture it — add that cited region manually.)
 - The relevant `CLAUDE.md` paths
 - The finding-list (each `{file, line_range, description, reasoning}`)
 - The learnings file contents
