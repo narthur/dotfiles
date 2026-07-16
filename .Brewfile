@@ -5,6 +5,12 @@ tap "modem-dev/tap"
 tap "supabase/tap"
 tap "withgraphite/tap"
 brew "act"
+# static-analysis skill: path-only tools with no npx/uvx ephemeral fallback
+brew "actionlint"
+brew "gitleaks"
+brew "golangci-lint"
+brew "hadolint"
+brew "shellcheck"
 brew "bash" # tmux2k needs bash 4+ (macOS ships 3.2)
 brew "bc"
 brew "cliclick"
@@ -43,6 +49,7 @@ brew "withgraphite/tap/graphite"
 mas "Amphetamine", id: 937984704
 mas "Dashlane", id: 517914548
 cask "activitywatch"
+cask "raspberry-pi-imager"
 cask "transmission"
 cask "claude"
 cask "xbar"
