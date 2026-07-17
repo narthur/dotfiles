@@ -1,2 +1,3 @@
-# run artifact — quotes source under review, regenerated each run
+# run artifacts — quote source under review, regenerated each run
 last-run.jsonl
+last-intent-run.jsonl
