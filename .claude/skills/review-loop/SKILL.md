@@ -170,11 +170,26 @@ It detects the repo's languages/configs and runs the curated analyzer set (ESLin
 
 ## Step 5: Parallel Review Agents
 
-Spawn the review subagents in parallel (single message, multiple Agent tool calls). Agents #1–#6 always run. Agents #7 (structural simplification) and #8 (observability coverage) run **only on substantial diffs** — see each agent's gating rule. Each agent must receive:
+Spawn the review subagents in parallel (single message, multiple Agent tool calls). Agents #1–#6 always run. Agents #7 (structural simplification) and #8 (observability coverage) run **only on substantial diffs** — see each agent's gating rule.
 
-- The diff for **this cycle's review scope** (Step 4 loop, step b): `git diff origin/<base_branch>...HEAD` on cycle 1, or `git diff <prev-cycle-sha>...HEAD` on cycles 2+. Where an agent below says "the diff", it means this cycle's scope. (Agents #3/#7/#8 still read *beyond* the diff as their rules describe — the scope only bounds what's treated as "changed and under review", not what context they may open.)
+**This cycle's review scope** (Step 4 loop, step b): `git diff origin/<base_branch>...HEAD` on cycle 1, or `git diff <prev-cycle-sha>...HEAD` on cycles 2+. Below, "the diff" means this scope; "the whole changed files" means those files' full contents at HEAD.
+
+**Two agent classes — they get different context:**
+
+- **File-scoped** — **#1 CLAUDE.md, #2 bugs, #4 comments**. These reason *within* a file, so give them the **whole changed files**, not just the diff. Omission bugs — state that should reset/invalidate but doesn't, a contract left unenforced, an error path that logs instead of throwing, a flag set before the action it gates — are invisible in a diff-of-additions and only surface against the full file. (Measured on this skill's eval: whole-file flipped a modified-file omission miss from 1/3 → 3/3; diff-only stayed blind. See `evals/`.)
+- **Diff-scoped** — **#3 history, #5 security, #6 tests, #7 structural, #8 observability**. These reason *across* files and relationships, so give them the whole cycle diff (they may still read *beyond* it per their rules — the scope only bounds what counts as "under review"). One agent each.
+
+**Batching the file-scoped agents (context budget).** Don't hand one agent every changed file (attention dilutes — measured: whole-PR context tanked recall to 0) nor spawn one agent per file (needless fan-out and cost). Instead run:
+
+```
+python3 ~/.claude/skills/review-loop/batch-files.py <this-cycle's diff-range>
+```
+
+It bin-packs the changed files into **batches under a ~1500-line whole-file budget** and lists any oversized file to handle by diff-plus-enclosing-scope. **Spawn one instance of each file-scoped agent per batch, in parallel**, each receiving the whole contents of its batch's files plus the diff of what changed in them. On a normal PR this is a single batch = one instance each (identical to before); it only fans out when the changed files exceed the budget — which is exactly where attention-splitting starts to hurt. Batches are disjoint file sets, so instances of the same agent never produce duplicate findings.
+
+Each agent must also receive:
 - The contents of `.git/info/review-loop-learnings.md` if it exists, with instructions: "If a finding matches anything in the Dismissed list, do not flag it."
-- The agent's specific focus (one of the six below)
+- The agent's specific focus (below)
 - The style default below (verbatim)
 - A required output shape: a JSON-like list of `{file, line_range, description, suggested_fix, reasoning}`
 
@@ -185,18 +200,22 @@ Spawn the review subagents in parallel (single message, multiple Agent tool call
 
 This only ever pins *down* (Sonnet ≤ a typical Opus session), so it's pure savings on an Opus run and a no-op if the session is already Sonnet. If you're deliberately running the whole review on Haiku, drop the pins — `sonnet` would pin those agents *up*.
 
+Batching multiplies the file-scoped agents: a PR that packs into 3 batches runs 3 instances of #2 (unpinned = session tier). That's the deliberate trade — whole-file focus on a big diff is worth the extra deep-agent calls — but it's why #1/#4 stay pinned to `sonnet`: fanning *those* out at the top tier would be cost without payoff.
+
 **Style default (pass to every review agent):**
 
 > The user prefers an immutable style as the default: `const` over `let`-reassignment, expression forms (`??`/`||` short-circuit chains, ternaries, `map`/`filter`/`reduce`) over accumulate-and-mutate flows. Flag diff-introduced mutable patterns ONLY when they collapse cleanly into an immutable form with identical behavior. Do NOT flag mutability that is clearly more readable (deep nesting to avoid it, unwieldy expression) or measurably faster (hot loops, large-array copies) — those are the legitimate exceptions, not violations.
 
-### Agent #1 — CLAUDE.md compliance `[model: sonnet]`
-- List all relevant `CLAUDE.md` files (root + every directory touched by the diff)
+### Agent #1 — CLAUDE.md compliance `[model: sonnet]` · file-scoped, whole-file, batched
+- You receive the whole changed file(s) in your batch plus the diff of what changed.
+- List all relevant `CLAUDE.md` files (root + every directory touched by the batch)
 - Read them
 - Flag changes that violate stated guidance. Skip guidance that's clearly only for code-writing, not code review.
 
-### Agent #2 — Bug scan `[model: session tier — unpinned]`
-- Read only the diff (don't pull in extra context)
-- Look for obvious correctness bugs: off-by-ones, null/undefined access, async race conditions, wrong loop bounds, copy-paste errors, mutation-of-arguments, missing returns, incorrect error handling
+### Agent #2 — Bug scan `[model: session tier — unpinned]` · file-scoped, whole-file, batched
+- You receive the **whole changed file(s)** in your batch plus the diff of what changed. Review the changed behavior, using the full file for context — do not limit yourself to the added lines.
+- **Commission bugs** (a mistake in code that *is* there): off-by-ones, null/undefined access, async race conditions, wrong loop bounds, copy-paste errors, mutation-of-arguments, missing returns, incorrect error handling.
+- **Omission bugs** (behavior the code *should* have but doesn't) — read the whole file and ask what's missing on the changed path: state that should be reset/invalidated when inputs change but isn't, a documented contract left unenforced, an error/failure path that logs instead of throwing or paging, a flag set before the action it's meant to gate, a case handled elsewhere in the file that this path forgets. These are invisible in a diff-of-additions and are this agent's most common miss — weight them, and use the full-file context you're given to catch them.
 - Ignore false-positive-prone categories: linter/typechecker territory (the Step 4a static-analysis pass owns this), formatting, missing imports
 
 ### Agent #3 — Git history `[model: sonnet]`
@@ -204,8 +223,9 @@ This only ever pins *down* (Sonnet ≤ a typical Opus session), so it's pure sav
 - Flag changes that revert past intentional fixes (look for "fix" / "revert" / issue refs in the history)
 - Flag changes that ignore conditions that prior commits added on purpose
 
-### Agent #4 — Code comments compliance `[model: sonnet]`
-- For each modified file, read existing comments (in-line, doc comments, header)
+### Agent #4 — Code comments compliance `[model: sonnet]` · file-scoped, whole-file, batched
+- You receive the whole changed file(s) in your batch plus the diff of what changed.
+- For each changed file, read existing comments (in-line, doc comments, header)
 - Flag changes that violate explicit guidance in comments (e.g. "// must stay alphabetized", "# do not call from main thread")
 
 ### Agent #5 — Security `[model: session tier — unpinned]`
@@ -263,7 +283,7 @@ Give each scorer:
   python3 ~/.claude/skills/review-loop/slice-hunks.py <diff-range> <file:start-end> [<file:start-end> ...]
   ```
 
-  where `<diff-range>` is this cycle's review scope (`origin/<base_branch>...HEAD` on cycle 1, `<prev-cycle-sha>...HEAD` on cycles 2+) and each remaining arg is a finding's `file` plus its `line_range`. It prints only the hunks overlapping those ranges, grouped by file — no eyeballing, same slice every time. (For Agent #3/#7/#8 findings that cite code *beyond* the diff, the slicer won't capture it — add that cited region manually.)
+  where `<diff-range>` is this cycle's review scope (`origin/<base_branch>...HEAD` on cycle 1, `<prev-cycle-sha>...HEAD` on cycles 2+) and each remaining arg is a finding's `file` plus its `line_range`. It prints only the hunks overlapping those ranges, grouped by file — no eyeballing, same slice every time. (For findings that cite code *beyond* the diff, the slicer won't capture it — read that region from the file and add it manually. This is expected for the file-scoped agents #1/#2/#4, whose whole-file review can flag an omission at an unchanged line, and for #3/#7/#8 by their nature.)
 - The relevant `CLAUDE.md` paths
 - The finding-list (each `{file, line_range, description, reasoning}`)
 - The learnings file contents

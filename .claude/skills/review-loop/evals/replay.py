@@ -36,10 +36,16 @@ STYLE_DEFAULT = (
 )
 AGENTS = {
     "2-bugs": (
-        "You are a bug-scan reviewer. Look for correctness bugs in the diff: off-by-ones, "
-        "null/undefined access, async race conditions, wrong loop bounds, copy-paste errors, "
-        "mutation-of-arguments, missing returns, incorrect error handling, silently-dropped "
-        "inputs, and contract violations (a documented behavior the code fails to honor). "
+        "You are a bug-scan reviewer.\n"
+        "Commission bugs (a mistake in code that is there): off-by-ones, null/undefined "
+        "access, async race conditions, wrong loop bounds, copy-paste errors, "
+        "mutation-of-arguments, missing returns, incorrect error handling.\n"
+        "Omission bugs (behavior the code should have but doesn't) — ask what's missing on "
+        "the changed path: state that should be reset/invalidated when inputs change but "
+        "isn't, a documented contract left unenforced, an error/failure path that logs "
+        "instead of throwing or paging, a flag set before the action it's meant to gate, a "
+        "case handled elsewhere in the file that this path forgets. These are this scan's "
+        "most common miss — weight them.\n"
         "Ignore linter/typechecker territory and formatting."
     ),
     "5-security": (
@@ -57,6 +63,12 @@ AGENTS = {
     ),
 }
 
+# NOTE: this string is concatenated into .format() templates, so its JSON braces
+# must be doubled to survive str.format (single braces -> KeyError: '"file"').
+OUTPUT_SPEC = """Output ONLY a JSON array (no prose, no code fence) of objects:
+[{{"file": "...", "line_range": "start-end", "description": "...", "suggested_fix": "...", "reasoning": "..."}}]
+If you find nothing, output exactly: []"""
+
 AGENT_TMPL = """{focus}
 
 {style}
@@ -70,9 +82,30 @@ The primary file is {file}. You are in a checkout at the state under review; you
 MAY open other files with your tools to confirm a finding. Report every real
 issue you find in the scope.
 
-Output ONLY a JSON array (no prose, no code fence) of objects:
-[{{"file": "...", "line_range": "start-end", "description": "...", "suggested_fix": "...", "reasoning": "..."}}]
-If you find nothing, output exactly: []"""
+""" + OUTPUT_SPEC
+
+# whole-file mode: the full reviewed-revision file for context, plus the diff so
+# the agent knows what changed. Targets OMISSION bugs — code that should reset
+# state / throw / gate but doesn't — which are invisible in a diff-of-additions.
+AGENT_TMPL_FILE = """{focus}
+
+{style}
+
+Full contents of {file} at the reviewed revision (line-numbered):
+```
+{numbered}
+```
+
+The diff below shows what THIS change introduced. Review the changed behavior,
+but use the full file above for context — especially to spot MISSING handling:
+state that should be reset/invalidated but isn't, a contract left unenforced, an
+error path that should throw/page but only logs, a flag set before the action it
+claims to gate.
+```diff
+{diff}
+```
+
+""" + OUTPUT_SPEC
 
 JUDGE_TMPL = """You are grading whether a code-review agent independently found a specific known issue.
 
@@ -155,17 +188,31 @@ def git(repo, *args):
                           capture_output=True, text=True).stdout
 
 
-def review_one(fx, repo, worktree, agent_model, judge_model):
+def number_lines(text):
+    return "\n".join(f"{i:>5}  {ln}" for i, ln in enumerate(text.splitlines(), 1))
+
+
+def review_one(fx, repo, worktree, agent_model, judge_model, context="diff"):
     # Focused probe: the fixture file's diff as the review scope, and the agent
     # sits in a worktree at review state so it can open sibling files itself for
     # context. Deliberately NOT the whole-PR diff — that drags in generated/lock
     # files that swamp the signal, and per-fixture it conflates recall with
     # prioritization on multi-finding PRs (measured: whole-diff tanked recall).
+    # context="whole-file" additionally feeds the full reviewed file (see below).
     diff = git(repo, "diff", f"{fx['base_sha']}..{fx['review_sha']}", "--", fx["file"])
     if not diff.strip():
         return {"status": "no-diff", "matched": False}
     focus = AGENTS[fx["agent"]]
-    prompt = AGENT_TMPL.format(focus=focus, style=STYLE_DEFAULT, diff=diff, file=fx["file"])
+    if context == "whole-file":
+        try:
+            body = open(os.path.join(worktree, fx["file"]), encoding="utf-8",
+                        errors="replace").read()
+        except FileNotFoundError:
+            return {"status": "file-missing-at-review-sha", "matched": False}
+        prompt = AGENT_TMPL_FILE.format(focus=focus, style=STYLE_DEFAULT, diff=diff,
+                                        file=fx["file"], numbered=number_lines(body))
+    else:
+        prompt = AGENT_TMPL.format(focus=focus, style=STYLE_DEFAULT, diff=diff, file=fx["file"])
     findings = raw = None
     # one retry: `claude -p` occasionally narrates instead of emitting bare JSON.
     for attempt in (1, 2):
@@ -227,7 +274,8 @@ def run(args):
                     tag = f" [{k+1}/{args.repeat}]" if args.repeat > 1 else ""
                     print(f"  · {fx['id']} ({fx['agent']}){tag} …", file=sys.stderr, flush=True)
                     try:
-                        last = review_one(fx, repo, wt, args.agent_model, args.judge_model)
+                        last = review_one(fx, repo, wt, args.agent_model,
+                                          args.judge_model, args.context)
                     except Exception as e:  # never let one fixture sink the batch
                         last = {"status": f"crash: {e}", "matched": False}
                     if last.get("matched"):
@@ -312,6 +360,10 @@ def selftest():
         assert False, "should have raised"
     except ValueError:
         pass
+    # templates must survive .format() — catches unescaped JSON braces (KeyError)
+    kw = dict(focus="f", style="s", diff="d", file="x.ts", numbered="1  a")
+    assert '"file"' in AGENT_TMPL.format(**kw)
+    assert '"file"' in AGENT_TMPL_FILE.format(**kw)
     print("ok")
 
 
@@ -325,6 +377,8 @@ def main(argv):
     ap.add_argument("--judge-model", default="sonnet")
     ap.add_argument("--repeat", type=int, default=1,
                     help="runs per fixture; >1 gives a stable per-fixture hit-rate (recall is noisy at n=1)")
+    ap.add_argument("--context", choices=["diff", "whole-file"], default="diff",
+                    help="'diff': fixture-file diff only. 'whole-file': also feed the full reviewed file (helps omission bugs)")
     ap.add_argument("--workdir", default=tempfile.gettempdir())
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args(argv)
