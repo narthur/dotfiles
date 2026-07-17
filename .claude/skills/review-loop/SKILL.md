@@ -15,7 +15,7 @@ Run the context gatherer once at the start:
 
 It emits a single JSON blob and performs Steps 1–3 and the Step 3b *sizing* deterministically — workspace detection, base-branch resolution (with `git fetch`), learnings load, and test/lint/diff-size detection. Read its fields instead of re-running those steps by hand:
 
-- `workspace` — `standard` or `gitbutler` (drives which git commands to use, see table below)
+- `workspace` — `standard` or `gitbutler` (drives which git commands to use — mapping in `references/context-fallback.md`)
 - `base_branch` — the resolved base; `null` means all three fallbacks failed → ask the user (Step 1)
 - `test_cmd`, `lint_cmd`, `lint_fix` — detected commands (Step 3); `null` test_cmd → warn once per Step 3
 - `learnings` — contents of the learnings file, or `null` (Step 2)
@@ -23,85 +23,11 @@ It emits a single JSON blob and performs Steps 1–3 and the Step 3b *sizing* de
 - `diff_stat`, `changed_lines` — branch diff size
 - `fast_path_eligible_by_size` — `true` if the diff is under ~30 changed lines (the *size* half of Step 3b's gate; you still judge whether logic was touched)
 
-Steps 1–3 below document what the script automates and serve as the **fallback** if it errors or returns `null` for something you need. Don't re-run their bash by hand when the JSON already has the answer.
-
-## Detecting Workspace Type
-
-Before starting, check the current git branch:
-
-```bash
-git branch --show-current
-```
-
-- If branch is `gitbutler/workspace` → use GitButler commands (`but status`, `but rub <file> <branch>`, `but commit <branch> -m "..."`)
-- Otherwise → use standard git commands
-
-## Step 1: Determine Base Branch
-
-Try these in order; use the first that returns a value:
-
-```bash
-# 1. PR base (if a PR exists for this branch)
-base_branch=$(gh pr view --json baseRefName -q .baseRefName 2>/dev/null)
-
-# 2. Repo default branch via gh
-[ -z "$base_branch" ] && base_branch=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null)
-
-# 3. origin/HEAD symbolic ref
-[ -z "$base_branch" ] && base_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
-```
-
-If all three fail, ask the user to specify a base branch (e.g. `main` or `master`).
-
-Then fetch the latest from origin so the review compares against current remote state:
-
-```bash
-git fetch origin "$base_branch"
-```
-
-The scope of the review is everything on the current branch that isn't on `origin/<base_branch>` — i.e. committed changes only. If the user has uncommitted work they want reviewed, tell them to commit it first before re-invoking.
-
-## Step 2: Load Per-Repo Learnings
-
-```bash
-learnings_file=".git/info/review-loop-learnings.md"
-[ -f "$learnings_file" ] && cat "$learnings_file"
-```
-
-If the file exists, hold its contents in mind for the entire session — pass them to every review agent in Step 5. The file has two sections:
-
-- **Dismissed**: findings the user has explicitly said are not worth flagging in this repo
-- **Accepted patterns**: types of issues the user has explicitly confirmed matter in this repo
-
-If the file does not exist, that's fine — start with no learnings.
+Workspace detection and Steps 1–3 are documented in `references/context-fallback.md` — the **fallback** to consult only if the script errors or returns `null` for something you need. Don't re-run their bash by hand when the JSON already has the answer.
 
 ## Step 2a: Learnings Staleness Sweep (triggered)
 
-The learnings file is re-shipped to every review agent on every cycle, so its size is a direct, recurring token cost — and left alone it only grows and goes stale (entries for code that's since been deleted, one-offs no one has hit in months). Age-based pruning (Step 11) doesn't fix this: it evicts *old* entries, not *irrelevant* ones. This sweep evicts by **relevance** and runs automatically when the file gets big enough to be worth it.
-
-**Trigger:** run this sweep only when Step 0's `learnings_compaction_due` is `true` (the file has ≥40 entries — below that, the cost isn't worth a subagent). It runs **once, here at load time**, before the review agents, so the entire run uses the slimmed file. Skip it entirely otherwise.
-
-**How:** spawn **one** compaction subagent (`model: sonnet` — bounded editing task). Give it the learnings file contents, `today` (from Step 0), and the repo's tracked file list (`git ls-files`). Instruct it to rewrite the file, evicting in this order and reporting counts:
-
-1. **Dead-path eviction** — drop any non-PATTERN entry that cites `(file: <path>)` where `<path>` is not in `git ls-files`. The code it was about is gone; the note is dead weight. (PATTERN entries are path-agnostic rules — never dead-path-evict them.)
-2. **Stale one-off eviction** — drop non-PATTERN entries whose date is more than **90 days** before `today`. A one-off that hasn't been re-confirmed in a quarter (see the freshness rule in Step 11 — active entries get their date bumped when they actually match) has aged out of relevance. PATTERN entries are exempt; they're the durable rules that justify the file's existence.
-3. **Dedup + promote** — apply Step 11's dedup and "promote 3+ near-duplicates into one PATTERN" rules across the whole file, not just against the newest entry.
-
-Then it rewrites the file (same two-section structure) and returns a one-line summary: `dropped N (D dead-path, S stale), promoted P, now E entries`. Surface that line in the final report (Step 14). If the sweep can't run (subagent unavailable), fall back to Step 11's age-based cap — don't block the review.
-
-## Step 3: Detect Test & Lint Commands
-
-The broad analyzer set (linters, security, secrets) is handled deterministically by the static-analysis pass (Step 4a) — you don't need to detect per-tool commands for it. What you're detecting here is the **test** command and any **project-specific** lint/format/typecheck script (Prettier, `tsc`, a custom `npm run lint`) that static-analysis doesn't replicate and that runs alongside it.
-
-Search for project-standard test and lint commands. Check (in this order):
-
-1. Root `CLAUDE.md` — look for explicit "test command" / "lint command" instructions
-2. `package.json` `scripts` — `test`, `lint` (note if `lint` supports `--fix` or a `lint:fix` script exists)
-3. `Makefile` — `test`, `lint` targets
-4. Language-specific configs: `pytest.ini` / `pyproject.toml` → `pytest`; `ruff.toml` / `.ruff.toml` → `ruff check --fix`; `.eslintrc*` → `eslint --fix`; `.rubocop.yml` → `rubocop -A`; `Cargo.toml` → `cargo clippy --fix` and `cargo test`
-5. CI config (`.github/workflows/*.yml`) as a last-resort hint
-
-Record what you found. If no test command can be detected, warn the user once at the start: "No test command detected — fix-induced regressions won't be caught between cycles." Same for lint.
+When Step 0 reports `learnings_compaction_due = true` (≥40 entries), run the relevance-based sweep **once here, before the review agents**, so the whole run uses the slimmed file — then skip it for the rest of the run. Otherwise skip entirely. Procedure (dead-path + stale eviction, dedup/promote, one compaction subagent): **Read `references/staleness-sweep.md`**.
 
 ## Step 3b: Trivial-diff fast path
 
@@ -146,7 +72,7 @@ If cycle > max_cycles:
     Report: "Reached cycle limit (3). Remaining findings below."
 ```
 
-On a clean loop exit, run the manual-testing evidence gate (Step 13) before the final report/auto-push (Step 14). If the gate's testing uncovers a real issue, fix + commit + restart the loop from cycle 1 (see Step 13c).
+On a clean loop exit, run the manual-testing evidence gate (Step 13) before the final report/auto-push (Step 14). If the gate's testing uncovers a real issue, fix + commit + restart the loop from cycle 1 (see Step 13).
 
 ## Step 4a: Static-analysis pass (deterministic tools)
 
@@ -246,52 +172,13 @@ Batching multiplies the file-scoped agents: a PR that packs into 3 batches runs 
 - Check whether tests in the diff cover them
 - Flag uncovered logic only when the change is non-trivial and the project clearly has a test suite. Skip if the repo has no tests at all.
 
-### Agent #7 — Structural simplification (conditional) `[model: session tier — unpinned]`
+### Agents #7, #8, #9 — conditional (focus detail in `references/conditional-agents.md`)
 
-**Gating — only spawn this agent when the diff is substantial.** Skip it entirely (don't spawn) when ALL of these hold: total diff < ~150 changed lines, no single file grew past ~800 lines, and the change is a pure bugfix/config/dependency bump. Small and bot-driven PRs don't benefit from structural review and it only adds noise. When in doubt on a borderline diff, spawn it.
+Evaluate each gate every run; the gate is here, the focus/scoring/routing is in the reference. When a gate fires, **Read `references/conditional-agents.md`** for that agent's full instructions before spawning it.
 
-Unlike the other agents, this one is **allowed and expected to read beyond the diff** — open the surrounding files, the module the change lives in, and any shared/general modules it touches. Structural smells are only visible in context.
-
-Look for "code judo" — restructurings that preserve behavior while making the implementation meaningfully simpler:
-
-- A reframing that makes a whole branch, helper, mode, conditional, or layer **disappear entirely** (not just shrink).
-- A file the diff pushed past ~1k lines (or meaningfully grew when already large) without a strong reason. Treat this as a smell to weigh, not an automatic block.
-- New ad-hoc conditionals, scattered special cases, or one-off branches inserted into otherwise-unrelated flows.
-- Feature-specific logic leaking into shared/general-purpose modules, or implementation details leaking through a public API.
-- Casts, optionality, or ad-hoc object shapes that obscure a real invariant — where a typed model would make a chain of conditionals collapse.
-- A thin abstraction that adds indirection without buying clarity.
-- A mutable accumulate-and-reassign flow (per the style default) big enough that restructuring it is invasive — small local cases belong to the always-on agents via the style default, not here.
-
-For each finding, the `suggested_fix` should describe the restructuring in plain language and name what it deletes ("collapse the three `status` string checks into a `Status` union; the `isPending`/`isDone` helpers then disappear"). These are **proposals, not patches** — do not expect them to be auto-applied (see Step 6 and Step 8a routing).
-
-### Agent #8 — Observability coverage (conditional) `[model: sonnet]`
-
-**Gating — only spawn this agent when BOTH hold:** the diff is substantial/risky (same threshold as Agent #7), AND the repo already has an observability convention — a logger, metrics client, or error reporter visible in the surrounding files. **Skip entirely** if the project logs nothing; don't invent a convention where none exists. As with #7, when in doubt on a borderline diff, spawn it.
-
-This is the mirror of Agent #6 (test coverage): #6 asks "does changed logic have tests?"; #8 asks "if changed logic fails in prod, will we find out?"
-
-Like #7, this agent is **allowed and expected to read beyond the diff** — observability is often satisfied upstream or downstream of the changed line. Confirm a failure path is *actually* unsurfaced, not merely out of frame, before flagging.
-
-1. Enumerate the **failure-bearing** behaviors the diff adds or changes: external I/O (network, DB, API, filesystem), error-handling paths, async / background / queue work that can partially fail, money / auth / security paths, and fallible state mutations. **Ignore** pure in-memory logic, renames, refactors, and UI-only changes — they are not this agent's business.
-2. For each, check whether a failure would be **detectable**: is there a log, metric, error report, or surfaced error on the failure path?
-3. Flag only failure-bearing changes where a silent failure would matter and nothing surfaces it. Also flag observability the diff **removed or downgraded** on such a path (a deleted log line, an error report dropped, a log level lowered on a failure path). State the symptom concretely: "if this charge fails, the user sees nothing and no log/metric fires — first signal is a support ticket."
-
-Findings here are verifiable (the failure path either surfaces something or it doesn't), so they use the **normal Step 6 rubric** — no special-casing like #7. The fixes are almost always additive (add a log line / metric / error surface), which makes them low-risk under Step 8a and so usually auto-applied.
-
-### Agent #9 — Intent reconciliation (conditional, cycle 1 only) `[model: session tier — unpinned]`
-
-**Gating — spawn only when Step 4b established a reviewable intent** (feature / behavior-changing work with a stated goal); skip otherwise. Runs **once, in cycle 1 only** — it reviews the original change against its purpose, and the per-cycle fix deltas don't need re-reconciling.
-
-Unlike the code-first agents, this one does not start from the code. It models what the change *should* do from intent, then reconciles that model against the implementation — which is how a strong reviewer catches **omission** bugs (state that should reset, a contract left unenforced, a case never handled) that are invisible to an agent anchored on the code that's already there. (Eval: on the omission fixtures it caught defects every code-first agent missed — a state-reset omission 0→2/3, a contract violation 1→2/3. See `evals/`.)
-
-Run it as **two stages in separate subagent contexts** — the separation is the whole point; if one agent sees the code before modelling, the model is contaminated and it collapses into ordinary code-first review:
-
-- **Stage 1 — build the spec (intent only).** Give the subagent the Step 4b intent statement and the changed-file *names* (for scope) — **not the diff, not the file contents**. Ask it to enumerate the behaviors the change must satisfy: features, user-facing steps, state transitions, edge cases, failure modes, invariants — especially state that must reset when inputs change, contracts that must hold, and error paths that must surface. Output: a list of expected behaviors, each with why it matters and what to check.
-- **Stage 2 — reconcile (spec + code).** Give a *fresh* subagent the Stage 1 spec plus the whole changed files and the diff. For each expected behavior, decide whether the code satisfies it; flag **OMISSION** (expected, not implemented), **DISCREPANCY** (implemented differently), or **UNHANDLED** (an edge/failure case the spec raised that the code ignores). Each finding is a **question to the author, not a verified defect** — frame it as one.
-
-**Routing and scoring are special (like Agent #7):** these are hypotheses about intent, not verifiable defects, so they are **always routed to ask-user, never auto-fixed**, whatever the score. This agent has the **highest false-positive rate** of any — it will "expect" things the team deliberately cut (scope, YAGNI) and can even mis-model the intent it was handed (in the eval it once "expected" a token refresh the intent explicitly forbade). Lean hard on the learnings Dismissed list (a matching finding scores 0), and in the final report surface these as *questions* kept separate from verified defects. It complements the code-first agents rather than replacing them — the eval shows it *loses* to whole-file #2 on implementation-timing bugs, where the intent is nominally met but a code detail is wrong.
-
-`evals/intent-recon.py` exercises this exact two-stage flow against curated fixtures — use it to measure any prompt change to this agent.
+- **#7 Structural simplification** `[session tier — unpinned]` — spawn on **substantial diffs**; skip when ALL hold: diff < ~150 changed lines, no file past ~800 lines, and pure bugfix/config/dependency bump. Reads beyond the diff. Scored on value-vs-risk, **always ask-routed** (never auto-applied).
+- **#8 Observability coverage** `[sonnet]` — spawn when the diff is substantial/risky (#7's threshold) **AND** the repo already has an observability convention (logger/metrics/error reporter). Skip if the project logs nothing. Normal Step 6 rubric; fixes usually additive/auto-applied.
+- **#9 Intent reconciliation** `[session tier — unpinned]` — spawn **only in cycle 1** when Step 4b established a reviewable intent. Two stages in separate contexts (spec from intent only → reconcile against code). **Always ask-routed**; highest false-positive rate — lean on the Dismissed list.
 
 ## Step 6: Haiku Scoring
 
@@ -433,56 +320,14 @@ After committing, record this commit's sha (`git rev-parse HEAD`) as the previou
 
 ## Step 11: Capture Learnings
 
-The learnings file is loaded into every future cycle's agent prompts, so its size and quality directly affect downstream cost and signal. Treat it as a curated index, not an append-only log.
+On Step 8b outcomes, record learnings in `.git/info/review-loop-learnings.md` (two sections: **Dismissed**, **Accepted patterns**). It's re-shipped to every agent, so keep it a curated index, not a log.
 
-### File
-
-`.git/info/review-loop-learnings.md`. Create with this structure if it doesn't exist:
-
-```markdown
-# Review Loop Learnings
-
-## Dismissed
-<!-- Patterns the user has chosen to skip. Skill won't auto-flag matches. -->
-
-## Accepted patterns
-<!-- Patterns the user has explicitly confirmed matter here. Skill weights matches higher. -->
-```
-
-### Writing rules
-
-**Entry shape** — one line, ~150 chars max. Lead with the date and either the literal token `PATTERN:` (for a broad, reusable rule) or a concrete one-off. PATTERN entries are the goal — they survive over time; one-off entries are pruned first.
-
-**Before adding a new entry, dedup.** Read the file. If a similar entry already exists:
-
-- **Same topic, same direction** (e.g. "don't flag X in this repo" already covers what you'd write) → don't add a duplicate, but **do bump the existing entry's date to today**. This is the freshness signal the Step 2a sweep's 90-day horizon depends on: an entry that keeps matching stays fresh and survives; one that never re-matches ages out and gets evicted. Skipping the bump would let live entries look stale.
-- **Same topic, narrower scope** (your new entry is a specific instance of an existing PATTERN) → don't add it. The PATTERN already covers it.
-- **Same topic, broader scope** (your new entry generalises 2+ existing entries) → replace the narrower entries with one PATTERN entry. Note the consolidation date.
-- **Different topic** → add a new entry.
-
-**Do the file edits with `learn.py`** — you decide the match/novelty/section (the judgment); the script does the dated surgery (the part that drifts or gets forgotten):
-- Re-match of an existing entry → `python3 ~/.claude/skills/review-loop/learn.py bump <file> "<substring of the matched entry>"` (bumps its date to today — the freshness signal Step 2a depends on).
-- Novel entry → `learn.py add <file> --section dismissed|accepted "<text, no date>"` (stamps today's date, inserts under the section).
+Do the edits with `learn.py` — you judge match/novelty/section; the script does the dated surgery:
+- Re-match of an existing entry → `python3 ~/.claude/skills/review-loop/learn.py bump <file> "<substring>"` (bumps its date to today — the freshness signal Step 2a depends on).
+- Novel entry → `learn.py add <file> --section dismissed|accepted "<text, no date>"` (stamps today's date; creates the file/sections if missing).
 - Cap fallback → `learn.py prune <file>` (evicts oldest non-PATTERN, dismissed first; PATTERN entries never auto-pruned).
 
-**Promote on repetition.** If you've added three or more narrow entries that share a theme, replace them with one PATTERN entry that captures the rule. Don't let the file accumulate near-duplicates.
-
-**Cap at ~50 entries.** The primary maintenance mechanism is the **Step 2a staleness sweep** — relevance-based eviction (dead paths, unused one-offs) triggered automatically at ≥40 entries, which normally keeps the file well under the cap. This age-based cap is the **fallback** for the rare case the file still exceeds ~50 (e.g. the sweep couldn't run). When exceeded, prune in this order:
-1. Oldest non-PATTERN dismissed entries (the specific one-off skips).
-2. Oldest non-PATTERN accepted entries.
-3. PATTERN entries last, and only if redundant with a newer one.
-
-**If the file passes ~75 entries even after pruning**, that's a signal the repo's review tastes are heterogeneous enough to need topic splits. At that point (not before), split into a `.git/info/review-loop-learnings/` directory with topic files (`comments.md`, `tests.md`, `refactor.md`, …) and concatenate them when loading. Don't pre-split — single file is simpler when the volume is small.
-
-### What to write for each Step 8b outcome
-
-- "Skip" → Dismissed entry: `- <date>: <finding description> (file: <path>, fix declined)`
-- "Skip and remember as a dismissal pattern" → Dismissed entry: `- <date>: PATTERN: <user-worded pattern>`
-- "Apply fix" → Accepted entry: `- <date>: <finding description> (accepted)`
-
-Auto-applied low-risk 50-79 findings (from Step 8a) do NOT write to learnings — they're tactical and would just be noise.
-
-When in doubt about whether an entry is worth writing, err on the side of NOT writing. The file's value is in being scannable, not exhaustive.
+For the entry shape, the dedup/promote judgment, the per-Step-8b-outcome mapping, and the cap/split fallbacks, **Read `references/learnings-format.md`**. When in doubt whether an entry is worth writing, don't — the file's value is being scannable, not exhaustive.
 
 ## Step 12: "Remember X" Requests During the Session
 
@@ -499,42 +344,7 @@ Runs **only after everything else passes** — a clean loop exit (auto-fix bucke
 - **No PR exists** for the branch (`gh pr view` fails) — there's nowhere to check or attach evidence.
 - **The diff changes no runtime functionality** — docs, comments, config, dependency bumps, CI-only changes, or pure refactors already pinned by tests. The gate is about *changed behavior*, and when in doubt, run it.
 
-### 13a: Check the PR for existing evidence
-
-Read the PR body and comments:
-
-```bash
-gh pr view --json body,comments
-```
-
-**Sufficient evidence** = artifacts demonstrating this PR's changed functionality actually working: screenshots/recordings of the changed UI states, command transcripts with real output (curl against a dev server, CLI invocations), or test-session notes with concrete inputs and observed outputs. A bare claim ("tested locally ✅") is **not** sufficient, and evidence must cover the *changes in this PR*, not the app generally. Evidence found → gate passes; go to Step 14.
-
-### 13b: Do the manual testing yourself
-
-No sufficient evidence → produce it:
-
-1. Stand up whatever the changes need locally, per repo convention (check CLAUDE.md / package.json scripts — e.g. `pnpm dev`; seed env/data as the repo's docs describe).
-2. Exercise **each functional change the PR makes** — not a generic smoke test:
-   - UI changes → the **playwright** skill: drive the changed flows and `playwright-cli screenshot` at the states that prove the new behavior.
-   - API/CLI changes → real requests/invocations; capture the command and the actual response verbatim.
-3. Save evidence as you go — screenshots to the scratchpad, transcripts verbatim.
-
-### 13c: Outcome
-
-**Everything works** → publish the evidence to the PR:
-
-1. Images → public URLs via the **surge-image-upload** skill: `~/.claude/skills/surge-image-upload/upload.sh <files>`.
-2. Post one PR comment (`gh pr comment`) with a `## Manual testing evidence` section: what was tested and how, embedded screenshots, transcripts in fenced blocks, and the environment (local dev, commit SHA tested).
-3. Gate passes → Step 14.
-
-**Testing finds a real issue** (broken behavior, error, regression):
-
-1. **Stop the review immediately** — post no evidence, push nothing.
-2. Fix the issue and commit it (`fix(<scope>): <description>`).
-3. **Restart the loop from Step 4, cycle 1** — the fix is new, unreviewed code and goes through the full review before the gate runs again.
-4. Cap gate-triggered restarts at **2 per invocation**. At the cap, stop, report the unresolved issues, and don't auto-push.
-
-**Can't test** (required secret/service unavailable, dev environment broken) → don't fake or hand-wave it: treat the gate as **not passed**, skip the auto-push, and report exactly what was attempted, what blocked it, and what the user needs to provide.
+Otherwise the gate is active — **Read `references/evidence-gate.md`** and follow it: 13a (check the PR for sufficient existing evidence) → 13b (stand up the app and produce evidence yourself if missing — playwright for UI, real requests for API/CLI) → 13c (publish to the PR; or on a found issue, stop, fix, and restart the loop from cycle 1, capped at 2 restarts; or report "can't test" and don't push).
 
 ## Step 14: Final Report and Auto-Push
 
