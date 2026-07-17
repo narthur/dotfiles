@@ -1,6 +1,6 @@
 ---
 name: review-loop
-description: "Pre-push Claude-driven code review loop with auto-fix. Runs up to 8 parallel review agents (CLAUDE.md, bugs, git history, code comments, security, test coverage, and — on substantial diffs — structural simplification and observability coverage) per cycle, scores each finding 0-100 with an independent Haiku rater, auto-fixes ≥80 findings, asks about 50-79 in a single batch per cycle, and stores per-repo learnings in .git/info/. Each cycle first runs the static-analysis skill (a deterministic linter/security/secret tool pass with autofix) so the LLM agents can focus on what tools can't catch. On clean exit, a final manual-testing evidence gate verifies the PR carries proof the changed functionality actually works — and produces that proof itself (local dev servers + playwright + surge-image-upload) when missing. Replaces CodeRabbit for local review. Invoke this proactively and by default before any push and whenever finishing or cleaning up a chunk of code changes — do not ask the user for permission first and do not look for reasons to skip it. Prefer running it over not running it."
+description: "Pre-push Claude-driven code review loop with auto-fix. Runs parallel review agents (CLAUDE.md, bugs, git history, code comments, security, test coverage, and — on substantial diffs — structural simplification and observability coverage; plus, in cycle 1 on feature work, an intent-reconciliation agent that models what the PR should do from its purpose and reconciles that against the code to catch omission bugs) per cycle, scores each finding 0-100 with an independent Haiku rater, auto-fixes ≥80 findings, asks about 50-79 in a single batch per cycle, and stores per-repo learnings in .git/info/. Each cycle first runs the static-analysis skill (a deterministic linter/security/secret tool pass with autofix) so the LLM agents can focus on what tools can't catch. On clean exit, a final manual-testing evidence gate verifies the PR carries proof the changed functionality actually works — and produces that proof itself (local dev servers + playwright + surge-image-upload) when missing — and reconciles the PR description to be accurate and complete for the final reviewed change. Replaces CodeRabbit for local review. Invoke this proactively and by default before any push and whenever finishing or cleaning up a chunk of code changes — do not ask the user for permission first and do not look for reasons to skip it. Prefer running it over not running it."
 ---
 
 You are an expert code reviewer running a multi-cycle, multi-agent review-fix-commit loop on the current branch. Your job is to deliver CodeRabbit-equivalent (or better) review depth using Claude subagents, apply high-confidence fixes automatically, batch ambiguous fixes for user approval, and accumulate per-repo learnings over time.
@@ -122,14 +122,14 @@ max_cycles = 3
 
 while cycle <= max_cycles:
     a. Run the static-analysis pass (Step 4a below): the static-analysis skill (--diff --fix) plus the project linter --fix if detected. Stage what changed; collect the deterministic tool findings.
-    b. Run 6 parallel review subagents (Step 5) over this cycle's REVIEW SCOPE (see below). Each returns findings + suggested fixes.
+    b. Run the parallel review subagents (Step 5) over this cycle's REVIEW SCOPE (see below). Each returns findings + suggested fixes. In cycle 1 only, and only if Step 4b (run once, before the loop) established a reviewable intent, also spawn Agent #9 (intent reconciliation).
        REVIEW SCOPE:
          - cycle 1: the full branch diff, `git diff origin/<base_branch>...HEAD` — nothing has been reviewed yet.
          - cycles 2+: only the changes THIS loop has made since it last reviewed, i.e. `git diff <sha-at-end-of-prev-cycle>...HEAD` (the fix commit(s) from the previous cycle). The rest of the branch was already reviewed in cycle 1; re-reviewing it re-pays the whole cost for code that didn't change. Reviewing the fix delta still catches fix-induced regressions, which is the only new risk a later cycle introduces.
        Record the current HEAD sha at the end of each cycle (Step 10) so the next cycle can diff against it.
     c. For each finding, spawn a Haiku scorer subagent (Step 6). Score 0-100.
     d. Bucket by score AND risk profile (Step 8a):
-       - structural (Agent #7), any score → ask-user (never auto-apply)
+       - structural (Agent #7) or intent-reconciliation (Agent #9), any score → ask-user (never auto-apply)
        - ≥80                              → auto-fix
        - 50-79 + low-risk                 → auto-fix (no ask)
        - 50-79 + high-risk                → ask-user
@@ -168,9 +168,18 @@ It detects the repo's languages/configs and runs the curated analyzer set (ESLin
 - **Quality / style residue** — anything the autofixers couldn't fix: don't run it through the agents or Haiku (deterministic, mostly low-value). Carry the per-tool counts into the final report (Step 14).
 - **Skipped tools** — if the run skipped analyzers (not installed, no ephemeral runner) and you can prompt the user (main interactive agent, not a headless subagent), offer once to install them (use each entry's `install_hint`) and re-run. In a subagent run, just note the skips in the report; never block.
 
+## Step 4b: Establish PR Intent (for Agent #9)
+
+Agent #9 (intent reconciliation, Step 5) reviews the change against what it is *supposed* to do, so it needs an accurate statement of intent — and it must be **intent, not a description of the code**. Establish this once, before the loop.
+
+1. **Gather intent sources** (most trusted first): the linked issue / acceptance criteria, the PR description, the branch's commit messages, the title. With no PR yet (local branch), the commit messages + issue are the intent.
+2. **Gate — decide whether Agent #9 runs at all.** Skip it (and the rest of this step) when the change has no reviewable intent to model against: dependency bumps, pure refactors/renames, formatting, config-only changes, or any diff whose purpose can't be stated as intended *behavior*. It earns its cost only on feature / behavior-changing work with a derivable goal.
+3. **Build the intent statement — do NOT edit the PR description here.** Distil the sources into an internal statement of the change's purpose and intended behavior for Agent #9. Keep it to GOALS ("users can reconnect a third-party account"), never claims about what the code does or that an edge case is handled — an intent derived by reading the implementation just mirrors the code and blinds Agent #9 to the omissions it exists to catch. If the sources are too thin to state a goal: derive one from the issue/commits, or (interactive runs only) ask the author; if none can be established, gate Agent #9 off (step 2). The description itself is made accurate and complete *later* — **Step 14 reconciles it against the final reviewed change**, when doing so is safe (the code is final, so describing it can't launder a bug into intent) and useful (the PR ends merge-ready).
+4. The resulting intent statement is what Agent #9's stage 1 consumes. Treat it as *desired behavior to be verified against the code*, not as ground truth about what the code does.
+
 ## Step 5: Parallel Review Agents
 
-Spawn the review subagents in parallel (single message, multiple Agent tool calls). Agents #1–#6 always run. Agents #7 (structural simplification) and #8 (observability coverage) run **only on substantial diffs** — see each agent's gating rule.
+Spawn the review subagents in parallel (single message, multiple Agent tool calls). Agents #1–#6 always run. Agents #7 (structural simplification) and #8 (observability coverage) run **only on substantial diffs**; Agent #9 (intent reconciliation) runs **only in cycle 1 and only when Step 4b established a reviewable intent** — see each agent's gating rule.
 
 **This cycle's review scope** (Step 4 loop, step b): `git diff origin/<base_branch>...HEAD` on cycle 1, or `git diff <prev-cycle-sha>...HEAD` on cycles 2+. Below, "the diff" means this scope; "the whole changed files" means those files' full contents at HEAD.
 
@@ -269,6 +278,21 @@ Like #7, this agent is **allowed and expected to read beyond the diff** — obse
 
 Findings here are verifiable (the failure path either surfaces something or it doesn't), so they use the **normal Step 6 rubric** — no special-casing like #7. The fixes are almost always additive (add a log line / metric / error surface), which makes them low-risk under Step 8a and so usually auto-applied.
 
+### Agent #9 — Intent reconciliation (conditional, cycle 1 only) `[model: session tier — unpinned]`
+
+**Gating — spawn only when Step 4b established a reviewable intent** (feature / behavior-changing work with a stated goal); skip otherwise. Runs **once, in cycle 1 only** — it reviews the original change against its purpose, and the per-cycle fix deltas don't need re-reconciling.
+
+Unlike the code-first agents, this one does not start from the code. It models what the change *should* do from intent, then reconciles that model against the implementation — which is how a strong reviewer catches **omission** bugs (state that should reset, a contract left unenforced, a case never handled) that are invisible to an agent anchored on the code that's already there. (Eval: on the omission fixtures it caught defects every code-first agent missed — a state-reset omission 0→2/3, a contract violation 1→2/3. See `evals/`.)
+
+Run it as **two stages in separate subagent contexts** — the separation is the whole point; if one agent sees the code before modelling, the model is contaminated and it collapses into ordinary code-first review:
+
+- **Stage 1 — build the spec (intent only).** Give the subagent the Step 4b intent statement and the changed-file *names* (for scope) — **not the diff, not the file contents**. Ask it to enumerate the behaviors the change must satisfy: features, user-facing steps, state transitions, edge cases, failure modes, invariants — especially state that must reset when inputs change, contracts that must hold, and error paths that must surface. Output: a list of expected behaviors, each with why it matters and what to check.
+- **Stage 2 — reconcile (spec + code).** Give a *fresh* subagent the Stage 1 spec plus the whole changed files and the diff. For each expected behavior, decide whether the code satisfies it; flag **OMISSION** (expected, not implemented), **DISCREPANCY** (implemented differently), or **UNHANDLED** (an edge/failure case the spec raised that the code ignores). Each finding is a **question to the author, not a verified defect** — frame it as one.
+
+**Routing and scoring are special (like Agent #7):** these are hypotheses about intent, not verifiable defects, so they are **always routed to ask-user, never auto-fixed**, whatever the score. This agent has the **highest false-positive rate** of any — it will "expect" things the team deliberately cut (scope, YAGNI) and can even mis-model the intent it was handed (in the eval it once "expected" a token refresh the intent explicitly forbade). Lean hard on the learnings Dismissed list (a matching finding scores 0), and in the final report surface these as *questions* kept separate from verified defects. It complements the code-first agents rather than replacing them — the eval shows it *loses* to whole-file #2 on implementation-timing bugs, where the intent is nominally met but a code detail is wrong.
+
+`evals/intent-recon.py` exercises this exact two-stage flow against curated fixtures — use it to measure any prompt change to this agent.
+
 ## Step 6: Haiku Scoring
 
 **Score per review agent, not per finding.** Spawn **one Haiku scorer subagent per review agent that returned findings** (so the scorers run in parallel, one alongside each finder). Each scorer receives that agent's *entire* finding-list and scores every finding in a single pass. Do NOT spawn one scorer per finding — that re-ships the diff once per finding and is the loop's biggest token sink. If a single agent returned an unusually large batch (>~12 findings), split it across two scorer calls to keep each pass careful, but never go back to one-per-finding.
@@ -303,6 +327,8 @@ Give each scorer:
 > Return a score for every finding in the batch, each keyed to its finding (e.g. by index or file:line), as an integer 0-100. Score each finding independently — do not let one finding's score anchor another's.
 
 **Structural findings (Agent #7) score differently.** The rubric above is for verifiable defects; a simplification is subjective and will never be "verified true," so it would score low and get filtered out unfairly. For Agent #7 findings, score on *value vs. risk* instead: how much complexity the restructuring deletes (a whole layer/branch disappearing scores high; a cosmetic tidy scores low) balanced against how invasive the refactor is. Regardless of the resulting score, structural findings are **always routed to ask-user** (Step 8a) and are never auto-applied — the score only sets their ordering and whether they're surfaced as a blocker vs. a nit in the final report (Step 14).
+
+**Intent-reconciliation findings (Agent #9) score differently too.** These are questions about intent, not verified defects, so the confidence rubric would unfairly bury them. Score on *plausibility × impact-if-true*: how likely the gap is real given the intent, times how much it would matter if so. First apply the Dismissed-list check (a finding matching it scores 0) — this agent generates the most scope-expectation false positives, so that suppression carries the most weight here. Like #7, Agent #9 findings are **always routed to ask-user**, never auto-applied; the score only orders them and sets blocker-vs-question framing in the final report. Surface them in the report as *questions*, kept separate from verified defects.
 
 ## Step 7: Apply Auto-Fixes (≥80)
 
@@ -499,6 +525,22 @@ No sufficient evidence → produce it:
 
 ## Step 14: Final Report and Auto-Push
 
+### Reconcile the PR description (clean exit, PR exists)
+
+On a clean loop exit, if a PR exists, make the PR description **accurate and complete** for the now-final reviewed change. This is the counterpart to Step 4b: 4b captured *intended goals* for review and deliberately left the description alone; this runs *after* review converges, so describing what the change actually does is correct rather than contaminating, and it's the moment to leave the PR merge-ready.
+
+**When it runs — only when the change is done (converged):**
+- **Clean exit** (loop converged): reconcile. This is the only state where "accurate and complete" is meaningful and stable.
+- **Cycle limit reached**: **skip.** The loop didn't converge — open findings still need addressing, and fixing them will change the code, so a description written now goes stale immediately and would document known-open defects as "what the change does." It's reconciled on the eventual clean re-run instead. (Mirrors the auto-push and evidence-gate gates, which likewise hold off until the change is done.)
+- **Test failure short-circuit**: skip — the tree is knowingly broken.
+- **No PR** (local branch): skip; nothing to reconcile.
+
+Then:
+- Compare the current description against the final diff. Update it to state the purpose, the actual behavior (including notable edge cases and any decisions the review surfaced or resolved), and — if the repo's PRs use one — the test plan.
+- **Preserve author intent and structure**: fill gaps and correct drift, don't rewrite wholesale, and never delete a human's rationale.
+- Edit in place with `gh pr edit <n> --body …` (GitButler: the equivalent PR update) — a low-risk update to your own PR.
+- Do this even when the auto-push is being skipped (e.g. branch is `main`): an accurate description is still worth leaving behind.
+
 ### When to auto-push
 
 If the loop exits **clean** (auto-fix bucket empty, no test failures, no skipped high-risk findings) **and the Step 13 gate passed or was skipped**, push automatically:
@@ -524,6 +566,7 @@ When skipping the auto-push, end the report with `Next step: <reason>; push when
 ```
 review-loop complete: <N> cycle(s), <M> commits, pushed: <yes|no — reason>.
 Evidence gate: <passed — existing evidence | passed — evidence captured & posted (link) | skipped — <no PR | no functional changes> | blocked — <reason>>.
+PR description: <reconciled to final change | already accurate — no edit | skipped — <no PR | not converged (cycle limit / test failure)>>.
 
 Cycle 1: <summary>
 Cycle 2: <summary>
@@ -533,6 +576,10 @@ Structural proposals (Agent #7 — not applied, your call):
 - Blockers: <high-value simplifications that delete a layer/branch, or file-size breaches — the things worth doing before this merges>
 - Nits: <smaller tidy-ups, listed briefly>
 (Omit this section entirely if Agent #7 didn't run or found nothing.)
+
+Intent questions (Agent #9 — reconciled against PR intent, not applied, your call):
+- <each as a question: "intent says X; the code does Y / doesn't do Z — intended?" — ordered by plausibility × impact>
+(Omit entirely if Agent #9 didn't run — skipped when the change had no reviewable intent (Step 4b) — or found nothing.)
 
 Auto-applied low-risk 50-79 (no ask):
 - <list with one-line summary each — visible to the user since they didn't see the ask>
