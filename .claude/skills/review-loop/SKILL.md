@@ -362,6 +362,14 @@ Plus three hard rules that override the matrix:
 - **Suggested fix is unclear or conflicts with current state** → always ask. (Same as Step 7.)
 - **A `CLAUDE.md` file or learnings entry explicitly says "always ask the user about X"** → always ask.
 
+**Bucket deterministically once each finding is classified.** After scoring (Step 6) and the risk classification above, assemble one JSON object per finding — `{id, agent, score, risk: "low"|"high", always_ask: bool}` — and route them with:
+
+```bash
+echo '<findings-json>' | python3 ~/.claude/skills/review-loop/bucket.py
+```
+
+It emits `{auto_fix, ask, skip}` applying the exact thresholds (≥80 → auto; 50-79 low-risk → auto, else ask; Agent #7/#9 → always ask; <50 → skip) so the routing can't drift between runs. The judgment stays yours — the *score* (Step 6) and the *risk* and *always_ask* flags (this step) — the script only combines them.
+
 When auto-applying a 50-79 finding without asking, note it in the cycle commit message (`fix(review): cycle N — ... (auto-applied low-risk: <one-line summary of each>)`) so the user sees what landed without their say-so.
 
 If after Step 8a the ask-user bucket is empty, skip Step 8b entirely.
@@ -451,6 +459,11 @@ The learnings file is loaded into every future cycle's agent prompts, so its siz
 - **Same topic, narrower scope** (your new entry is a specific instance of an existing PATTERN) → don't add it. The PATTERN already covers it.
 - **Same topic, broader scope** (your new entry generalises 2+ existing entries) → replace the narrower entries with one PATTERN entry. Note the consolidation date.
 - **Different topic** → add a new entry.
+
+**Do the file edits with `learn.py`** — you decide the match/novelty/section (the judgment); the script does the dated surgery (the part that drifts or gets forgotten):
+- Re-match of an existing entry → `python3 ~/.claude/skills/review-loop/learn.py bump <file> "<substring of the matched entry>"` (bumps its date to today — the freshness signal Step 2a depends on).
+- Novel entry → `learn.py add <file> --section dismissed|accepted "<text, no date>"` (stamps today's date, inserts under the section).
+- Cap fallback → `learn.py prune <file>` (evicts oldest non-PATTERN, dismissed first; PATTERN entries never auto-pruned).
 
 **Promote on repetition.** If you've added three or more narrow entries that share a theme, replace them with one PATTERN entry that captures the rule. Don't let the file accumulate near-duplicates.
 
@@ -543,7 +556,17 @@ Then:
 
 ### When to auto-push
 
-If the loop exits **clean** (auto-fix bucket empty, no test failures, no skipped high-risk findings) **and the Step 13 gate passed or was skipped**, push automatically:
+Make this decision with the checker rather than re-deriving the checklist — pushing to the wrong branch or a non-converged tree is the costly mistake:
+
+```bash
+python3 ~/.claude/skills/review-loop/push-check.py --clean-exit \
+  --gate-state <passed|skipped|blocked> [--unresolved-skip] \
+  --branch <current> --default-branch <default>
+```
+
+Pass the loop-state flags you know (omit `--clean-exit` if the loop didn't converge); it checks the git facts itself (branch is the default? upstream configured?) and emits `{push, reason}`. **Push only when `push` is true**; when false, surface `reason` in the report and stop. The "When NOT to auto-push" cases below are exactly what it encodes — kept here as the spec.
+
+When it says push:
 
 - **Standard git:** `git push`
 - **GitButler workspace:** `but push <branch-name>`
