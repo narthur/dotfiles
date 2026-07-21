@@ -9,6 +9,27 @@ A discipline for hard bugs. Skip phases only when explicitly justified.
 
 When exploring the codebase, use the project's domain glossary to get a clear mental model of the relevant modules, and check ADRs in the area you're touching.
 
+## Rule 0 — Verified vs assumed
+
+The default failure mode is asserting unverified guesses as facts, then debugging the wrong thing. Guard against it:
+
+- Every claim about the system is tagged **KNOWN** (you observed it this session — ran it, read the exact line, saw the log) or **ASSUMED** (inference, memory, "usually", "should"). If you can't cite the observation, it's ASSUMED.
+- Never let an ASSUMED claim drive a fix. Promote it to KNOWN with a probe first (Phase 4), or state the assumption out loud so the user can shoot it down.
+- Words like "clearly", "obviously", "must be", "the problem is" are red flags — each one needs a KNOWN behind it or it doesn't get said.
+
+**Maintain a known/unknown ledger.** For quick bugs, a couple of lines inline. For a hard or multi-session diagnosis, write it to Fieldnotes (`$OBSIDIAN_VAULT/Fieldnotes`) and update it as observations land:
+
+```
+## <bug> — diagnosis ledger
+KNOWN:   - repro: `npm test -- foo` fails with `TypeError: x undefined` (saw it)
+         - x is set in bar.js:42, read in baz.js:88 (read both)
+UNKNOWN: - is bar.js:42 even reached on the failing path?
+         - is x undefined or the whole object?
+RULED OUT: - not a race — fails identically single-threaded (ran 100x)
+```
+
+The ledger is the spine of the diagnosis: Phase 3 hypotheses are the top UNKNOWNs, Phase 4 probes move rows from UNKNOWN to KNOWN or RULED OUT, and you're done when the cause is KNOWN — not when it's plausible.
+
 ## Phase 1 — Build a feedback loop
 
 **This is the skill.** Everything else is mechanical. If you have a fast, deterministic, agent-runnable pass/fail signal for the bug, you will find the cause — bisection, hypothesis-testing, and instrumentation all just consume that signal. If you don't have one, no amount of staring at code will save you.

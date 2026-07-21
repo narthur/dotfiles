@@ -2,7 +2,7 @@
 
 These run only when their gate fires — the gate summary lives in SKILL Step 5 and is evaluated every run. When you spawn one of these, read its section here for the full focus, gating rationale, scoring, and routing. All receive the same style default and output shape as the always-on agents (SKILL Step 5).
 
-## Agent #7 — Structural simplification (conditional) `[model: session tier — unpinned]`
+## Agent #7 — Structural simplification (conditional) `[model: sonnet]`
 
 **Gating — only spawn this agent when the diff is substantial.** Skip it entirely (don't spawn) when ALL of these hold: total diff < ~150 changed lines, no single file grew past ~800 lines, and the change is a pure bugfix/config/dependency bump. Small and bot-driven PRs don't benefit from structural review and it only adds noise. When in doubt on a borderline diff, spawn it.
 
@@ -34,7 +34,7 @@ Like #7, this agent is **allowed and expected to read beyond the diff** — obse
 
 Findings here are verifiable (the failure path either surfaces something or it doesn't), so they use the **normal Step 6 rubric** — no special-casing like #7. The fixes are almost always additive (add a log line / metric / error surface), which makes them low-risk under Step 8a and so usually auto-applied.
 
-## Agent #9 — Intent reconciliation (conditional, cycle 1 only) `[model: session tier — unpinned]`
+## Agent #9 — Intent reconciliation (conditional, cycle 1 only) `[model: sonnet]`
 
 **Gating — spawn only when Step 4b established a reviewable intent** (feature / behavior-changing work with a stated goal); skip otherwise. Runs **once, in cycle 1 only** — it reviews the original change against its purpose, and the per-cycle fix deltas don't need re-reconciling.
 

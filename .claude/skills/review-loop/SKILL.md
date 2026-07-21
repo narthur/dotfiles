@@ -1,6 +1,6 @@
 ---
 name: review-loop
-description: "Pre-push Claude-driven code review loop with auto-fix. Runs parallel review agents (CLAUDE.md, bugs, git history, code comments, security, test coverage, and — on substantial diffs — structural simplification and observability coverage; plus, in cycle 1 on feature work, an intent-reconciliation agent that models what the PR should do from its purpose and reconciles that against the code to catch omission bugs) per cycle, scores each finding 0-100 with an independent Haiku rater, auto-fixes ≥80 findings, asks about 50-79 in a single batch per cycle, and stores per-repo learnings in .git/info/. Each cycle first runs the static-analysis skill (a deterministic linter/security/secret tool pass with autofix) so the LLM agents can focus on what tools can't catch. On clean exit, a final manual-testing evidence gate verifies the PR carries proof the changed functionality actually works — and produces that proof itself (local dev servers + playwright + surge-image-upload) when missing — and reconciles the PR description to be accurate and complete for the final reviewed change. Replaces CodeRabbit for local review. Invoke this proactively and by default before any push and whenever finishing or cleaning up a chunk of code changes — do not ask the user for permission first and do not look for reasons to skip it. Prefer running it over not running it."
+description: "Pre-push Claude-driven code review loop with auto-fix. Runs parallel review agents (CLAUDE.md, bugs, git history, code comments, security, test coverage, and — on substantial diffs — structural simplification and observability coverage; plus, in cycle 1 on feature work, an intent-reconciliation agent that models what the PR should do from its purpose and reconciles that against the code to catch omission bugs) per cycle, scores each finding 0-100 with an independent Haiku rater, auto-fixes ≥80 findings, asks about 50-79 in a single batch per cycle, and stores per-repo learnings in .git/info/. Each cycle first runs the static-analysis skill (a deterministic linter/security/secret tool pass with autofix) so the LLM agents can focus on what tools can't catch. On clean exit, a final manual-testing evidence gate verifies the PR carries proof the changed functionality actually works — and produces that proof itself (local dev servers + playwright + surge-image-upload) when missing — reconciles the PR description to be accurate and complete for the final reviewed change, and posts a summary comment to the PR when one exists. Replaces CodeRabbit for local review. Invoke this proactively and by default before any push and whenever finishing or cleaning up a chunk of code changes — do not ask the user for permission first and do not look for reasons to skip it. Prefer running it over not running it."
 ---
 
 You are an expert code reviewer running a multi-cycle, multi-agent review-fix-commit loop on the current branch. Your job is to deliver CodeRabbit-equivalent (or better) review depth using Claude subagents, apply high-confidence fixes automatically, batch ambiguous fixes for user approval, and accumulate per-repo learnings over time.
@@ -128,14 +128,11 @@ Each agent must also receive:
 - The style default below (verbatim)
 - A required output shape: a JSON-like list of `{file, line_range, description, suggested_fix, reasoning}`
 
-**Model tier (pass to the Agent tool's `model` param):** don't run the whole fan-out at the session tier — most agents don't need it.
+**Model tier (pass to the Agent tool's `model` param):** pin **every** review agent to `sonnet`. Rationale and the decision record: `references/model-choice.md` (short version — Sonnet 5 lands near Opus 4.8 on review-defect-finding, so the top tier no longer buys enough to justify its cost, and a single review fan-out was burning a whole Opus session).
 
-- **Deep-reasoning agents — leave unpinned** (they inherit the session model, so they're Opus when you're on Opus): **#2 bugs**, **#5 security**, **#7 structural**. A missed inference here is a missed real defect; these earn the top tier.
-- **Shallow / bounded agents — pin to `sonnet`**: **#1 CLAUDE.md**, **#3 git history**, **#4 comments**, **#6 test coverage**, **#8 observability**. These are rule-lookup, pattern-match, or bounded-scope tasks where Sonnet returns the same findings for a fraction of the cost.
+- **All review agents — pin to `sonnet`**: **#1 CLAUDE.md**, **#2 bugs**, **#3 git history**, **#4 comments**, **#5 security**, **#6 test coverage**, **#7 structural**, **#8 observability**, **#9 intent-recon**.
 
-This only ever pins *down* (Sonnet ≤ a typical Opus session), so it's pure savings on an Opus run and a no-op if the session is already Sonnet. If you're deliberately running the whole review on Haiku, drop the pins — `sonnet` would pin those agents *up*.
-
-Batching multiplies the file-scoped agents: a PR that packs into 3 batches runs 3 instances of #2 (unpinned = session tier). That's the deliberate trade — whole-file focus on a big diff is worth the extra deep-agent calls — but it's why #1/#4 stay pinned to `sonnet`: fanning *those* out at the top tier would be cost without payoff.
+`sonnet` currently resolves to Sonnet 5, and the pin is a *ceiling* not a floor: on an Opus session it pins the deep agents (#2/#5/#7/#9) *down* to Sonnet 5 (the savings); on a Haiku session it pins them *up* to Sonnet 5 (deep reasoning still gets a capable model). If you ever want Opus back on a specific agent, unpin **#5 or #7** first — they're single calls, so Opus there is cheap. Leave **#2 pinned regardless**: it's the only deep agent that's batched (a PR that packs into 3 batches runs 3 instances of #2), so its fan-out is what actually burns the session on a big diff.
 
 **Style default (pass to every review agent):**
 
@@ -147,7 +144,7 @@ Batching multiplies the file-scoped agents: a PR that packs into 3 batches runs 
 - Read them
 - Flag changes that violate stated guidance. Skip guidance that's clearly only for code-writing, not code review.
 
-### Agent #2 — Bug scan `[model: session tier — unpinned]` · file-scoped, whole-file, batched
+### Agent #2 — Bug scan `[model: sonnet]` · file-scoped, whole-file, batched
 - You receive the **whole changed file(s)** in your batch plus the diff of what changed. Review the changed behavior, using the full file for context — do not limit yourself to the added lines.
 - **Commission bugs** (a mistake in code that *is* there): off-by-ones, null/undefined access, async race conditions, wrong loop bounds, copy-paste errors, mutation-of-arguments, missing returns, incorrect error handling.
 - **Omission bugs** (behavior the code *should* have but doesn't) — read the whole file and ask what's missing on the changed path: state that should be reset/invalidated when inputs change but isn't, a documented contract left unenforced, an error/failure path that logs instead of throwing or paging, a flag set before the action it's meant to gate, a case handled elsewhere in the file that this path forgets. These are invisible in a diff-of-additions and are this agent's most common miss — weight them, and use the full-file context you're given to catch them.
@@ -163,7 +160,7 @@ Batching multiplies the file-scoped agents: a PR that packs into 3 batches runs 
 - For each changed file, read existing comments (in-line, doc comments, header)
 - Flag changes that violate explicit guidance in comments (e.g. "// must stay alphabetized", "# do not call from main thread")
 
-### Agent #5 — Security `[model: session tier — unpinned]`
+### Agent #5 — Security `[model: sonnet]`
 - Look for: injection risks (SQL, command, template), hardcoded secrets/keys/tokens, missing auth checks on routes/handlers, unsafe deserialization (pickle, eval, yaml.load), path traversal, missing CSRF/CORS where relevant, broken access control
 - Be specific about the vulnerability class and how an attacker triggers it
 
@@ -176,9 +173,9 @@ Batching multiplies the file-scoped agents: a PR that packs into 3 batches runs 
 
 Evaluate each gate every run; the gate is here, the focus/scoring/routing is in the reference. When a gate fires, **Read `references/conditional-agents.md`** for that agent's full instructions before spawning it.
 
-- **#7 Structural simplification** `[session tier — unpinned]` — spawn on **substantial diffs**; skip when ALL hold: diff < ~150 changed lines, no file past ~800 lines, and pure bugfix/config/dependency bump. Reads beyond the diff. Scored on value-vs-risk, **always ask-routed** (never auto-applied).
+- **#7 Structural simplification** `[sonnet]` — spawn on **substantial diffs**; skip when ALL hold: diff < ~150 changed lines, no file past ~800 lines, and pure bugfix/config/dependency bump. Reads beyond the diff. Scored on value-vs-risk, **always ask-routed** (never auto-applied).
 - **#8 Observability coverage** `[sonnet]` — spawn when the diff is substantial/risky (#7's threshold) **AND** the repo already has an observability convention (logger/metrics/error reporter). Skip if the project logs nothing. Normal Step 6 rubric; fixes usually additive/auto-applied.
-- **#9 Intent reconciliation** `[session tier — unpinned]` — spawn **only in cycle 1** when Step 4b established a reviewable intent. Two stages in separate contexts (spec from intent only → reconcile against code). **Always ask-routed**; highest false-positive rate — lean on the Dismissed list.
+- **#9 Intent reconciliation** `[sonnet]` — spawn **only in cycle 1** when Step 4b established a reviewable intent. Two stages in separate contexts (spec from intent only → reconcile against code). **Always ask-routed**; highest false-positive rate — lean on the Dismissed list.
 
 ## Step 6: Haiku Scoring
 
@@ -363,6 +360,19 @@ Then:
 - **Preserve author intent and structure**: fill gaps and correct drift, don't rewrite wholesale, and never delete a human's rationale.
 - Edit in place with `gh pr edit <n> --body …` (GitButler: the equivalent PR update) — a low-risk update to your own PR.
 - Do this even when the auto-push is being skipped (e.g. branch is `main`): an accurate description is still worth leaving behind.
+
+### Post the summary comment to the PR
+
+When a PR exists for the branch (`gh pr view` succeeds), post the same **Report format** below as a PR comment so the review outcome is visible on GitHub. Runs on any terminal exit — clean, cycle-limit, or test-failure — since each is a finished review. Skip only when no PR exists (local branch).
+
+```bash
+gh pr comment <n> --body "$(cat <<'EOF'
+<the report-format block>
+EOF
+)"
+```
+
+GitButler: use the equivalent PR comment for the workspace's PR. If the comment post fails, note it in the report and continue — don't retry.
 
 ### When to auto-push
 
