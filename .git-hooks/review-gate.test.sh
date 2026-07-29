@@ -47,4 +47,22 @@ if ! printf '%s\n' "refs/heads/main $sha2 refs/heads/main $sha" | "$gate" 2>/dev
 	echo "FAIL: push of only a foreign commit should not be gated"; exit 1
 fi
 
+# 5. Per-repo opt-out → passes even when unreviewed; unset/true still gates.
+# Needs a fresh commit of mine that isn't on the remote yet (test 4 pushed $sha).
+git commit -q --allow-empty -m mine-unpushed
+sha3=$(git rev-parse HEAD)
+line3="refs/heads/main $sha3 refs/heads/main $sha"
+git config hooks.reviewGate false
+if ! printf '%s\n' "$line3" | "$gate" 2>/dev/null; then
+	echo "FAIL: expected pass with hooks.reviewGate=false"; exit 1
+fi
+git config hooks.reviewGate true
+if printf '%s\n' "$line3" | "$gate" 2>/dev/null; then
+	echo "FAIL: hooks.reviewGate=true should still gate"; exit 1
+fi
+git config --unset hooks.reviewGate
+if printf '%s\n' "$line3" | "$gate" 2>/dev/null; then
+	echo "FAIL: unset hooks.reviewGate should still gate"; exit 1
+fi
+
 echo "ok"

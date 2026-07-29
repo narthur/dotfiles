@@ -7,6 +7,7 @@
 The gate blocks a push that would newly publish commits **you authored** whose tip sha isn't recorded as reviewed. review-loop records the sha on a clean exit (`~/.claude/skills/review-loop/record-reviewed.sh` → `~/.claude/review-loop/reviewed-shas`). Pushes containing only foreign-authored commits (dependabot, teammates, upstream merges) pass untouched.
 
 - **Bypass one push:** `REVIEW_GATE_BYPASS=1 git push`
+- **Opt a repo out permanently:** `git config hooks.reviewGate false` — for repos review-loop can't run on, not for repos you'd rather not review. Bare repos need the git dir: `git --git-dir=~/.dotfiles config hooks.reviewGate false`. Currently set on `dotfiles` and `dotprivate`, whose work tree is `$HOME` (no base branch to diff, so `context.sh` returns `base_branch: null`). Re-enable with `--unset`.
 - **Husky repos:** husky's local `core.hooksPath` shadows this global hook, so those repos need a `.husky/pre-push` delegator (`[ -x "$HOME/.git-hooks/review-gate.sh" ] && "$HOME/.git-hooks/review-gate.sh" "$@"`), kept untracked via `.git/info/exclude`.
 - **Self-test:** `~/.git-hooks/review-gate.test.sh`
 

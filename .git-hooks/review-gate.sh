@@ -14,11 +14,21 @@
 # publish — dependabot/teammate/upstream-merge-only pushes pass untouched.
 #
 # Bypass a single push:  REVIEW_GATE_BYPASS=1 git push
+# Opt a repo out for good:  git config hooks.reviewGate false
+#   (for a bare repo: git --git-dir=<dir> config hooks.reviewGate false)
 
 RED='\033[0;31m'; YELLOW='\033[1;33m'; BOLD='\033[1m'; NC='\033[0m'
 STORE="$HOME/.claude/review-loop/reviewed-shas"
 SKIP_STORE="$HOME/.claude/review-loop/skipped-shas"
 MY_EMAIL=$(git config user.email 2>/dev/null | tr '[:upper:]' '[:lower:]')
+
+# Per-repo opt-out, for repos review-loop can't actually run on (e.g. the bare
+# dotfiles repos, whose work tree is $HOME and which have no base branch to diff).
+# Unset or true => gated. Announced, so an exempt repo never reads as reviewed.
+if [ "$(git config --get --bool hooks.reviewGate 2>/dev/null)" = "false" ]; then
+	echo -e "${YELLOW}review-gate: disabled for this repo (hooks.reviewGate=false)${NC}" >&2
+	exit 0
+fi
 
 # Can't attribute authorship without an email — don't gate.
 [ -z "$MY_EMAIL" ] && exit 0
