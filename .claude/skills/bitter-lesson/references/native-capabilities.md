@@ -62,6 +62,19 @@ _First full audit run 2026-06-19 on v2.1.183 (same version as baseline). Changel
 - **Memory** (auto-memory files + `MEMORY.md` index) and **Fieldnotes** convention —
   the durable-knowledge stores; skills shouldn't reinvent note persistence.
 
+### New since baseline (v2.1.183 → v2.1.219, noted 2026-07-24)
+
+- **`/doctor` is a full setup checkup that diagnoses *and fixes* issues** (v2.1.214; `/checkup`
+  is an alias). Obsoletes hand-rolled config/hook/permission health checking.
+  → **This audit should delegate the hooks + `settings.json` health dimension to `/doctor`**
+  rather than re-deriving it. Run `/doctor` first, then audit what it doesn't cover.
+- **`/doctor` proposes trimming checked-in `CLAUDE.md` files** by cutting content Claude could
+  derive from the codebase (v2.1.206). Obsoletes the CLAUDE.md-bloat dimension of this audit.
+  → Hand CLAUDE.md trimming to `/doctor`. Keep bitter-lesson focused on what it does *not* do:
+  skill **content** quality, over-engineering, and staleness against model capability.
+- **Startup warning for `Write(path)` / `NotebookEdit(path)` / `Glob(path)` permission rules**
+  (v2.1.210) — prefer `Edit(path)` / `Read(path)`. Settings-hygiene now self-reporting.
+
 ## Model capabilities (Claude, current generation)
 
 - Strong unprompted ability at: reading stack traces, writing idiomatic code/commits,
@@ -70,6 +83,15 @@ _First full audit run 2026-06-19 on v2.1.183 (same version as baseline). Changel
 - Reliable structured output / tool-calling → skills don't need to hand-hold JSON formatting.
 - Large context windows → aggressive pre-summarization scaffolding is often unnecessary now;
   keep the raw (see Fieldnotes "AI Infrastructure Upgrades" item #4).
+- **Claude 5 generation needs materially less instruction** — Anthropic cut ~80% of Claude Code's
+  own system prompt with no measured performance loss
+  ([context-engineering guidance](https://claude.com/blog/the-new-rules-of-context-engineering-for-claude-5-generation-models),
+  noted 2026-07-24). → Rigid prohibitions that restate ordinary good taste are now pure overhead,
+  as is scaffolding that works around old context limits (subagent fan-out for long inputs,
+  chunking, re-reading for attention). The rules and an audit checklist live in
+  `~/.claude/skills/create-skill/references/context-engineering.md`; `refine-skill` reads it too.
+  **Guardrail:** this does *not* license deleting non-inferable knowledge — author preferences,
+  lessons with a real incident behind them, private facts, safety gates.
 
 ## Superseded-in-this-setup (confirmed deletions/merges from past audits)
 

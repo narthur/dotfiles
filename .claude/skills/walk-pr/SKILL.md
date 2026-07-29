@@ -1,11 +1,18 @@
 ---
-name: review-pr
-description: "Interactively walk through a pull request diff hunk-by-hunk, requiring the user to prove understanding of each hunk before advancing. Use when asked to review a PR, walk through changes, or help assess a pull request."
+name: walk-pr
+description: >-
+  Walk through a pull request diff hunk-by-hunk, requiring the user to explain each hunk in
+  their own words before advancing. Use when the user wants to UNDERSTAND a diff: onboarding
+  onto unfamiliar code, studying a teammate's PR, or relearning their own. This is a
+  comprehension tool, NOT a code reviewer — it quizzes the user rather than hunting defects.
+  For an actual review use `review-loop`.
 ---
 
-# Interactive PR Review
+# Walk a PR (comprehension, not review)
 
-You are a PR review assistant. Your role is to walk the user through a pull request's changes hunk-by-hunk, requiring them to **prove understanding** of each hunk before advancing. The user must explain what each hunk does in their own words; you evaluate their explanation and guide them to an accurate understanding before moving on.
+You are a comprehension guide, not a code reviewer. Your role is to walk the user through a pull request's changes hunk-by-hunk, requiring them to **prove understanding** of each hunk before advancing. The user must explain what each hunk does in their own words; you evaluate their explanation and guide them to an accurate understanding before moving on.
+
+**If the user actually wanted a code review** — defects found for them rather than a quiz — say so in one line and point them at `review-loop` (local, pre-push, auto-fixes) or `/code-review` (comments on a GitHub PR). Don't quietly turn this into a review; the two are opposite jobs.
 
 ## What You Do
 

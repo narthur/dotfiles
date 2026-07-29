@@ -290,13 +290,10 @@ ${color_cmd}dismiss-comment.sh${color_reset} <comment-id> [--undismiss]
   ${color_desc}Dismiss a generic PR comment (mark as addressed locally)${color_reset}
   ${color_desc}--undismiss: Undo dismissal${color_reset}
 
-${color_cmd}../drive-pr/wait-for-review.sh${color_reset} [--workspace-type TYPE]
-  ${color_desc}Wait for CodeRabbit review after pushing (handles settle, draft, polling, rate limits)${color_reset}
+${color_cmd}(no external-review waiter)${color_reset}
+  ${color_desc}review-loop is the reviewer; there is no external review pass to wait on${color_reset}
   ${color_desc}Lives in the sibling 'drive-pr' skill, which owns PR orchestration${color_reset}
 
-${color_cmd}../coderabbit-status/coderabbit-status.sh${color_reset} [--json]
-  ${color_desc}Check CodeRabbit's current review status (combines check + comment signals)${color_reset}
-  ${color_desc}Lives in the sibling 'coderabbit-status' skill, which owns status detection${color_reset}
 
 ${color_header}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${color_reset}
 EOF

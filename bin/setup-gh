@@ -1,0 +1,68 @@
+#!/bin/bash
+#
+# setup-gh — (re)authenticate the GitHub CLI with the COMPLETE set of scopes
+# this machine needs, in a single request.
+#
+# Why this exists: `gh auth refresh -s <one-scope>` is meant to merge the new
+# scope with your existing ones, but with keyring-backed tokens an incremental
+# refresh can silently drop scopes you already had — so adding one permission
+# loses another. Requesting the full set every time makes the result
+# deterministic: you always end up with exactly the scopes below, never a
+# partial set.
+#
+# Edit SCOPES to change what's granted. After editing, just re-run this script.
+#
+# Usage:
+#   setup-gh           Refresh the existing login with the full scope set
+#   setup-gh login     Do a fresh `gh auth login` (use if fully logged out or
+#                      the token is revoked and refresh fails)
+
+set -euo pipefail
+
+HOST="github.com"
+
+# The complete, canonical scope set. Keep this as the single source of truth.
+#   repo      — full control of repositories (PRs, issues, statuses, contents)
+#   workflow  — read/write GitHub Actions workflow files and runs
+#   read:org  — read org membership/teams (needed by many gh queries)
+#   project   — read/write Projects (v2)
+#   gist      — create/edit gists
+SCOPES="repo,workflow,read:org,project,gist"
+
+mode="${1:-refresh}"
+
+echo "Configuring gh auth on ${HOST} with scopes: ${SCOPES}"
+
+case "$mode" in
+  refresh)
+    if gh auth refresh -h "$HOST" -s "$SCOPES"; then
+      :
+    else
+      echo
+      echo "Refresh failed (token may be revoked or you're logged out)." >&2
+      echo "Falling back to a full login..." >&2
+      gh auth login -h "$HOST" -s "$SCOPES" -p https -w
+    fi
+    ;;
+  login)
+    gh auth login -h "$HOST" -s "$SCOPES" -p https -w
+    ;;
+  *)
+    echo "Usage: setup-gh [refresh|login]" >&2
+    exit 2
+    ;;
+esac
+
+echo
+echo "Done. Current auth status:"
+gh auth status -h "$HOST"
+
+# Verify the token actually works against the API (gh auth status can report a
+# cached/stale 'logged in' even when the token is rejected server-side).
+echo
+if login=$(gh api user -q .login 2>/dev/null); then
+  echo "✓ API call succeeded as: ${login}"
+else
+  echo "✗ API call still failing — the token is not valid. Try: setup-gh login" >&2
+  exit 1
+fi

@@ -1,7 +1,10 @@
 ---
 name: but
 version: 0.19.6
-description: "Commit, push, branch, and manage version control with GitButler. Use for: commit my changes, check what changed, create a PR, push my branch, view diff, create branches, stage files, edit commit history, squash commits, amend commits, undo commits, pull requests, merge, stash work. Replaces git - use 'but' instead of git commit, git status, git push, git checkout, git add, git diff, git branch, git rebase, git stash, git merge. Covers all git, version control, and source control operations."
+description: >-
+  Commit, push, branch, and manage version control with GitButler's `but` CLI instead of
+  `git`. Use for any git, version-control, or source-control operation: commit, status, push,
+  diff, branch, checkout, stage, rebase, squash, amend, undo, stash, merge, or open a PR.
 author: GitButler Team
 ---
 

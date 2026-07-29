@@ -60,6 +60,20 @@ count = "oxlint"
 accepts_files = true
 install_hint = "npm i -D oxlint"
 
+# ---- TS/JS codebase intelligence: dead code, cycles, dupes, complexity ----
+# Whole-repo by design, so config-gated: only runs where the repo opted in
+# (fallow init). No group — it doesn't overlap the js-lint rule linters.
+[fallow]
+exts = ["ts","tsx","js","jsx","mjs","cjs","vue","svelte","astro","css"]
+needs_config = true
+configs = [".fallowrc.json",".fallowrc.jsonc","fallow.toml",".fallow.toml"]
+runners = ["npx:fallow", "bunx:fallow", "path:fallow"]
+cmd = ["--format", "json"]
+target = "none"
+count = "fallow"
+accepts_files = false
+install_hint = "npm i -D fallow && npx fallow init"
+
 # ---- Ruby ----
 [rubocop]
 exts = ["rb","rake","erb","gemspec"]

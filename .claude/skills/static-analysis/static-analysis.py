@@ -314,6 +314,34 @@ def c_brakeman(o, e):
     return len(fnd), fnd
 
 
+def c_fallow(o, e):
+    d = _load(o)
+    if not isinstance(d, dict):
+        return _fallback(o, e)
+    chk = d.get("check") or {}
+    hlt = d.get("health") or {}
+    dup = d.get("dupes") or {}
+    fnd = []
+    for kind, items in chk.items():
+        if not isinstance(items, list):
+            continue
+        for x in items:
+            if not isinstance(x, dict):
+                fnd.append(f"{kind} {x}")
+                continue
+            path = x.get("path") or (x.get("files") or ["?"])[0]
+            name = x.get("export_name") or x.get("name") or ""
+            fnd.append(f"{path}:{x.get('line','?')} {kind} {name}".rstrip())
+    for h in hlt.get("findings", []):
+        fnd.append(f"{h.get('path')}:{h.get('line','?')} complexity "
+                   f"{h.get('name','')} ({h.get('severity','')})")
+    for g in dup.get("clone_groups", []):
+        i = (g.get("instances") or [{}])[0]
+        fnd.append(f"{i.get('file','?')}:{i.get('start_line','?')} duplicate "
+                   f"({len(g.get('instances', []))} copies)")
+    return len(fnd), fnd
+
+
 def c_generic_json(o, e):
     d = _load(o)
     if isinstance(d, list):
@@ -344,7 +372,7 @@ COUNTERS = {
     "stylelint": c_stylelint, "biome": c_biome, "oxlint": c_oxlint,
     "semgrep": c_semgrep, "golangci": c_golangci, "govulncheck": c_govulncheck,
     "zizmor": c_zizmor, "sqlfluff": c_sqlfluff, "brakeman": c_brakeman,
-    "generic_json": c_generic_json, "gitleaks": c_gitleaks,
+    "generic_json": c_generic_json, "gitleaks": c_gitleaks, "fallow": c_fallow,
 }
 
 

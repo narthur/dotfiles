@@ -1,9 +1,15 @@
 ---
 name: review-loop
-description: "Pre-push Claude-driven code review loop with auto-fix. Runs parallel review agents (CLAUDE.md, bugs, git history, code comments, security, test coverage, and — on substantial diffs — structural simplification and observability coverage; plus, in cycle 1 on feature work, an intent-reconciliation agent that models what the PR should do from its purpose and reconciles that against the code to catch omission bugs) per cycle, scores each finding 0-100 with an independent Haiku rater, auto-fixes ≥80 findings, asks about 50-79 in a single batch per cycle, and stores per-repo learnings in .git/info/. Each cycle first runs the static-analysis skill (a deterministic linter/security/secret tool pass with autofix) so the LLM agents can focus on what tools can't catch. On clean exit, a final manual-testing evidence gate verifies the PR carries proof the changed functionality actually works — and produces that proof itself (local dev servers + playwright + surge-image-upload) when missing — reconciles the PR description to be accurate and complete for the final reviewed change, and posts a summary comment to the PR when one exists. Replaces CodeRabbit for local review. Invoke this proactively and by default before any push and whenever finishing or cleaning up a chunk of code changes — do not ask the user for permission first and do not look for reasons to skip it. Prefer running it over not running it."
+description: >-
+  Pre-push multi-agent code review loop with auto-fix, finding scores, and per-repo learnings.
+  The reviewer for this setup. Use before any push and whenever finishing or cleaning
+  up a chunk of code changes — invoke it proactively without asking permission first; prefer
+  running it over skipping it.
 ---
 
-You are an expert code reviewer running a multi-cycle, multi-agent review-fix-commit loop on the current branch. Your job is to deliver CodeRabbit-equivalent (or better) review depth using Claude subagents, apply high-confidence fixes automatically, batch ambiguous fixes for user approval, and accumulate per-repo learnings over time.
+You are an expert code reviewer running a multi-cycle, multi-agent review-fix-commit loop on the current branch. Your job is to deliver commercial-reviewer-grade depth using Claude subagents, apply high-confidence fixes automatically, batch ambiguous fixes for user approval, and accumulate per-repo learnings over time.
+
+**You are the only review pass these repos get.** There is no external reviewer behind you — no CodeRabbit, no bot second opinion on push. What you miss ships. That raises the cost of a false negative relative to a false positive: when a finding is borderline real, surface it rather than filtering it out.
 
 ## Step 0: Gather Context (scripted)
 
@@ -25,6 +31,14 @@ It emits a single JSON blob and performs Steps 1–3 and the Step 3b *sizing* de
 
 Workspace detection and Steps 1–3 are documented in `references/context-fallback.md` — the **fallback** to consult only if the script errors or returns `null` for something you need. Don't re-run their bash by hand when the JSON already has the answer.
 
+Then self-heal the pre-push gate for husky repos (husky's local `core.hooksPath` shadows the global hook, so those repos need a delegator):
+
+```bash
+~/.claude/skills/review-loop/ensure-husky-gate.sh
+```
+
+No-op unless this is a husky repo missing the `.husky/pre-push` delegator; when missing, it drops an untracked one that hands pre-push control to `~/.git-hooks/review-gate.sh`. Runs before any push this session, so the gate is in place by Step 8/14.
+
 ## Step 2a: Learnings Staleness Sweep (triggered)
 
 When Step 0 reports `learnings_compaction_due = true` (≥40 entries), run the relevance-based sweep **once here, before the review agents**, so the whole run uses the slimmed file — then skip it for the rest of the run. Otherwise skip entirely. Procedure (dead-path + stale eviction, dedup/promote, one compaction subagent): **Read `references/staleness-sweep.md`**.
@@ -38,7 +52,19 @@ Before entering the main loop, check the diff size. Step 0's `context.sh` alread
 
 When in doubt (any logic touched, or borderline size), do NOT take the fast path — run the full loop. The fan-out's value is independent perspectives on substantial code; a typo or a version bump doesn't earn six agents plus scorers.
 
-**Fast path:** still run the Step 4a static-analysis pass (it's a deterministic subprocess, near-zero token cost, and catches secrets/SAST), then spawn **one** review subagent (`model: sonnet` — a sub-30-line, logic-free diff doesn't earn the top tier) covering the union of Agents #1 (CLAUDE.md), #2 (bugs), #4 (comments), and #5 (security) — pass it the diff, the learnings file, and the style default. Score its findings with **one** batched Haiku scorer (Step 6), then run Steps 7–14 exactly as normal (auto-fix / ask / test / commit / evidence gate / push). Report it as a single fast-path cycle. If that reviewer surfaces anything that changes program logic (an applied fix that isn't doc/config/comment-only), fall back to the full loop from cycle 1 — the fast path's premise (no logic under review) no longer holds.
+**Fast path:** run **no conditional agents** (#7–#10) — a logic-free sub-30-line diff can't earn a structural proposal, an intent reconciliation, or the `gh` calls Agent #10 costs. Still run the Step 4a static-analysis pass (it's a deterministic subprocess, near-zero token cost, and catches secrets/SAST), then spawn **one** review subagent (`model: sonnet` — a sub-30-line, logic-free diff doesn't earn the top tier) covering the union of Agents #1 (CLAUDE.md), #2 (bugs), #4 (comments), and #5 (security) — pass it the diff, the learnings file, and the style default. Score its findings with **one** batched Haiku scorer (Step 6), then run Steps 7–14 exactly as normal (auto-fix / ask / test / commit / evidence gate / push). Report it as a single fast-path cycle. If that reviewer surfaces anything that changes program logic (an applied fix that isn't doc/config/comment-only), fall back to the full loop from cycle 1 — the fast path's premise (no logic under review) no longer holds.
+
+### Fast-path re-entry — the follow-up commit after a clean exit
+
+You already ran the loop this session, reached a clean exit, then made a **small follow-up commit** (a comment, a doc line, a config tweak) — often to satisfy review feedback or your own polish. The pre-push gate will (correctly) block it: the tip changed, so this exact state hasn't been reviewed. **Do not** reach for `record-reviewed.sh` by hand to clear it — that stamps "reviewed" on something the loop never saw (see Step 14).
+
+Instead, re-enter here cheaply. Diff the new commit against the last reviewed sha (`git diff <last-reviewed-sha>...HEAD`), then:
+
+- **Fast-path-eligible** (Step 3b's test on that delta: under ~30 changed lines, no program logic) → run the fast path on the delta only: Step 4a static analysis + one combined reviewer + one scorer, then `record-reviewed.sh`. This is ~10 seconds and ends with a *legitimate* reviewed stamp.
+- **Genuinely beneath even that** (e.g. a one-word typo fix in a comment) → `record-skipped.sh "<reason>"` (Step 14). Honest, auditable, one line.
+- **Touches logic, or you're unsure** → run the full loop from cycle 1 on the delta. The re-entry is a shortcut for *trivial* follow-ups, not a way to shrink review of real changes.
+
+The point: make the honest lightweight path as cheap as the dishonest shortcut was, so there's never a reason to fake the stamp.
 
 ## Step 4: Main Loop
 
@@ -105,14 +131,14 @@ Agent #9 (intent reconciliation, Step 5) reviews the change against what it is *
 
 ## Step 5: Parallel Review Agents
 
-Spawn the review subagents in parallel (single message, multiple Agent tool calls). Agents #1–#6 always run. Agents #7 (structural simplification) and #8 (observability coverage) run **only on substantial diffs**; Agent #9 (intent reconciliation) runs **only in cycle 1 and only when Step 4b established a reviewable intent** — see each agent's gating rule.
+Spawn the review subagents in parallel (single message, multiple Agent tool calls). Agents #1–#6 always run. Agents #7 (structural simplification) and #8 (observability coverage) run **only on substantial diffs**; Agent #9 (intent reconciliation) runs **only in cycle 1 and only when Step 4b established a reviewable intent**; Agent #10 (prior review feedback) runs **only in cycle 1 and only when `gh` can reach the repo** — see each agent's gating rule.
 
 **This cycle's review scope** (Step 4 loop, step b): `git diff origin/<base_branch>...HEAD` on cycle 1, or `git diff <prev-cycle-sha>...HEAD` on cycles 2+. Below, "the diff" means this scope; "the whole changed files" means those files' full contents at HEAD.
 
 **Two agent classes — they get different context:**
 
 - **File-scoped** — **#1 CLAUDE.md, #2 bugs, #4 comments**. These reason *within* a file, so give them the **whole changed files**, not just the diff. Omission bugs — state that should reset/invalidate but doesn't, a contract left unenforced, an error path that logs instead of throwing, a flag set before the action it gates — are invisible in a diff-of-additions and only surface against the full file. (Measured on this skill's eval: whole-file flipped a modified-file omission miss from 1/3 → 3/3; diff-only stayed blind. See `evals/`.)
-- **Diff-scoped** — **#3 history, #5 security, #6 tests, #7 structural, #8 observability**. These reason *across* files and relationships, so give them the whole cycle diff (they may still read *beyond* it per their rules — the scope only bounds what counts as "under review"). One agent each.
+- **Diff-scoped** — **#3 history, #5 security, #6 tests, #7 structural, #8 observability, #10 prior review feedback**. These reason *across* files and relationships, so give them the whole cycle diff (they may still read *beyond* it per their rules — the scope only bounds what counts as "under review"). One agent each.
 
 **Batching the file-scoped agents (context budget).** Don't hand one agent every changed file (attention dilutes — measured: whole-PR context tanked recall to 0) nor spawn one agent per file (needless fan-out and cost). Instead run:
 
@@ -130,52 +156,29 @@ Each agent must also receive:
 
 **Model tier (pass to the Agent tool's `model` param):** pin **every** review agent to `sonnet`. Rationale and the decision record: `references/model-choice.md` (short version — Sonnet 5 lands near Opus 4.8 on review-defect-finding, so the top tier no longer buys enough to justify its cost, and a single review fan-out was burning a whole Opus session).
 
-- **All review agents — pin to `sonnet`**: **#1 CLAUDE.md**, **#2 bugs**, **#3 git history**, **#4 comments**, **#5 security**, **#6 test coverage**, **#7 structural**, **#8 observability**, **#9 intent-recon**.
+- **All review agents — pin to `sonnet`**: **#1 CLAUDE.md**, **#2 bugs**, **#3 git history**, **#4 comments**, **#5 security**, **#6 test coverage**, **#7 structural**, **#8 observability**, **#9 intent-recon**, **#10 prior review feedback**.
 
 `sonnet` currently resolves to Sonnet 5, and the pin is a *ceiling* not a floor: on an Opus session it pins the deep agents (#2/#5/#7/#9) *down* to Sonnet 5 (the savings); on a Haiku session it pins them *up* to Sonnet 5 (deep reasoning still gets a capable model). If you ever want Opus back on a specific agent, unpin **#5 or #7** first — they're single calls, so Opus there is cheap. Leave **#2 pinned regardless**: it's the only deep agent that's batched (a PR that packs into 3 batches runs 3 instances of #2), so its fan-out is what actually burns the session on a big diff.
 
-**Style default (pass to every review agent):**
+**Read `references/agent-roster.md` before spawning.** It carries the style-default paragraph every agent receives verbatim, plus the focus brief for each of #1–#6:
 
-> The user prefers an immutable style as the default: `const` over `let`-reassignment, expression forms (`??`/`||` short-circuit chains, ternaries, `map`/`filter`/`reduce`) over accumulate-and-mutate flows. Flag diff-introduced mutable patterns ONLY when they collapse cleanly into an immutable form with identical behavior. Do NOT flag mutability that is clearly more readable (deep nesting to avoid it, unwieldy expression) or measurably faster (hot loops, large-array copies) — those are the legitimate exceptions, not violations.
+| # | Agent | Scope |
+| --- | --- | --- |
+| 1 | CLAUDE.md compliance | file-scoped, whole-file, batched |
+| 2 | Bug scan — commission *and* omission | file-scoped, whole-file, batched |
+| 3 | Git history | changed regions, via `git log -p -L` / `git blame` |
+| 4 | Code comments compliance | file-scoped, whole-file, batched |
+| 5 | Security | diff |
+| 6 | Test coverage | diff |
 
-### Agent #1 — CLAUDE.md compliance `[model: sonnet]` · file-scoped, whole-file, batched
-- You receive the whole changed file(s) in your batch plus the diff of what changed.
-- List all relevant `CLAUDE.md` files (root + every directory touched by the batch)
-- Read them
-- Flag changes that violate stated guidance. Skip guidance that's clearly only for code-writing, not code review.
-
-### Agent #2 — Bug scan `[model: sonnet]` · file-scoped, whole-file, batched
-- You receive the **whole changed file(s)** in your batch plus the diff of what changed. Review the changed behavior, using the full file for context — do not limit yourself to the added lines.
-- **Commission bugs** (a mistake in code that *is* there): off-by-ones, null/undefined access, async race conditions, wrong loop bounds, copy-paste errors, mutation-of-arguments, missing returns, incorrect error handling.
-- **Omission bugs** (behavior the code *should* have but doesn't) — read the whole file and ask what's missing on the changed path: state that should be reset/invalidated when inputs change but isn't, a documented contract left unenforced, an error/failure path that logs instead of throwing or paging, a flag set before the action it's meant to gate, a case handled elsewhere in the file that this path forgets. These are invisible in a diff-of-additions and are this agent's most common miss — weight them, and use the full-file context you're given to catch them.
-- Ignore false-positive-prone categories: linter/typechecker territory (the Step 4a static-analysis pass owns this), formatting, missing imports
-
-### Agent #3 — Git history `[model: sonnet]`
-- For each significantly-modified region, run `git log -p -L <range>:<file>` or `git blame` on the original lines
-- Flag changes that revert past intentional fixes (look for "fix" / "revert" / issue refs in the history)
-- Flag changes that ignore conditions that prior commits added on purpose
-
-### Agent #4 — Code comments compliance `[model: sonnet]` · file-scoped, whole-file, batched
-- You receive the whole changed file(s) in your batch plus the diff of what changed.
-- For each changed file, read existing comments (in-line, doc comments, header)
-- Flag changes that violate explicit guidance in comments (e.g. "// must stay alphabetized", "# do not call from main thread")
-
-### Agent #5 — Security `[model: sonnet]`
-- Look for: injection risks (SQL, command, template), hardcoded secrets/keys/tokens, missing auth checks on routes/handlers, unsafe deserialization (pickle, eval, yaml.load), path traversal, missing CSRF/CORS where relevant, broken access control
-- Be specific about the vulnerability class and how an attacker triggers it
-
-### Agent #6 — Test coverage `[model: sonnet]`
-- Identify substantive logic changes (not pure refactors, not formatting)
-- Check whether tests in the diff cover them
-- Flag uncovered logic only when the change is non-trivial and the project clearly has a test suite. Skip if the repo has no tests at all.
-
-### Agents #7, #8, #9 — conditional (focus detail in `references/conditional-agents.md`)
+### Agents #7, #8, #9, #10 — conditional (focus detail in `references/conditional-agents.md`)
 
 Evaluate each gate every run; the gate is here, the focus/scoring/routing is in the reference. When a gate fires, **Read `references/conditional-agents.md`** for that agent's full instructions before spawning it.
 
 - **#7 Structural simplification** `[sonnet]` — spawn on **substantial diffs**; skip when ALL hold: diff < ~150 changed lines, no file past ~800 lines, and pure bugfix/config/dependency bump. Reads beyond the diff. Scored on value-vs-risk, **always ask-routed** (never auto-applied).
 - **#8 Observability coverage** `[sonnet]` — spawn when the diff is substantial/risky (#7's threshold) **AND** the repo already has an observability convention (logger/metrics/error reporter). Skip if the project logs nothing. Normal Step 6 rubric; fixes usually additive/auto-applied.
 - **#9 Intent reconciliation** `[sonnet]` — spawn **only in cycle 1** when Step 4b established a reviewable intent. Two stages in separate contexts (spec from intent only → reconcile against code). **Always ask-routed**; highest false-positive rate — lean on the Dismissed list.
+- **#10 Prior review feedback** `[sonnet]` — spawn **only in cycle 1**, and only when `gh` is authenticated and the repo has a GitHub remote. Mines review comments on past merged PRs that touched the same files and checks whether any apply again here. Skip on a repo with no PR history for the changed files. Normal Step 6 rubric; findings carry a citation to the prior comment.
 
 ## Step 6: Haiku Scoring
 
@@ -197,22 +200,7 @@ Give each scorer:
 - The learnings file contents
 - This rubric (verbatim), instructing it to **return one integer per finding, keyed by finding**, scoring each independently of the others in the batch:
 
-> Score this finding 0-100 for confidence that it is a real, actionable issue in this PR.
->
-> - **0**: Not confident at all. False positive that doesn't survive light scrutiny, or pre-existing issue not touched by this diff.
-> - **25**: Somewhat confident. Might be real, might not. Couldn't verify.
-> - **50**: Moderately confident. Real issue, but a nitpick or rare in practice.
-> - **75**: Highly confident. Verified real, likely to bite in practice. Important to functionality, or directly named in CLAUDE.md.
-> - **100**: Absolutely certain. Verified, will hit frequently, evidence is direct.
->
-> If a finding matches anything in the learnings file's Dismissed section, score it 0.
-> If it matches an Accepted pattern, raise that finding's score by 10 (cap at 100).
->
-> Return a score for every finding in the batch, each keyed to its finding (e.g. by index or file:line), as an integer 0-100. Score each finding independently — do not let one finding's score anchor another's.
-
-**Structural findings (Agent #7) score differently.** The rubric above is for verifiable defects; a simplification is subjective and will never be "verified true," so it would score low and get filtered out unfairly. For Agent #7 findings, score on *value vs. risk* instead: how much complexity the restructuring deletes (a whole layer/branch disappearing scores high; a cosmetic tidy scores low) balanced against how invasive the refactor is. Regardless of the resulting score, structural findings are **always routed to ask-user** (Step 8a) and are never auto-applied — the score only sets their ordering and whether they're surfaced as a blocker vs. a nit in the final report (Step 14).
-
-**Intent-reconciliation findings (Agent #9) score differently too.** These are questions about intent, not verified defects, so the confidence rubric would unfairly bury them. Score on *plausibility × impact-if-true*: how likely the gap is real given the intent, times how much it would matter if so. First apply the Dismissed-list check (a finding matching it scores 0) — this agent generates the most scope-expectation false positives, so that suppression carries the most weight here. Like #7, Agent #9 findings are **always routed to ask-user**, never auto-applied; the score only orders them and sets blocker-vs-question framing in the final report. Surface them in the report as *questions*, kept separate from verified defects.
+**Read `references/scoring-and-routing.md`** for the rubric to pass verbatim (the 0-100 anchors, the Dismissed/Accepted adjustments) and for the two agents that score on a different basis — #7 structural on value-vs-risk, #9 intent on plausibility × impact-if-true. Both are always ask-routed regardless of score.
 
 ## Step 7: Apply Auto-Fixes (≥80)
 
@@ -228,24 +216,7 @@ A 50-79 confidence score means *you* aren't sure, not necessarily that the *user
 
 Before asking, classify each 50-79 finding on three dimensions. A finding goes to **auto-fix** when ALL of the following are low-risk; otherwise it goes to **ask-user**.
 
-1. **Reversibility — how hard is this to roll back?**
-   - *Low:* pure addition (new test, new doc, new helper that's only consumed once), or a localised edit (<20 lines, single file) with no API change.
-   - *High:* deletes existing behavior, modifies a public type/export, touches >2 files, or changes anything in a migration / schema / generated code.
-
-2. **Blast radius — what does this change affect?**
-   - *Low:* internal to one file; or comment-only; or test-only.
-   - *High:* any exported function's signature; any prop a sibling component reads; anything imported by ≥3 files.
-
-3. **Forward-binding — does this lock in a future direction?**
-   - *Low:* tactical fix that doesn't constrain later design (e.g. inlining a value, tightening a guard, adding a test).
-   - *High:* introduces a new abstraction, dependency, naming convention, or architectural seam that other code will follow.
-
-Plus three hard rules that override the matrix:
-
-- **Structural finding (from Agent #7)** → always ask, never auto-apply. A behavior-preserving restructuring is inherently high-blast-radius and high-forward-binding; surface it as a proposal and let the user decide. This holds even if the Haiku score is ≥80.
-- **Suggested fix is unclear or conflicts with current state** → always ask. (Same as Step 7.)
-- **A `CLAUDE.md` file or learnings entry explicitly says "always ask the user about X"** → always ask.
-
+The three dimensions — **reversibility**, **blast radius**, **forward-binding** — and the three hard rules that override the matrix are in **`references/scoring-and-routing.md`**. Read it before classifying.
 **Bucket deterministically once each finding is classified.** After scoring (Step 6) and the risk classification above, assemble one JSON object per finding — `{id, agent, score, risk: "low"|"high", always_ask: bool}` — and route them with:
 
 ```bash
@@ -319,6 +290,8 @@ After committing, record this commit's sha (`git rev-parse HEAD`) as the previou
 
 On Step 8b outcomes, record learnings in `.git/info/review-loop-learnings.md` (two sections: **Dismissed**, **Accepted patterns**). It's re-shipped to every agent, so keep it a curated index, not a log.
 
+**Also record every Agent #10 finding that survived** — including ones auto-fixed at Step 7, which never reach Step 8b. #10 is the only agent whose findings come from outside the repo (`gh` review history), and it runs at most once per branch, so an unrecorded #10 finding costs the same API calls to rediscover next time. Write it to **Accepted patterns** with its citation intact ("PR #1042, @jakecoble: don't call this from the request path"). This is how a repo's most-repeated human review feedback migrates from GitHub into the local learnings file, where Agents #1–#6 see it for free on every subsequent run.
+
 Do the edits with `learn.py` — you judge match/novelty/section; the script does the dated surgery:
 - Re-match of an existing entry → `python3 ~/.claude/skills/review-loop/learn.py bump <file> "<substring>"` (bumps its date to today — the freshness signal Step 2a depends on).
 - Novel entry → `learn.py add <file> --section dismissed|accepted "<text, no date>"` (stamps today's date; creates the file/sections if missing).
@@ -345,34 +318,28 @@ Otherwise the gate is active — **Read `references/evidence-gate.md`** and foll
 
 ## Step 14: Final Report and Auto-Push
 
-### Reconcile the PR description (clean exit, PR exists)
+### Reconcile the PR description, then post the summary comment
 
-On a clean loop exit, if a PR exists, make the PR description **accurate and complete** for the now-final reviewed change. This is the counterpart to Step 4b: 4b captured *intended goals* for review and deliberately left the description alone; this runs *after* review converges, so describing what the change actually does is correct rather than contaminating, and it's the moment to leave the PR merge-ready.
+On a clean loop exit with a PR: reconcile the description so it is accurate and complete for the now-final reviewed change (this is the counterpart to Step 4b, which deliberately left it alone during review), then post the report block as a PR comment. Skip the reconcile on a cycle-limit exit, a test-failure short-circuit, or a local branch with no PR; the comment posts on any terminal exit where a PR exists.
 
-**When it runs — only when the change is done (converged):**
-- **Clean exit** (loop converged): reconcile. This is the only state where "accurate and complete" is meaningful and stable.
-- **Cycle limit reached**: **skip.** The loop didn't converge — open findings still need addressing, and fixing them will change the code, so a description written now goes stale immediately and would document known-open defects as "what the change does." It's reconciled on the eventual clean re-run instead. (Mirrors the auto-push and evidence-gate gates, which likewise hold off until the change is done.)
-- **Test failure short-circuit**: skip — the tree is knowingly broken.
-- **No PR** (local branch): skip; nothing to reconcile.
+Both procedures in full: **Read `references/report-format.md`.**
 
-Then:
-- Compare the current description against the final diff. Update it to state the purpose, the actual behavior (including notable edge cases and any decisions the review surfaced or resolved), and — if the repo's PRs use one — the test plan.
-- **Preserve author intent and structure**: fill gaps and correct drift, don't rewrite wholesale, and never delete a human's rationale.
-- Edit in place with `gh pr edit <n> --body …` (GitButler: the equivalent PR update) — a low-risk update to your own PR.
-- Do this even when the auto-push is being skipped (e.g. branch is `main`): an accurate description is still worth leaving behind.
+### Record the reviewed commit
 
-### Post the summary comment to the PR
-
-When a PR exists for the branch (`gh pr view` succeeds), post the same **Report format** below as a PR comment so the review outcome is visible on GitHub. Runs on any terminal exit — clean, cycle-limit, or test-failure — since each is a finished review. Skip only when no PR exists (local branch).
+On a **clean loop exit** (auto-fix bucket empty, tests green, no unresolved high-risk findings), record the reviewed HEAD so the pre-push review-gate recognizes it — **before** the auto-push decision below, so both this run's auto-push and any later *manual* push of the same HEAD pass the gate:
 
 ```bash
-gh pr comment <n> --body "$(cat <<'EOF'
-<the report-format block>
-EOF
-)"
+~/.claude/skills/review-loop/record-reviewed.sh
 ```
 
-GitButler: use the equivalent PR comment for the workspace's PR. If the comment post fails, note it in the report and continue — don't retry.
+Skip this on a **cycle-limit** or **test-failure** exit — that tree isn't a converged, reviewed state, so it shouldn't be waved through a later push. (The gate itself lives in `~/.git-hooks/review-gate.sh`; it blocks pushing commits you authored whose tip isn't recorded here, bypassable with `REVIEW_GATE_BYPASS=1`.)
+
+**`record-reviewed.sh` is this skill's completion stamp — it means the loop actually looked at this tip.** It is called *here, by the loop*, after a real review pass (full loop or the Step 3b fast path — both count). Do **not** hand-call it to clear the pre-push gate on a change the loop never examined: that records a review that never happened. If you make a tiny follow-up commit after a clean exit — a comment, a doc line, a config value — you have two honest options and this is not one of them:
+
+- **Run the fast-path re-entry** (below) — it's cheap, and if it's genuinely fast-path-eligible it ends by calling `record-reviewed.sh` legitimately.
+- **Record it as skipped**, if you judge it beneath even the fast path: `~/.claude/skills/review-loop/record-skipped.sh "<reason>"`. This clears the gate but writes a *distinct* state (skipped, with your reason) that never masquerades as reviewed. A reason is required, so the judgment is stated, not silent.
+
+"It's just a comment" is precisely the rationalization the gate exists to catch. Judging a change beneath the loop is a legitimate call — making that call *silently look like a review* is not. Record-skipped keeps the judgment and the honesty.
 
 ### When to auto-push
 
@@ -406,37 +373,7 @@ When skipping the auto-push, end the report with `Next step: <reason>; push when
 
 ### Report format
 
-```
-review-loop complete: <N> cycle(s), <M> commits, pushed: <yes|no — reason>.
-Evidence gate: <passed — existing evidence | passed — evidence captured & posted (link) | skipped — <no PR | no functional changes> | blocked — <reason>>.
-PR description: <reconciled to final change | already accurate — no edit | skipped — <no PR | not converged (cycle limit / test failure)>>.
-
-Cycle 1: <summary>
-Cycle 2: <summary>
-...
-
-Structural proposals (Agent #7 — not applied, your call):
-- Blockers: <high-value simplifications that delete a layer/branch, or file-size breaches — the things worth doing before this merges>
-- Nits: <smaller tidy-ups, listed briefly>
-(Omit this section entirely if Agent #7 didn't run or found nothing.)
-
-Intent questions (Agent #9 — reconciled against PR intent, not applied, your call):
-- <each as a question: "intent says X; the code does Y / doesn't do Z — intended?" — ordered by plausibility × impact>
-(Omit entirely if Agent #9 didn't run — skipped when the change had no reviewable intent (Step 4b) — or found nothing.)
-
-Auto-applied low-risk 50-79 (no ask):
-- <list with one-line summary each — visible to the user since they didn't see the ask>
-
-Static-analysis (Step 4a): autofixed <count>; security/secret/SAST findings <resolved/surfaced>; quality residue by tool: <tool=N, …>; skipped tools: <list or none>.
-
-Learnings sweep (Step 2a): <ran — dropped N (D dead-path, S stale), promoted P, now E entries | not triggered — <E> entries>.
-
-Remaining 50-79 findings the user skipped or didn't address:
-- <list>
-
-Remaining <50 findings (low confidence, not surfaced):
-- <count only, not detail>
-```
+The exact block to emit — and to reuse as the PR comment above — is in **`references/report-format.md`**.
 
 ## Quick Reference
 

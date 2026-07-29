@@ -1,0 +1,64 @@
+# Step 14: PR description reconcile, summary comment, and the report block
+
+### Reconcile the PR description (clean exit, PR exists)
+
+On a clean loop exit, if a PR exists, make the PR description **accurate and complete** for the now-final reviewed change. This is the counterpart to Step 4b: 4b captured *intended goals* for review and deliberately left the description alone; this runs *after* review converges, so describing what the change actually does is correct rather than contaminating, and it's the moment to leave the PR merge-ready.
+
+**When it runs — only when the change is done (converged):**
+- **Clean exit** (loop converged): reconcile. This is the only state where "accurate and complete" is meaningful and stable.
+- **Cycle limit reached**: **skip.** The loop didn't converge — open findings still need addressing, and fixing them will change the code, so a description written now goes stale immediately and would document known-open defects as "what the change does." It's reconciled on the eventual clean re-run instead. (Mirrors the auto-push and evidence-gate gates, which likewise hold off until the change is done.)
+- **Test failure short-circuit**: skip — the tree is knowingly broken.
+- **No PR** (local branch): skip; nothing to reconcile.
+
+Then:
+- Compare the current description against the final diff. Update it to state the purpose, the actual behavior (including notable edge cases and any decisions the review surfaced or resolved), and — if the repo's PRs use one — the test plan.
+- **Preserve author intent and structure**: fill gaps and correct drift, don't rewrite wholesale, and never delete a human's rationale.
+- Edit in place with `gh pr edit <n> --body …` (GitButler: the equivalent PR update) — a low-risk update to your own PR.
+- Do this even when the auto-push is being skipped (e.g. branch is `main`): an accurate description is still worth leaving behind.
+
+### Post the summary comment to the PR
+
+When a PR exists for the branch (`gh pr view` succeeds), post the same **Report format** below as a PR comment so the review outcome is visible on GitHub. Runs on any terminal exit — clean, cycle-limit, or test-failure — since each is a finished review. Skip only when no PR exists (local branch).
+
+```bash
+gh pr comment <n> --body "$(cat <<'EOF'
+<the report-format block>
+EOF
+)"
+```
+
+GitButler: use the equivalent PR comment for the workspace's PR. If the comment post fails, note it in the report and continue — don't retry.
+
+### Report format
+
+```
+review-loop complete: <N> cycle(s), <M> commits, pushed: <yes|no — reason>.
+Evidence gate: <passed — existing evidence | passed — evidence captured & posted (link) | skipped — <no PR | no functional changes> | blocked — <reason>>.
+PR description: <reconciled to final change | already accurate — no edit | skipped — <no PR | not converged (cycle limit / test failure)>>.
+
+Cycle 1: <summary>
+Cycle 2: <summary>
+...
+
+Structural proposals (Agent #7 — not applied, your call):
+- Blockers: <high-value simplifications that delete a layer/branch, or file-size breaches — the things worth doing before this merges>
+- Nits: <smaller tidy-ups, listed briefly>
+(Omit this section entirely if Agent #7 didn't run or found nothing.)
+
+Intent questions (Agent #9 — reconciled against PR intent, not applied, your call):
+- <each as a question: "intent says X; the code does Y / doesn't do Z — intended?" — ordered by plausibility × impact>
+(Omit entirely if Agent #9 didn't run — skipped when the change had no reviewable intent (Step 4b) — or found nothing.)
+
+Auto-applied low-risk 50-79 (no ask):
+- <list with one-line summary each — visible to the user since they didn't see the ask>
+
+Static-analysis (Step 4a): autofixed <count>; security/secret/SAST findings <resolved/surfaced>; quality residue by tool: <tool=N, …>; skipped tools: <list or none>.
+
+Learnings sweep (Step 2a): <ran — dropped N (D dead-path, S stale), promoted P, now E entries | not triggered — <E> entries>.
+
+Remaining 50-79 findings the user skipped or didn't address:
+- <list>
+
+Remaining <50 findings (low confidence, not surfaced):
+- <count only, not detail>
+```

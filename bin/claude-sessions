@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+#
+# claude-sessions — list currently-running Claude Code sessions in a table.
+#
+# Columns:
+#   STATUS  what the session is doing right now (emoji + label):
+#             🟢 running   — actively working / generating
+#             ✅ done      — idle, finished its turn, awaiting your next message
+#             🔴 awaiting  — blocked on a prompt (e.g. permission); needs you
+#             🐚 shell     — dropped to a shell
+#   CTX     percentage of the context window currently in use
+#   DIR     working directory (home collapsed to ~)
+#   PID     process id
+#
+# Source of truth is ~/.claude/sessions/<pid>.json, which Claude Code writes
+# for every live session (status, waitingFor, sessionId, cwd). We confirm each
+# pid is still alive, then read the session transcript for context usage.
+#
+# Usage:
+#   claude-sessions              print the table once
+#   claude-sessions -w [SECS]    watch mode: re-render every SECS seconds (default 2)
+#
+set -euo pipefail
+
+sessions_dir="$HOME/.claude/sessions"
+projects_dir="$HOME/.claude/projects"
+home="$HOME"
+
+watch=0
+interval=2
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -w|--watch) watch=1; [[ "${2:-}" =~ ^[0-9]+$ ]] && { interval="$2"; shift; } ;;
+    -h|--help)  sed -n '2,/^set -/p' "$0" | sed 's/^# \{0,1\}//; /^set -/d'; exit 0 ;;
+    *) echo "claude-sessions: unknown argument '$1'" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+# Denominator for the context-usage percentage. The 1M window isn't recorded on
+# disk (the per-message model id is plain, with no beta marker), so we pick it
+# adaptively: a 200k session auto-compacts before exceeding 200k, so any total
+# above that must be a 1M session. Force a fixed value with CC_CONTEXT_LIMIT.
+ctx_limit="${CC_CONTEXT_LIMIT:-}"
+ctx_limit_for() {
+  local total="$1"
+  [[ -n "$ctx_limit" ]] && { echo "$ctx_limit"; return; }
+  (( total > 200000 )) && echo 1000000 || echo 200000
+}
+
+# Compute context-window usage % for a session transcript. Echoes e.g. "82%"
+# or "-" if the transcript / usage can't be found. We read the file in reverse
+# and grab the most recent line carrying token usage (the last model turn);
+# context in use ≈ input + cache_creation + cache_read + output of that turn.
+context_pct() {
+  local sid="$1" f line total
+  f=$(ls "$projects_dir"/*/"$sid".jsonl 2>/dev/null | head -1) || true
+  [[ -n "$f" && -f "$f" ]] || { echo "-"; return; }
+  # Reverse the file: tac on GNU, tail -r on BSD/macOS.
+  line=$( { tac "$f" 2>/dev/null || tail -r "$f" 2>/dev/null; } | grep -m1 '"input_tokens"' || true)
+  [[ -n "$line" ]] || { echo "-"; return; }
+  total=$(printf '%s' "$line" | jq -r '
+    .message.usage as $u
+    | ($u.input_tokens // 0)
+      + ($u.cache_creation_input_tokens // 0)
+      + ($u.cache_read_input_tokens // 0)
+      + ($u.output_tokens // 0)' 2>/dev/null) || true
+  [[ "$total" =~ ^[0-9]+$ ]] || { echo "-"; return; }
+  local limit; limit=$(ctx_limit_for "$total")
+  echo "$(( total * 100 / limit ))%"
+}
+
+render() {
+shopt -s nullglob
+local files=("$sessions_dir"/*.json)
+shopt -u nullglob
+
+local rows=() jf pid status waiting_for cwd sid badge ctx k
+for jf in "${files[@]}"; do
+  pid=$(jq -r '.pid // empty' "$jf" 2>/dev/null) || continue
+  [[ -n "$pid" ]] || continue
+  # Only list sessions whose process is actually alive (drop stale files).
+  kill -0 "$pid" 2>/dev/null || continue
+
+  # Split on tab only: waitingFor values like "permission prompt" contain spaces.
+  IFS=$'\t' read -r status waiting_for cwd sid < <(
+    jq -r '[.status // "idle", .waitingFor // "-", .cwd // "?", .sessionId // ""] | @tsv' "$jf" 2>/dev/null
+  )
+
+  case "$status" in
+    busy)    badge="🟢 running" ;;
+    waiting) badge="🔴 awaiting"; [[ "$waiting_for" != "-" ]] && badge="🔴 awaiting ($waiting_for)" ;;
+    idle)    badge="✅ done" ;;
+    shell)   badge="🐚 shell" ;;
+    *)       badge="• $status" ;;
+  esac
+
+  [[ "$cwd" == "$home" ]] && cwd="~"
+  [[ "$cwd" == "$home/"* ]] && cwd="~${cwd#$home}"
+
+  ctx=$(context_pct "$sid")
+
+  # Sort key: awaiting first, then running, then the rest.
+  case "$status" in
+    waiting) k=0 ;; busy) k=1 ;; idle) k=2 ;; *) k=3 ;;
+  esac
+  rows+=("$k	$badge	$ctx	$cwd	$pid")
+done
+
+if [[ ${#rows[@]} -eq 0 ]]; then
+  echo "No running Claude Code sessions."
+  return 0
+fi
+
+{
+  printf 'STATUS\tCTX\tDIR\tPID\n'
+  printf '%s\n' "${rows[@]}" | sort -t$'\t' -k1,1n | cut -f2-
+} | column -t -s $'\t'
+}
+
+if [[ "$watch" -eq 0 ]]; then
+  render
+  exit 0
+fi
+
+# Watch mode: redraw in place until interrupted. Hide the cursor while drawing
+# and always restore it on the way out (EXIT covers every termination path).
+printf '\033[?25l'
+trap 'printf "\033[?25h\n"' EXIT
+trap 'exit 0' INT TERM
+while true; do
+  out=$(render)
+  # Clear screen + home cursor, then print, so the table updates without scroll.
+  printf '\033[H\033[2J%s — refreshing every %ss (Ctrl-C to quit)\n\n%s\n' \
+    "$(date '+%H:%M:%S')" "$interval" "$out"
+  sleep "$interval"
+done

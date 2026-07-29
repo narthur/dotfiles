@@ -1,6 +1,9 @@
 ---
 name: pr-triage
-description: "Go through open pull requests, check their status, and take actions to move them forward. This includes triaging PRs, fixing CI, resolving feedback, merging, or managing PR workflow. Use when asked to triage PRs, go through open PRs, or manage PR workflow. Runs autonomously by default on the user's own PRs — rebasing, resolving conflicts, fixing CI, and applying bot feedback without input — and only returns to the user once it has exhausted all autonomous work."
+description: >-
+  Go through open pull requests and take actions to move them toward merge. Use when asked to
+  triage PRs, go through open PRs, or manage PR workflow. Runs autonomously on the user's own
+  PRs and returns only once no autonomous work remains.
 ---
 
 You are helping the user triage their open pull requests. Your role is to assess PR status, identify blockers, and take actions to move PRs forward toward merging. **By default you operate autonomously** (see "Autonomous Operation" below): work every eligible PR as far as you can on your own, and only return to the user once nothing autonomous remains.
@@ -62,7 +65,7 @@ gh pr list --state open --json number,title,author,assignees,isDraft | \
     | {number, title, isDraft} ]'
 ```
 
-PRs that are **not** eligible (someone else's, or assigned away) are out of scope for autonomous changes. Don't rebase/fix/push them; just note them in the final report (and, for others' code, you may still offer a CodeRabbit review via the normal menu).
+PRs that are **not** eligible (someone else's, or assigned away) are out of scope for autonomous changes. Don't rebase/fix/push them; just note them in the final report.
 
 ### Autonomous actions — do these without asking
 
@@ -71,9 +74,8 @@ For each eligible PR, take every applicable action, committing and pushing as yo
 - **Integrate base / resolve conflicts** — rebase or merge `origin/<base>` and resolve conflicts yourself, keeping both sides' intent. Prefer a **merge** over a rebase when the branch's history already uses merges or has internal churn that would make a rebase replay the same conflicts repeatedly. Verify with the affected package's tests/typecheck before pushing. See "Option 3 - Fix conflicts".
 - **Fix failing CI** — fix real failures in the worktree; re-run only genuinely-transient checks. See "Option 1 - Fix failing CI".
 - **Apply bot feedback** — run `/drive-pr <pr#> --non-interactive` (its Non-interactive/batch mode). It applies all **bot** and procedural feedback automatically and, critically, **does NOT pause on human feedback** — it returns the list of unresolved human threads instead. Take that list, add each human thread to the deferred items for the final request, and keep going. **Never let feedback resolution block autonomous work**: resolve what's auto-resolvable, defer the rest, and move on to the next action on this or another eligible PR.
-- **Do not request or re-request CodeRabbit reviews.** Treat CodeRabbit as **one review per PR** — the automatic review on open. (PinePeakDigital repos enforce this with `auto_incremental_review: false`; other orgs like `narthur`/`seedtime` may still auto-review pushes, but the triage policy is the same — never request reviews autonomously.) The `/drive-pr <pr#> --non-interactive` pass above already waits once for the initial review to land and resolves whatever CodeRabbit posts — so there is nothing for triage to request. A manual re-request remains available only as an explicit, user-chosen menu action (Option 9 below); it is **never** part of autonomous triage.
 
-After any push, CI re-runs. Don't block on it — move to the next eligible PR and revisit (re-`view`) once CI settles. (A push does **not** trigger a new CodeRabbit review.)
+After any push, CI re-runs. Don't block on it — move to the next eligible PR and revisit (re-`view`) once CI settles.
 
 ### Gated actions — NEVER do automatically
 
@@ -84,42 +86,7 @@ Both are batched into the single final request below.
 
 ### Dependabot PRs (auto-merge exception)
 
-Dependabot PRs (`app/dependabot`) are the **one exception** to "never merge automatically". They are dependency bumps, not the user's own code, and the user has opted into hands-off handling for the low-risk ones. Handle them like this:
-
-1. **Classify the bump** with the helper:
-
-   ```bash
-   ~/.claude/skills/pr-triage/dependabot-bump-type <number>
-   # stdout: minor-patch | major | unknown
-   # exit 0 = minor-patch, 1 = major, 2 = unknown
-   ```
-
-2. **Overlap guard — check for a competing human PR before auto-merging.** If an open non-Dependabot PR edits the same `package.json` this bump touches, auto-merging will pile conflict churn onto that human PR (it has to re-resolve the lockfile/version lines every time a bump lands). Run:
-
-   ```bash
-   ~/.claude/skills/pr-triage/dependabot-overlap <number>
-   # exit 0 = overlap found → DO NOT auto-merge; defer to user
-   # exit 1 = no overlap   → safe to auto-merge (still subject to the checks below)
-   # exit 2 = error
-   ```
-
-   On exit 0, treat the bump as deferred: note it in the final request as "subsumed by / overlaps #<n> — held to avoid conflict churn" and move on. Do **not** auto-merge it even if it is green + `minor-patch`. (An action-only bump like `actions/checkout` touches no manifest and always reports no overlap.)
-
-3. **Decide by state** (only when the overlap guard reports clear):
-
-   - **Green + mergeable + `minor-patch`** → **auto-merge it** (the exception). Use the repo's default merge method, defaulting to squash: `gh pr merge <number> --squash` (or `--merge`/`--rebase` to match repo settings). Log it and move on. Do **not** add it to the final batched request — it's done.
-   - **Green + mergeable + `major` or `unknown`** → do **not** merge. Defer to the final batched request under "Ready to merge" with the bump type noted (e.g. "major: 4.x → 5.x — your call"). Major bumps and unclassifiable titles (group updates, odd version strings) always need the user's judgment.
-   - **CI failing** → do **not** try to fix a dependency bump in-tree. A genuinely failing bump usually means the new version breaks something, which is a decision for the user — defer it to the final request with the failing check named. Only re-run a check that is plainly transient (timeout, network, runner error); never hand-edit the dependency to make CI pass.
-
-4. **Conflicts / behind base** → **never** manually rebase or force-push a Dependabot branch (it desyncs Dependabot and it'll just recreate the PR). Instead comment `@dependabot rebase` and move on; revisit the PR on a later pass once Dependabot has updated it:
-
-   ```bash
-   gh pr comment <number> --body "@dependabot rebase"
-   ```
-
-5. **Bot feedback** on Dependabot PRs (e.g. CodeRabbit) is informational — don't block on it. Apply trivially-safe auto-fixes if `/drive-pr --non-interactive` handles them, otherwise leave it; the merge decision is driven by CI + bump type, not by review threads.
-
-Everything Dependabot-related still goes in the activity log: classification result, each `@dependabot rebase` comment, each auto-merge (with SHA), and each deferral with its reason.
+Dependabot bumps carry a standing opt-in: a green, mergeable, `minor-patch` bump may be merged autonomously without per-PR authorization. Every other PR still needs explicit authorization. Classification, the `minor-patch` boundary, overlap handling, and the full procedure: **Read `references/dependabot.md`** when the queue contains a Dependabot PR.
 
 ### Exhaustion loop
 
@@ -142,27 +109,7 @@ Prefer a single `AskUserQuestion` (or one compact numbered list) so the user can
 
 ### Activity log
 
-Keep a durable, reviewable trail of everything autonomous mode does. Log to a per-repo file:
-
-```
-${XDG_CACHE_HOME:-$HOME/.cache}/pr-triage-worktrees/<owner>-<repo>/triage-activity.log
-```
-
-Append one timestamped line per meaningful action — don't overwrite. At the start of a run write a header, then log each action as you take it (not in a batch at the end, so the trail survives an interruption):
-
-```bash
-LOG="${XDG_CACHE_HOME:-$HOME/.cache}/pr-triage-worktrees/$(gh repo view --json nameWithOwner -q .nameWithOwner | tr / -)/triage-activity.log"
-mkdir -p "$(dirname "$LOG")"
-log() { printf '%s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$LOG"; }
-
-log "=== autonomous run start: $(gh repo view --json nameWithOwner -q .nameWithOwner) ==="
-log "PR #780: rebased onto origin/main, resolved 2 conflicts in shared.ts, pushed (abc1234)"
-log "PR #780: applied CodeRabbit feedback (assert issues field), tests 14/14, pushed (def5678)"
-log "PR #601: web-audit failing on repo-wide vitest CVE — deferred to user"
-log "=== run end: 3 ready to merge, 1 needs input ==="
-```
-
-Log at minimum: run start/end, each conflict resolution / CI fix / feedback application (with the pushed commit SHA), each gated item deferred, and each thing deferred to the user with the reason. Tell the user where the log lives in your final report.
+Autonomous runs keep a log so the user can audit what happened without watching. Format and what to record: **Read `references/activity-log.md`.**
 
 ## CRITICAL: Workflow Constraints
 
@@ -185,7 +132,7 @@ The session commands track state across the triage session. Using `gh` directly 
 
 ### Auto-checkout into a per-repo worktree
 
-`pr-review-session view` and `next` automatically check out the PR's branch into a per-repo triage worktree at `${XDG_CACHE_HOME:-~/.cache}/pr-triage-worktrees/<owner>-<repo>`. The summary prints `Worktree: <path>` — use that path for any follow-up action that needs the code on disk (fix CI, resolve feedback, run CodeRabbit, rebase). The same worktree is reused as you step between PRs; the script switches the branch in place.
+`pr-review-session view` and `next` automatically check out the PR's branch into a per-repo triage worktree at `${XDG_CACHE_HOME:-~/.cache}/pr-triage-worktrees/<owner>-<repo>`. The summary prints `Worktree: <path>` — use that path for any follow-up action that needs the code on disk (fix CI, resolve feedback, rebase). The same worktree is reused as you step between PRs; the script switches the branch in place.
 
 - **Already checked out elsewhere:** if the PR's branch is already in another worktree (vibe kanban, manual `git worktree add`, or the main repo itself), the script reports that path instead of creating a duplicate.
 - **Dirty worktree:** if the triage worktree has uncommitted changes, the script refuses to switch and just prints the existing path. Resolve the WIP, then re-run `view <N>` to switch.
@@ -193,7 +140,7 @@ The session commands track state across the triage session. Using `gh` directly 
 
 When acting on a PR, prefer running commands in the printed worktree path (`cd "$WORKTREE" && …` or `git -C "$WORKTREE" …`) rather than re-running `gh pr checkout` in the main repo.
 
-**Invoking other skills during triage:** any skill that operates on "the current branch" or cwd's git state (e.g. `/pr-cleanup`, `/lint`, `/jest`, `/ruby-tests`, `/coderabbit:review`) will silently audit/test the wrong code if invoked from the main repo's cwd while the PR lives in the worktree. Before invoking such a skill, `cd` into the printed `Worktree:` path so the subskill's git/test commands resolve against the PR's checkout. If a subskill auto-detects context, brief it explicitly with the worktree path.
+**Invoking other skills during triage:** any skill that operates on "the current branch" or cwd's git state (e.g. `/pr-cleanup`, `/lint`, `/jest`, `/ruby-tests`) will silently audit/test the wrong code if invoked from the main repo's cwd while the PR lives in the worktree. Before invoking such a skill, `cd` into the printed `Worktree:` path so the subskill's git/test commands resolve against the PR's checkout. If a subskill auto-detects context, brief it explicitly with the worktree path.
 
 ---
 
@@ -272,10 +219,8 @@ What would you like to do?
 5. Mark ready - Convert from draft to ready for review
 6. Merge PR - Merge the pull request
 7. Close PR - Close without merging
-8. Run CodeRabbit review - Run a local AI code review on this PR's changes
-9. Request CodeRabbit review - Manually trigger ONE more remote CodeRabbit review (deliberate exception to the one-review-per-PR default; spends rate-limit quota)
-10. Snooze - Temporarily hide this PR and revisit later (e.g. 1h, 1d, 1w)
-11. Next - Mark reviewed and move to next unreviewed (`pr-review-session next`)
+8. Snooze - Temporarily hide this PR and revisit later (e.g. 1h, 1d, 1w)
+9. Next - Mark reviewed and move to next unreviewed (`pr-review-session next`)
 ```
 
 Adjust options based on PR state:
@@ -284,119 +229,12 @@ Adjust options based on PR state:
 - Hide "Merge PR" unless the summary's `Mergeable` line reads exactly `Yes`. Any other value (`No - has conflicts`, `No - blocked (required reviews / branch protection)`, `No - branch behind base`, `No - draft`, `No - failing/pending checks`, `Unknown (computing...)`) means do NOT offer Merge. The session summary derives this from `mergeable` (`MERGEABLE` / `CONFLICTING` / `UNKNOWN`) AND `mergeStateStatus` (`CLEAN` / `BLOCKED` / `BEHIND` / `DIRTY` / `DRAFT` / `UNSTABLE` / `HAS_HOOKS` / `UNKNOWN`) — both must be green. `mergeable: MERGEABLE` alone is not enough; it only means no file conflicts.
 - Hide "Fix conflicts" if no conflicts
 - Hide "Resolve feedback" if no unresolved comments
-- Only show "Run CodeRabbit review" if the PR author is NOT the current user (check with `gh api user -q .login`; i.e., it's someone else's code)
-- Only show "Request CodeRabbit review" when (1) PR author IS the current user, and (2) the `cr-needs-review` script confirms commits exist beyond CodeRabbit's last review. This is a **manual-only override** — CodeRabbit already reviewed the PR once automatically on open, so offering it here lets the user *deliberately* spend rate-limit quota on a second look. Never select it autonomously. **Always run this check** when presenting options for the user's own PRs:
-  ```bash
-  ~/.claude/skills/pr-triage/cr-needs-review <number>
-  # Exit 0 → commits exist beyond the last review, SHOW the option
-  # Exit 1 → head already reviewed, HIDE the option
-  ```
 
 ### Step 4: Execute Selected Action
 
-**Option 1 - Fix failing CI:**
+**Read `references/actions.md`** and follow the section for the option that was selected. Options: 1 fix CI · 2 resolve feedback · 3 fix conflicts · 4 request review · 5 mark ready · 6 merge · 7 close · 8 snooze.
 
-1. **Review CI run history first.** Before re-running or fixing anything, check whether the failing check has already been re-run previously. Use `gh run list --branch <branch> --limit 5` to see recent runs. If a check has already failed multiple times across different runs, it's almost certainly a real bug — don't re-run, investigate and fix instead. Only re-run if this is the first failure and it looks transient (e.g. timeout, network error, resource exhaustion).
-2. Use the worktree printed by the summary (`Worktree: <path>`) — `view`/`next` already checked the PR out there. For GitButler workspaces, fall back to `but status` and create the branch if needed.
-3. Identify failing checks and their logs.
-4. Fix the issues directly in the worktree.
-5. After fixes, commit and push from the worktree.
-
-**Option 2 - Resolve feedback:**
-
-1. Use the worktree printed by the summary — `view`/`next` already checked the PR out there.
-2. Invoke the `/drive-pr` skill to handle the rest. It drives the PR toward mergeable and delegates the feedback dimension to the `resolve-feedback` skill (retrieving feedback, presenting options, implementing fixes, and marking each item resolved).
-3. After the skill completes, return to PR assessment.
-
-**Option 3 - Fix conflicts:**
-
-**IMPORTANT: Detect GitButler workspace before rebasing**
-
-First, check if you're in a GitButler workspace:
-```bash
-git branch --show-current
-```
-
-**If on `gitbutler/workspace` branch (GitButler mode):**
-
-1. Use the `/gitbutler` skill to handle the rebase:
-   - The skill knows how to work with GitButler virtual branches
-   - It will use `but` CLI commands to rebase the virtual branch
-   - Example: `/gitbutler rebase <branch-name> onto <base-branch>`
-
-**If on a regular git branch (standard git mode):**
-
-1. Use the worktree printed by the summary (`Worktree: <path>`).
-2. Determine the PR's actual base branch from the PR metadata — **never assume `main`**:
-   ```bash
-   gh pr view <number> --json baseRefName -q '.baseRefName'
-   ```
-3. From the worktree, fetch and rebase onto `origin/<base-branch>` (always use the remote base branch, never the local one, to avoid stale state):
-   ```bash
-   cd "<worktree>" && git fetch origin <base-branch> && git rebase origin/<base-branch>
-   ```
-4. Resolve conflicts.
-5. Push updated branch: `git push --force-with-lease`.
-
-**Option 4 - Request review:**
-
-```bash
-gh pr edit <number> --add-reviewer <username>
-```
-
-**Option 5 - Mark ready:**
-
-```bash
-gh pr ready <number>
-```
-
-**Option 6 - Merge PR:**
-
-**Only execute this when the user has explicitly chosen to merge in the current turn** — either by selecting "Merge PR" from the Step 4 menu (interactive mode) or by picking the PR in the autonomous final batched request. Do not infer merge intent from action-category labels, "Next" selections, PR size, or the fact that autonomous mode is running. If you're about to run `gh pr merge` and you cannot point to the user's most recent message authorizing this specific merge, stop and ask instead.
-
-**Exception — Dependabot:** a green, mergeable, `minor-patch` Dependabot PR is auto-merged in autonomous mode without explicit per-PR authorization, per the standing opt-in in "Dependabot PRs". This carve-out applies **only** to Dependabot bumps that classify as `minor-patch`; for any other PR the gate above stands.
-
-```bash
-gh pr merge <number> --squash  # or --merge, --rebase based on repo settings
-```
-
-**Option 7 - Close PR:**
-
-```bash
-gh pr close <number>
-```
-
-**Option 8 - Run CodeRabbit review:**
-
-1. Use the worktree printed by the summary — `view`/`next` already checked the PR out there.
-2. Run the `/coderabbit:review` skill to perform a local AI code review of the PR's changes.
-3. After the review completes:
-   a. Write the findings to `/tmp/cr-review-pr<number>.md` wrapped in a `<details><summary>CodeRabbit Review Notes</summary>` spoiler block. Use real markdown code blocks (triple backticks with language) for any code snippets inside.
-   b. Tell the user to run one of the following to copy to clipboard:
-      ```bash
-      cat /tmp/cr-review-pr<number>.md | xclip -selection clipboard
-      # or if using xsel:
-      cat /tmp/cr-review-pr<number>.md | xsel --clipboard --input
-      ```
-4. Present findings and offer to act on them.
-5. Return to PR assessment.
-
-**Option 9 - Request CodeRabbit review:**
-
-This is a **deliberate, user-chosen exception** to the one-review-per-PR default. CodeRabbit already reviewed the PR once when it opened. In PinePeakDigital repos incremental reviews are off, so a manual request is the only way to get a fresh review of new commits; in other orgs CodeRabbit may auto-review pushes anyway. Either way this is a deliberate extra review that spends rate-limit quota. Only do this when the user explicitly picks this option; never autonomously.
-
-1. Comment on the PR to trigger a remote CodeRabbit review:
-   ```bash
-   gh pr comment <number> --body "@coderabbitai review"
-   ```
-2. Inform the user that CodeRabbit will process the review asynchronously and results will appear as PR comments.
-3. Return to PR assessment or move to next PR.
-
-**Option 10 - Snooze:**
-
-1. Ask the user how long to snooze (e.g. 1h, 4h, 1d, 3d, 1w), or accept inline if already specified
-2. Run: `~/.claude/skills/pr-triage/pr-review-session snooze <number> <duration>`
-3. The PR will be hidden from the triage list until the snooze expires, then automatically reappear
+**Option 6 (merge)** carries its own gate: it requires the user's explicit authorization for that specific PR in the current turn (Dependabot `minor-patch` excepted). Read the section before acting; don't execute from the label alone.
 
 ### Step 5: Continue Loop
 
@@ -408,54 +246,9 @@ After each action:
 
 Only call `reset` if the user explicitly asks to abandon the current triage state — the auto-loop handles end-of-round wraparound.
 
-## Status Indicators
+## Reference
 
-| Symbol | Meaning                    |
-| ------ | -------------------------- |
-| ✓      | Passing / Approved / Ready |
-| ✗      | Failing / Blocked          |
-| ○      | Pending / In progress      |
-| ?      | Unknown / No data          |
-
-## Review Decision Values
-
-| Value             | Meaning                      |
-| ----------------- | ---------------------------- |
-| APPROVED          | PR has been approved         |
-| CHANGES_REQUESTED | Changes have been requested  |
-| REVIEW_REQUIRED   | Waiting for required reviews |
-| (empty)           | No reviews yet               |
-
-## Handling Git Worktrees
-
-`pr-review-session view`/`next` automatically checks out the PR into a per-repo triage worktree at `${XDG_CACHE_HOME:-~/.cache}/pr-triage-worktrees/<owner>-<repo>` and prints the path as `Worktree: <path>` in the summary. Use that path for any action that touches the code.
-
-If the PR's branch is already checked out in another worktree (e.g. vibe kanban created one), the script reports that path instead of creating a duplicate. If the triage worktree has uncommitted changes, the script refuses to switch and reports the existing path — clean it up (commit/stash/discard) and re-run `view <N>` to switch.
-
-To opt out entirely (e.g. if you don't want the script touching disk), set `PR_TRIAGE_NO_WORKTREE=1`; then fall back to `gh pr checkout <number>` in the main repo.
-
-## Commands Reference
-
-| Command                                     | Purpose                                                   |
-| ------------------------------------------- | --------------------------------------------------------- |
-| `pr-review-session list`                    | List open PRs not yet triaged this session                |
-| `pr-review-session next`                    | Mark current as triaged and show next unreviewed (auto-resets when all reviewed) |
-| `pr-review-session view [N]`                | Show PR summary and details; N = number or current branch |
-| `pr-review-session status`                  | Show session state (repo, triaged count, current PR)      |
-| `session-view pr-triage`                    | Follow the live PR view in a second terminal (PATH command; `pr-review-session watch` is an alias) |
-| `pr-review-session snooze [N] <dur>`        | Snooze a PR for a duration (e.g. 1h, 1d, 1w)             |
-| `pr-review-session reset`                   | Reset the triage session for this repo                    |
-| `gh pr checkout <number>`                   | Manual checkout (only needed when `PR_TRIAGE_NO_WORKTREE=1`) |
-| `gh pr ready <number>`                      | Mark draft as ready                                       |
-| `gh pr merge <number>`                      | Merge the PR                                              |
-| `gh pr close <number>`                      | Close without merging                                     |
-| `gh pr edit <number> --add-reviewer <user>` | Add reviewer                                              |
-| `cr-needs-review <number>`                  | Check if PR head is unreviewed — gates whether to OFFER manual Option 9 (never autonomous) |
-| `dependabot-bump-type <number>`             | Classify a Dependabot PR's bump: `minor-patch`/`major`/`unknown` |
-| `dependabot-overlap <number>`               | Exit 0 if an open human PR touches the same manifest (defer auto-merge); exit 1 if clear |
-| `failing-actions`                           | List all failing actions across PRs                       |
-
-All `pr-review-session`, `cr-needs-review`, `dependabot-bump-type`, and `dependabot-overlap` commands should be prefixed with the full path: `~/.claude/skills/pr-triage/`
+Status indicators, review decision values, git-worktree handling, and the full `gh` / `pr-review-session` command list: **`references/commands.md`**.
 
 ## Tips
 
@@ -467,3 +260,4 @@ All `pr-review-session`, `cr-needs-review`, `dependabot-bump-type`, and `dependa
 - **Delegate**: For non-eligible PRs that need someone else's action, leave a comment if useful and note them in the final report
 - **Stale PRs**: For PRs with no activity, consider closing or requesting status updates
 - **Stacked PRs**: The session only surfaces PRs targeting the default branch, so if a PR is part of a stack, it's already the next one that can land. Don't worry about the rest of the stack — treat it as an independent PR.
+

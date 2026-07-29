@@ -7,6 +7,15 @@ description: "Scaffold a new Claude Code skill (personal or project-specific). U
 
 You are a skill scaffolder. You help the user design and create new Claude Code skills by gathering requirements, exploring relevant context from the codebase, and writing well-structured `SKILL.md` files and supporting shell scripts.
 
+## CRITICAL: Read the context-engineering rules first
+
+**Read `references/context-engineering.md` before drafting any skill.** It carries the current rules for writing for Claude 5 generation models, derived from [Anthropic's context-engineering guidance](https://claude.com/blog/the-new-rules-of-context-engineering-for-claude-5-generation-models). The four that most often go wrong when scaffolding:
+
+- **Constrain less.** Rules that restate ordinary good taste are overhead. Write the judgment the rule was approximating. Keep hard rules only for what the model cannot infer — author preferences, recorded incidents, private facts, safety gates.
+- **Descriptions say when to invoke, never how it works.** Every skill's description sits in context in every session. Mechanics belong in the body.
+- **Progressive disclosure.** SKILL.md is the spine plus pointers. Catalogs, rubrics, playbooks, and output formats go in `references/`.
+- **Design the script interface instead of writing examples of calling it.** If the skill needs three worked examples of its own helper, fix the helper.
+
 ## What You Do
 
 - Interview the user about the purpose, workflow, and requirements of the new skill
@@ -95,21 +104,31 @@ This document explains {topic}. Follow these rules when {situation}.
 
 When in doubt: if the skill tells the invoker *how to behave*, it's a workflow skill. If it tells the invoker *facts and rules to apply*, it's a reference skill.
 
+#### Writing the description
+
+The description is the one part of a skill that is loaded into **every session**, whether or not the skill fires. It is a routing signal, not a summary.
+
+- Say **when to invoke**: the task shapes and trigger phrases that should fire it, plus boundaries ("not for X", "does not merge").
+- Never describe **how it works** — internal steps, agent rosters, scoring, delegation topology. That belongs in the body, where it costs nothing until the skill runs.
+- Target **under ~350 characters**. If it needs more, it is describing mechanics.
+
 #### Template
 
 ```markdown
 ---
 name: {skill-name}
-description: "{one-sentence description of when to invoke the skill}"
+description: "{when to invoke — trigger phrases and boundaries, under ~350 chars}"
 ---
 
 # {Skill Title}
 
 {Opening — see "Choosing the right opening" above}
 
-## CRITICAL: {Important Constraint Title} (if applicable)
+## CRITICAL: {Important Constraint Title}
 
-{Explanation of critical constraints or anti-patterns}
+{Include this section ONLY for constraints the model cannot infer: destructive-action gates,
+security rules, author-specific preferences, or a lesson from a real past failure. Do not add
+it to restate good taste. See references/context-engineering.md §1.}
 
 ## Workflow (for workflow skills)
 
@@ -212,7 +231,7 @@ Inform the user: "The skill is ready. Use `/{skill-name}` to invoke it."
 ## Tips
 
 - Look at existing skills for patterns before writing — especially `daily-standup` for complex data fetching, `grooming` for session state, and `slack-notify` for simple webhook posting.
-- Keep `SKILL.md` focused and opinionated. Vague instructions lead to inconsistent behavior.
-- Use `**CRITICAL**` or `**IMPORTANT**` for constraints that must never be violated.
+- Keep `SKILL.md` focused and opinionated, and keep it short — under ~150 lines. Past ~200, move catalogs, rubrics, playbooks, and output formats into `references/` and point at them imperatively.
+- Reserve `**CRITICAL**` / `**IMPORTANT**` for constraints the model cannot infer and that are expensive to violate. Marking ordinary guidance this way trains the marker to be ignored.
 - If a skill will interact with external services, document the required env vars explicitly.
 - Prefer reusing existing helper scripts (e.g., `fetch-standup-data.sh`) over duplicating logic.

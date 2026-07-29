@@ -12,6 +12,14 @@ MY_USER=$(echo "$MY_EMAIL" | cut -d@ -f1 | tr '[:upper:]' '[:lower:]')
 
 REMOTE_URL="$2"
 
+# Buffer stdin (pre-push ref lines) so more than one check can read it.
+PUSH_REFS=$(cat)
+
+# Review-loop gate: block pushing my own commits review-loop hasn't seen.
+if [ -x "$HOME/.git-hooks/review-gate.sh" ]; then
+    printf '%s\n' "$PUSH_REFS" | "$HOME/.git-hooks/review-gate.sh" "$@" || exit 1
+fi
+
 # Get GitHub username if gh is available and remote is GitHub
 MY_GH_USER=""
 is_github=false
@@ -117,6 +125,6 @@ while read -r local_ref local_sha remote_ref remote_sha; do
             fi
         fi
     fi
-done
+done <<< "$PUSH_REFS"
 
 exit 0

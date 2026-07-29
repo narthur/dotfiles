@@ -1,0 +1,8 @@
+#!/usr/bin/env zsh
+# hunk-branch — review ALL changes on this branch vs its base, including
+# already-committed ones (Claude Code auto-commits, so plain `hunk diff` is
+# usually empty). Base = merge-base with the default branch. Watch honored
+# via global config (~/.config/hunk/config.toml) or extra args passed through.
+base="$(git merge-base @ "$(git rev-parse --abbrev-ref origin/HEAD 2>/dev/null || echo origin/main)" 2>/dev/null)"
+# ponytail: no base (detached/no remote) -> fall back to working-tree diff.
+exec hunk diff ${base:+$base} "$@"

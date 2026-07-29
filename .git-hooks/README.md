@@ -1,5 +1,15 @@
 # Git Hooks
 
+## Pre-Push Hook — review-loop gate
+
+`pre-push` chains two checks: the foreign-branch force-push warning, and the **review-loop gate** (`review-gate.sh`).
+
+The gate blocks a push that would newly publish commits **you authored** whose tip sha isn't recorded as reviewed. review-loop records the sha on a clean exit (`~/.claude/skills/review-loop/record-reviewed.sh` → `~/.claude/review-loop/reviewed-shas`). Pushes containing only foreign-authored commits (dependabot, teammates, upstream merges) pass untouched.
+
+- **Bypass one push:** `REVIEW_GATE_BYPASS=1 git push`
+- **Husky repos:** husky's local `core.hooksPath` shadows this global hook, so those repos need a `.husky/pre-push` delegator (`[ -x "$HOME/.git-hooks/review-gate.sh" ] && "$HOME/.git-hooks/review-gate.sh" "$@"`), kept untracked via `.git/info/exclude`.
+- **Self-test:** `~/.git-hooks/review-gate.test.sh`
+
 ## Pre-Commit Hook
 
 The `pre-commit` hook performs multiple checks before allowing a commit:

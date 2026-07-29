@@ -9,7 +9,3 @@ Maintaining Fieldnotes is proactive and does not require permission. Read, creat
 # Skill friction log
 
 When a skill misfires — wrong output, missing step, stale instruction, or you had to work around it — append one line to `~/.claude/friction.md`: `YYYY-MM-DD | skill-name | what broke | the fix or workaround`. Create the file if absent. Do this on your own initiative, no permission needed; keep it to one line. Don't edit the skill in place mid-run — the log is reviewed in batches (e.g. via `bitter-lesson`) so fixes are deliberate, not silent drift.
-
-# Code review
-
-Use the `review-loop` skill proactively and aggressively. Run it by default before pushing, and whenever you finish or clean up a meaningful chunk of code changes — do not ask for permission first and do not look for reasons to skip it. The bias is to run it; only skip when changes are trivial (e.g. a typo or comment) or the user explicitly says not to.

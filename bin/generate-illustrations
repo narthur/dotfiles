@@ -23,18 +23,24 @@ Environment:
   IMAGE_MODEL  Optional. Hosted image model (default: fal-ai/flux/dev).
 
 Output:
-  Images are saved to ~/Pictures/Illustrations.
+  Images are saved to ~/Pictures/Illustrations. Each run also writes
+  ~/Pictures/Illustrations/runs/<timestamp>/ with the source article, its
+  summary, and a prompts.jsonl of every prompt/palette/seed used.
 USAGE
     exit 0
 fi
 
-model="anthropic/claude-haiku-4-5-20251001"
+# Alias tracks the current Haiku snapshot without a hardcoded date.
+# ponytail: llm has no cross-version "latest haiku"; bump the generation (4.5 -> 5) by hand.
+model="claude-haiku-4.5"
 
 # Hosted image model on fal.ai (override with IMAGE_MODEL env var if desired)
 image_model="${IMAGE_MODEL:-fal-ai/flux/dev}"
 
-# Appended to every image prompt so all styles render as paintings, never photos
-painterly_suffix="Rendered as a fine-art painting on canvas, with visible brushstrokes, paint texture, and the unmistakable hand of a painter. This is a painting, not a photograph."
+# Appended to every image prompt so all styles render as paintings, never photos.
+# Deliberately physical: the old suffix lost to "hyperrealist" style names and
+# produced photos. This one insists on paint you can see.
+painterly_suffix="Rendered unmistakably as a hand-painted picture: thick visible brushstrokes, ridges of paint catching the light, palette-knife marks and canvas weave showing through. Never smooth, never photographic. This is physical paint on canvas, not a photo."
 
 # Fail fast if the image API key is missing (add `export FAL_KEY=...` to ~/.env)
 if [[ -z "$FAL_KEY" ]]; then
@@ -42,17 +48,79 @@ if [[ -z "$FAL_KEY" ]]; then
     exit 1
 fi
 
-# Define styles: each entry has a name, abstractness level, and artistic style description
-declare -a styles=(
-    "Very Concrete:Hyperrealist oil painting"
-    "Very Concrete:Realistic academic oil painting"
-    "Moderately Concrete:Impressionist representational"
-    "Moderately Concrete:Expressionist semi-representational"
-    "Moderately Abstract:Abstract expressionist symbolic"
-    "Moderately Abstract:Surrealist metaphorical"
-    "Very Abstract:Geometric abstract pure form"
-    "Very Abstract:Color field atmospheric"
+# Print k random distinct elements (one per line) from the remaining args.
+# Portable partial Fisher-Yates using $RANDOM (no shuf/coreutils; works on
+# macOS bash 3.2). ponytail: this exists so every run samples a fresh mix.
+pick_random() {
+    local k="$1"; shift
+    local pool=("$@")
+    local n=${#pool[@]}
+    local i j tmp
+    for ((i=0; i<k && i<n; i++)); do
+        j=$(( i + RANDOM % (n - i) ))
+        tmp="${pool[$i]}"; pool[$i]="${pool[$j]}"; pool[$j]="$tmp"
+        printf '%s\n' "${pool[$i]}"
+    done
+}
+
+# Style POOLS per abstractness tier. Each run samples a random subset, so
+# illustrations vary within a run and across runs. Every style is painterly by
+# name — no "photoreal/hyperrealist" that would fight the painterly suffix.
+declare -a very_concrete=(
+    "Thick impasto oil painting, palette-knife texture"
+    "Alla prima oil sketch, wet-on-wet, visible bristle marks"
+    "Post-Impressionist oil with swirling van-Gogh-like brushwork"
+    "Sargent-style loose realist oil, confident bravura strokes"
+    "Vuillard-like patterned interior oil, painterly flatness"
+    "Andrew-Wyeth-style egg tempera, dry-brush texture"
 )
+declare -a mod_concrete=(
+    "Impressionist plein-air oil, broken color"
+    "Fauvist oil, non-naturalistic high-key color"
+    "Expressionist oil, Kirchner-like angular strokes"
+    "Matte gouache narrative illustration"
+    "Symbolist oil, Redon-like dreamlike glow"
+    "Social-realist mural oil, Diego-Rivera-like"
+)
+declare -a mod_abstract=(
+    "Abstract expressionist, de-Kooning-like gestural"
+    "Surrealist metaphor, Ernst-like biomorphic forms"
+    "Cubist fragmentation, Braque-like faceting"
+    "Hilma-af-Klint-like symbolist diagrammatic abstraction"
+    "Combine-painting collage, Rauschenberg-like"
+    "Kandinsky-like lyrical abstraction with floating symbols"
+)
+declare -a very_abstract=(
+    "Rothko-like color field, stacked veils of pigment"
+    "Hard-edge geometric abstraction, Malevich-like forms"
+    "Kline-like gestural calligraphic black strokes"
+    "Turner-like dissolved-light atmospheric abstraction"
+    "Frankenthaler-like soak-stain tachist washes"
+    "Constructivist geometric, El-Lissitzky-like diagonals"
+)
+
+# Palettes sampled one-per-image to break Flux's default warm-center mood-scape
+# (the reason every run's abstract image looked identical). Random ⇒ range.
+declare -a palettes=(
+    "restrained palette of ochre, bone white, and deep indigo"
+    "high-contrast palette of vermilion, black, and raw canvas"
+    "cool palette of teal, slate, and pale citron"
+    "earthy palette of terracotta, olive, and cream"
+    "muted palette of dusty rose, sage, and charcoal"
+    "bold palette of cobalt, cadmium yellow, and magenta"
+    "graphite-grey monochrome with a single saturated accent"
+    "warm dusk palette of amber, rust, and violet shadow"
+    "verdant palette of moss, emerald, and gold leaf"
+    "austere palette of ice blue, white, and jet black"
+)
+
+# Sample a balanced, randomized set: N random styles from each tier this run.
+per_tier=4
+declare -a styles=()
+while IFS= read -r s; do styles+=("Very Concrete:$s"); done < <(pick_random "$per_tier" "${very_concrete[@]}")
+while IFS= read -r s; do styles+=("Moderately Concrete:$s"); done < <(pick_random "$per_tier" "${mod_concrete[@]}")
+while IFS= read -r s; do styles+=("Moderately Abstract:$s"); done < <(pick_random "$per_tier" "${mod_abstract[@]}")
+while IFS= read -r s; do styles+=("Very Abstract:$s"); done < <(pick_random "$per_tier" "${very_abstract[@]}")
 
 # Prompt template for extracting key themes and concepts from the article
 IFS= read -r -d '' extraction_prompt_template <<'PROMPT_END' || true
@@ -66,13 +134,17 @@ summary that captures:
 - Narrative elements or story points (if applicable)
 - Symbolic or metaphorical elements that could be visualized
 
-IMPORTANT: Do NOT include specific visual elements (objects, scenes, people, settings, etc.). 
-The level of visual specificity should be determined by the illustration style (from very concrete 
-to very abstract). Focus only on conceptual, thematic, and atmospheric content that can be 
-interpreted visually at different levels of abstraction.
+Then, add a SYMBOL BANK: a list of 6-10 concrete, specific metaphorical motifs or objects that
+this article evokes and that could carry its meaning symbolically (e.g. "a frayed rope", "a
+lighthouse in fog", "interlocking gears", "a single lit window"). These are the raw material the
+abstract illustrations will abstract FROM, so make them concrete and specific, not moods. Prefer
+motifs that are distinctive to THIS article, not generic art clichés.
 
-Output ONLY the summary - no introductions, explanations, or meta-commentary. Just the extracted 
-themes, concepts, and atmospheric elements in a clear, structured format.
+Structure the output as:
+THEMES: (the conceptual/thematic/atmospheric summary above)
+SYMBOL BANK: (the bulleted list of concrete symbolic motifs)
+
+Output ONLY those two sections - no introductions, explanations, or meta-commentary.
 
 ARTICLE:
 {ARTICLE}
@@ -92,8 +164,8 @@ subject matter, themes, concepts, mood, tone, or narrative elements. The level o
 should be determined by the abstractness level:
 - Very Concrete: Include specific, recognizable visual elements from the article's subject matter
 - Moderately Concrete: Include recognizable elements but with some abstraction or symbolism
-- Moderately Abstract: Use symbolic or metaphorical visual elements that represent the themes
-- Very Abstract: Use pure form, color, texture, and composition to capture mood and essence
+- Moderately Abstract: Build the image around 1-3 SPECIFIC motifs drawn from the SYMBOL BANK, rendered as symbols/metaphors rather than literal scenes
+- Very Abstract: Take 1-3 SPECIFIC motifs from the SYMBOL BANK and abstract them into pure form, color, gesture, and composition. The motifs must still shape the image. Do NOT default to a generic empty landscape, sunset, horizon, or misty water — those are forbidden unless a motif in the SYMBOL BANK explicitly calls for them.
 
 Do not create generic artistic prompts; instead, ensure the prompt visually represents something 
 meaningful from the article's content at the appropriate level of abstraction for the specified style.
@@ -176,48 +248,54 @@ declare -a all_labels=()
 total_styles=${#styles[@]}
 style_num=0
 
-# Loop through each style and generate 2 prompts per style
+# Loop through each sampled style and generate one image prompt
 for style_entry in "${styles[@]}"; do
     IFS=':' read -r abstractness artistic_style <<< "$style_entry"
     style_num=$((style_num + 1))
 
-    for prompt_num in 1 2; do
-        printf "  [%d/%d] %s - %s (%d/2)... " "$style_num" "$total_styles" "$abstractness" "$artistic_style" "$prompt_num"
+    printf "  [%d/%d] %s - %s... " "$style_num" "$total_styles" "$abstractness" "$artistic_style"
 
-        prompt="${base_prompt_template//\{ABSTRACTNESS\}/$abstractness}"
-        prompt="${prompt//\{ARTISTIC_STYLE\}/$artistic_style}"
-        prompt="${prompt//\{SUMMARY\}/$article_summary}"
+    prompt="${base_prompt_template//\{ABSTRACTNESS\}/$abstractness}"
+    prompt="${prompt//\{ARTISTIC_STYLE\}/$artistic_style}"
+    prompt="${prompt//\{SUMMARY\}/$article_summary}"
 
-        response=$(llm prompt --model $model "$prompt")
+    response=$(llm prompt --model $model "$prompt")
 
-        cleaned_prompt=$(echo "$response" | \
-            grep -v -iE '^(very|moderately|abstract|concrete)[\s]*:' | \
-            grep -v -iE '^[0-9]+\.[\s]*' | \
-            grep -v -iE '^[-*•][\s]*' | \
-            grep -v -iE '^(prompt|illustration|image|output|result)[\s]*[0-9]*[\s]*:' | \
-            grep -v -iE '^(this (prompt|illustration|image|represents|shows|depicts))' | \
-            grep -v -iE '^(the|this) (represents|shows|depicts|captures|illustrates|is meant to)' | \
-            grep -v -iE '^(to (represent|show|depict|capture|illustrate|convey|express))' | \
-            grep -v -iE '^(in order to|because|since|due to|based on|according to)' | \
-            sed 's/^[[:space:]]*//' | \
-            sed 's/[[:space:]]*$//' | \
-            grep -v '^$' | \
-            awk 'length > 20' | \
-            tr '\n' ' ' | \
-            sed 's/[[:space:]]*$//')
+    cleaned_prompt=$(echo "$response" | \
+        grep -v -iE '^(very|moderately|abstract|concrete)[\s]*:' | \
+        grep -v -iE '^[0-9]+\.[\s]*' | \
+        grep -v -iE '^[-*•][\s]*' | \
+        grep -v -iE '^(prompt|illustration|image|output|result)[\s]*[0-9]*[\s]*:' | \
+        grep -v -iE '^(this (prompt|illustration|image|represents|shows|depicts))' | \
+        grep -v -iE '^(the|this) (represents|shows|depicts|captures|illustrates|is meant to)' | \
+        grep -v -iE '^(to (represent|show|depict|capture|illustrate|convey|express))' | \
+        grep -v -iE '^(in order to|because|since|due to|based on|according to)' | \
+        sed 's/^[[:space:]]*//' | \
+        sed 's/[[:space:]]*$//' | \
+        grep -v '^$' | \
+        awk 'length > 20' | \
+        tr '\n' ' ' | \
+        sed 's/[[:space:]]*$//')
 
-        if [[ -n "$cleaned_prompt" ]]; then
-            all_prompts+=("$cleaned_prompt")
-            all_labels+=("$abstractness - $artistic_style")
-            echo "✓"
-        else
-            echo "✗ (no prompt extracted)"
-        fi
-    done
+    if [[ -n "$cleaned_prompt" ]]; then
+        all_prompts+=("$cleaned_prompt")
+        all_labels+=("$abstractness - $artistic_style")
+        echo "✓"
+    else
+        echo "✗ (no prompt extracted)"
+    fi
 done
 
 # Create output directory if it doesn't exist
 mkdir -p "$output_dir"
+
+# Per-run log dir: the article, its summary, and every prompt/palette/seed, so
+# runs can be analyzed later to keep improving this script.
+run_id=$(date +%Y%m%d-%H%M%S)
+log_dir="$output_dir/runs/$run_id"
+mkdir -p "$log_dir"
+printf '%s' "$article_text" > "$log_dir/article.txt"
+printf '%s' "$article_summary" > "$log_dir/summary.txt"
 
 image_width=1024
 image_height=608
@@ -231,20 +309,26 @@ for i in "${!all_prompts[@]}"; do
     if [[ -n "$prompt_line" ]]; then
         printf "[%d/%d] %s... " "$((i+1))" "$total" "$label"
 
+        # Per-image palette + random seed drive variety between sibling styles
+        palette=$(pick_random 1 "${palettes[@]}")
+        seed=$RANDOM
+        full_prompt="$prompt_line Color palette: $palette. $painterly_suffix"
+
         # Request a single image from the hosted model (synchronous endpoint)
         response=$(curl -sS -X POST "https://fal.run/$image_model" \
             -H "Authorization: Key $FAL_KEY" \
             -H "Content-Type: application/json" \
             -d "$(jq -n \
-                --arg p "$prompt_line $painterly_suffix" \
+                --arg p "$full_prompt" \
                 --argjson w "$image_width" \
                 --argjson h "$image_height" \
-                '{prompt:$p, image_size:{width:$w, height:$h}, num_images:1, output_format:"png"}')")
+                --argjson seed "$seed" \
+                '{prompt:$p, image_size:{width:$w, height:$h}, num_images:1, output_format:"png", seed:$seed}')")
 
         image_url=$(echo "$response" | jq -r '.images[0].url // empty')
 
+        filename="$run_id-$((i+1)).png"
         if [[ -n "$image_url" ]]; then
-            filename="$(date +%Y%m%d-%H%M%S)-$((i+1)).png"
             if curl -sS -fL "$image_url" -o "$output_dir/$filename"; then
                 echo "✓ $filename"
             else
@@ -254,7 +338,14 @@ for i in "${!all_prompts[@]}"; do
             err=$(echo "$response" | jq -r '.detail // .error // .message // "unknown error"' 2>/dev/null)
             echo "✗ no image ($err)"
         fi
+
+        # Append this image's full record to the run log (one JSON object per line)
+        jq -n --arg file "$filename" --arg label "$label" \
+            --arg prompt "$full_prompt" --arg palette "$palette" --argjson seed "$seed" \
+            '{file:$file, label:$label, palette:$palette, seed:$seed, prompt:$prompt}' \
+            >> "$log_dir/prompts.jsonl"
     fi
 done
 
 echo "Done. $total images saved to $output_dir"
+echo "Run log: $log_dir"

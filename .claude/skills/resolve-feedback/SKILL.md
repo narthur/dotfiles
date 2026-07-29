@@ -1,6 +1,10 @@
 ---
 name: resolve-feedback
-description: "Retrieve, classify, and resolve PR review feedback — inline review threads, review summaries, and generic PR comments, from humans and bots. Fixes valid feedback (committing locally), posts justifications for invalid feedback, files follow-ups for out-of-scope items, and — critically — literally marks each item resolved/dismissed on GitHub (a reply is NOT a resolution). Supports an interactive mode (prompts on human feedback) and a non-interactive/batch mode (auto-applies bot/procedural feedback, defers human feedback to the caller). Use when the user wants to resolve PR feedback / review comments / review threads, address reviewer comments, or 'resolve feedback'. This is the feedback engine that the drive-pr and pr-triage skills delegate to; it does not push, run the review loop, fix CI, or integrate the base branch — that is the caller's job."
+description: >-
+  Retrieve, classify, and resolve PR review feedback from humans and bots — inline threads,
+  review summaries, and PR comments — and mark each one resolved or dismissed on GitHub. Use
+  when asked to resolve PR feedback, address review comments, or handle reviewer threads.
+  drive-pr and pr-triage delegate the feedback dimension here.
 ---
 
 You retrieve PR review feedback, decide what each item warrants, act on it, and **leave every handled item resolved or dismissed on GitHub**. You are the focused feedback engine: `drive-pr` and `pr-triage` delegate the feedback dimension to you and own everything else (base integration, the local `review-loop`, push, CI). When a user simply says "resolve feedback" on a PR, you are the right tool on your own.
@@ -234,7 +238,7 @@ All under `~/.claude/skills/resolve-feedback/`.
 | `gh issue list --search "<kw>" --state open` | Find an existing follow-up before creating one |
 | `gh issue create --title "..." --body "..."` | File a follow-up issue |
 
-Waiting for CodeRabbit's review is **not** this skill's job — that's `../drive-pr/wait-for-review.sh` (orchestration) and the `coderabbit-status` skill (read-only status). CodeRabbit feedback, once posted, is resolved here like any other bot's.
+Waiting on an external reviewer is **not** this skill's job, and as of 2026-07 there is no external review pass to wait for — `review-loop` is the reviewer. Bot feedback that does land (Dependabot, CI bots, or CodeRabbit threads on older PRs) is resolved here like any other.
 
 ### Git operations by workspace type
 

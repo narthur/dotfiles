@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+#
+# pdf-rename — suggest a descriptive filename for a PDF from its text content,
+# using a local LLM (via the `llm-local` wrapper). Safe-by-default: prints the
+# proposed rename and does nothing unless you pass --apply (or confirm in -i).
+#
+# This is a low-stakes, reviewable delegation — exactly the kind of job the local
+# model is good at. See Fieldnotes "Local LLM Setup on Mac (Apple Silicon)".
+#
+# Usage:
+#   pdf-rename [options] file.pdf [file2.pdf ...]
+#
+# Options:
+#   -a, --apply         Actually rename (default is a dry run / preview).
+#   -i, --interactive   Ask y/N before each rename.
+#   -m, --model MODEL    Override model (default: llm-local's qwen2.5-coder:7b).
+#   -h, --help          Show this help.
+#
+# Notes:
+#   * Reads only the first 2 pages (capped) — enough to name most documents.
+#   * Scanned PDFs with no text layer are skipped (no OCR here).
+#   * Keeps the file in its current directory; on name collision a numeric
+#     suffix is added.
+
+set -euo pipefail
+
+APPLY=0
+INTERACTIVE=0
+PAGES=2
+MAXCHARS=3000
+
+usage() { sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; }
+
+files=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -a|--apply)        APPLY=1 ;;
+        -i|--interactive)  INTERACTIVE=1 ;;
+        -m|--model)        shift; export LLM_LOCAL_MODEL="${1:?--model needs a value}" ;;
+        -h|--help)         usage; exit 0 ;;
+        --)                shift; while [ $# -gt 0 ]; do files+=("$1"); shift; done; break ;;
+        -*)                echo "pdf-rename: unknown option '$1'" >&2; exit 2 ;;
+        *)                 files+=("$1") ;;
+    esac
+    shift
+done
+
+[ ${#files[@]} -gt 0 ] || { echo "pdf-rename: no PDF files given" >&2; usage; exit 2; }
+command -v pdftotext >/dev/null 2>&1 || { echo "pdf-rename: pdftotext not found (brew install poppler)" >&2; exit 1; }
+command -v llm-local >/dev/null 2>&1 || { echo "pdf-rename: llm-local not found on PATH" >&2; exit 1; }
+
+# Turn arbitrary model output into a safe single-line filename stem.
+sanitize() {
+    # first non-empty line; strip quotes/backticks/markdown; drop trailing .pdf;
+    # remove path-illegal chars; collapse whitespace; trim; cap length.
+    awk 'NF{print; exit}' \
+    | sed -E 's/^[[:space:]`"'"'"']+//; s/[[:space:]`"'"'"']+$//' \
+    | sed -E 's/\.pdf$//I' \
+    | tr '/\\:*?"<>|\n\t' '         ' \
+    | tr -s ' ' \
+    | sed -E 's/^ +//; s/ +$//' \
+    | cut -c1-90
+}
+
+PROMPT='You are naming a PDF file from its text. Reply with ONLY a concise, \
+human-readable filename (no extension), 3 to 8 words, Title Case. If the document \
+has an obvious date, prefix it as YYYY-MM-DD. Use letters, numbers, spaces and \
+hyphens only. No quotes, no explanation, no file extension. Examples: \
+"2024-03-14 Beeminder Service Agreement", "Henry Orozco LinkedIn Profile", \
+"Q2 2023 Sweden Tax Form".'
+
+rc=0
+for f in "${files[@]}"; do
+    if [ ! -f "$f" ]; then echo "skip (not a file): $f" >&2; rc=1; continue; fi
+    case "$f" in *.pdf|*.PDF) ;; *) echo "skip (not a .pdf): $f" >&2; rc=1; continue;; esac
+
+    text="$(pdftotext -f 1 -l "$PAGES" "$f" - 2>/dev/null | tr -s ' \t\n' ' \n' | head -c "$MAXCHARS")"
+    if [ -z "${text// /}" ]; then
+        echo "skip (no extractable text — scanned? needs OCR): $f" >&2
+        rc=1; continue
+    fi
+
+    stem="$(printf '%s' "$text" | llm-local run "$PROMPT" 2>/dev/null | sanitize || true)"
+    if [ -z "$stem" ]; then
+        echo "skip (model returned no usable name): $f" >&2
+        rc=1; continue
+    fi
+
+    dir="$(dirname "$f")"
+    target="$dir/$stem.pdf"
+    # collision-avoidance (and don't collide with the file itself)
+    if [ "$target" != "$f" ] && [ -e "$target" ]; then
+        n=2
+        while [ -e "$dir/$stem ($n).pdf" ]; do n=$((n+1)); done
+        target="$dir/$stem ($n).pdf"
+    fi
+
+    if [ "$target" = "$f" ]; then
+        echo "= already well-named: $f"
+        continue
+    fi
+
+    echo "$f"
+    echo "  -> $(basename "$target")"
+
+    do_rename=$APPLY
+    if [ "$INTERACTIVE" = "1" ]; then
+        printf '   rename? [y/N] ' >&2
+        read -r ans </dev/tty || ans=""
+        case "$ans" in y|Y|yes|YES) do_rename=1 ;; *) do_rename=0 ;; esac
+    fi
+
+    if [ "$do_rename" = "1" ]; then
+        mv -n "$f" "$target" && echo "   renamed."
+    fi
+done
+
+[ "$APPLY" = "1" ] || [ "$INTERACTIVE" = "1" ] || echo "(dry run — re-run with --apply to rename, or -i to confirm each)" >&2
+exit $rc

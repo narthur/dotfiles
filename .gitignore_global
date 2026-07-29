@@ -34,6 +34,7 @@ __pycache__/
 
 # Claude Code app state (contains personal account info)
 .claude.json
+.claude.json.tmp.*
 
 
 # static-analysis skill output

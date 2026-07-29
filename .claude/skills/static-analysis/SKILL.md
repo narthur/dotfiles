@@ -52,3 +52,9 @@ Go, CSS/SCSS, Markdown, HTML, YAML/GitHub Actions, SQL, Shell, Docker) plus
 all-files secret (gitleaks) and SAST (semgrep) scanning. Overlapping tools are
 pruned to one per concern; the JS/TS linter is chosen by the repo's own config
 (biome.json → Biome, eslint config → ESLint, else oxlint).
+
+**fallow** (TS/JS dead code, import cycles, duplication, complexity) is
+whole-repo only, so it runs only in repos that opted in with a `.fallowrc.json`
+/ `fallow.toml` (`npx fallow init`). Its `fix` command deletes "unused" code, so
+it is deliberately not wired to `--fix`; run `npx fallow fix` by hand. For
+change-scoped output use `npx fallow audit --base <ref>` directly.
