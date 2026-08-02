@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# Heartbeat a Healthchecks.io check for a local scheduled job.
+#
+#   hc-ping <slug>            job succeeded -- resets the check's timer
+#   hc-ping --fail <slug>     job failed    -- marks the check down immediately
+#   hc-ping --start <slug>    job started   -- lets Healthchecks measure duration
+#
+# The project ping key lives in the login Keychain (service
+# healthchecks-ping-base-url), holding https://hc-ping.com/<ping-key>. Checks are
+# addressed by slug off that base.
+#
+# Monitoring must never take down the thing it monitors: this always exits 0, and
+# a missing key or a failed ping is a warning on stderr, not an error. It also
+# never prints the URL, which embeds the secret key.
+set -uo pipefail
+
+TIMEOUT=10
+KC_ACCT=healthchecks
+KC_SVC=healthchecks-ping-base-url
+
+MODE=""
+case "${1:-}" in
+  --fail)  MODE="/fail";  shift ;;
+  --start) MODE="/start"; shift ;;
+  # Print the whole header comment rather than a hardcoded line range, which
+  # silently truncates mid-sentence the moment the comment is edited.
+  -h|--help) awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "$0"; exit 0 ;;
+  --setup)
+    echo "Paste the Healthchecks ping key (input hidden)."
+    echo "Healthchecks > your project > Settings > Ping Key. A full"
+    echo "https://hc-ping.com/<key> URL is accepted too."
+    read -rs URL
+    # Healthchecks shows a bare key; the URL is just the assembled form. Accept
+    # either, and normalise to the URL that the ping path is appended to.
+    if [[ "$URL" != https://* ]]; then
+      if [[ -z "$URL" || "$URL" == *[[:space:]/]* ]]; then
+        echo "That is neither a ping key nor an https URL; nothing stored." >&2
+        exit 1
+      fi
+      URL="https://hc-ping.com/${URL}"
+      echo "Read as a ping key; storing https://hc-ping.com/<key>"
+    fi
+    # -w VALUE, not a pipe: `security` reads from /dev/tty when a terminal exists,
+    # so a piped password is ignored and it blocks forever. Verified by read-back
+    # because a zero exit proves nothing here.
+    security add-generic-password -a "$KC_ACCT" -s "$KC_SVC" -U -A -w "$URL"
+    BACK="$(security find-generic-password -a "$KC_ACCT" -s "$KC_SVC" -w </dev/null 2>/dev/null || true)"
+    [[ "$BACK" == "$URL" ]] || { echo "Failed Keychain verification; nothing usable stored." >&2; exit 1; }
+    echo "Stored and verified. Test with: hc-ping <slug>"
+    exit 0 ;;
+esac
+
+SLUG="${1:-}"
+if [[ -z "$SLUG" ]]; then
+  echo "hc-ping: no slug given" >&2
+  exit 0
+fi
+
+BASE="$(security find-generic-password -a healthchecks -s healthchecks-ping-base-url -w </dev/null 2>/dev/null)" || BASE=""
+if [[ -z "$BASE" ]]; then
+  echo "hc-ping: no ping key in Keychain (service healthchecks-ping-base-url); skipping heartbeat for '$SLUG'" >&2
+  exit 0
+fi
+
+# ?create=1 auto-provisions the check on first ping, so checks never have to be
+# hand-created. Auto-provisioned defaults are period 1 day / grace 1 hour, which
+# the ping URL cannot override -- tune per check in the dashboard afterwards.
+STATUS="$(curl -fsS -o /dev/null -w '%{http_code}' -m "$TIMEOUT" -X POST \
+          "${BASE%/}/${SLUG}${MODE}?create=1" 2>/dev/null)" || STATUS="000"
+
+case "$STATUS" in
+  200) ;;                     # existing check pinged
+  201)
+    # Announce creations. With create=1 a typo'd slug silently spawns a junk
+    # check instead of 404ing, so the one moment it is visible is right here.
+    echo "hc-ping: created new check '$SLUG' (defaults: period 1 day, grace 1 hour -- tune it)" >&2
+    ;;
+  *)
+    # curl only fails on network errors, so a bad ping key (401) or a rate limit
+    # (429) would otherwise look exactly like a healthy heartbeat.
+    echo "hc-ping: heartbeat for '$SLUG${MODE}' returned HTTP $STATUS (check ping key)" >&2
+    ;;
+esac
+
+exit 0

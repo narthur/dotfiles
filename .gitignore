@@ -12,5 +12,15 @@
 .claude/skills/pilot/dismissed.json
 .claude/skills/pilot/architecture.json
 
+# Finance: scripts under finance/ are tracked in dotprivate; the data is not.
+# Ledgers, budget targets and account mappings are backed up (encrypted) to B2
+# by finance/ledger-push, so git has no recovery role here and would only add
+# exposure. Deny the directory, then re-allow the scripts.
+finance/*
+!finance/*.py
+!finance/*.sh
+!finance/ledger-push
+finance/__pycache__/
+
 # Added by ggshield
 .cache_ggshield

@@ -12,18 +12,41 @@
 #                            sync). "newer" wins on the baseline.
 #
 # Config:
-#   ~/.config/rclone/rclone.conf                (remote "obsidianb2", in dotfiles-private)
+#   ~/.config/rclone/rclone.conf                 (remote "obsidianb2"; tracked in dotfiles-private)
 #   ~/.config/rclone/obsidian-bisync-filters.txt (excludes, in dotfiles)
-#   ~/.env                                       (RCLONE_CONFIG_OBSIDIANB2_SECRET_ACCESS_KEY)
+#   ~/.env                                       (OBSIDIAN_VAULT, OBSIDIAN_B2_REMOTE)
+#   login Keychain                               (B2 secret: svc rclone-obsidianb2-secret)
 set -euo pipefail
 
-# rclone.conf holds everything except the B2 secret key, which is exported from
-# ~/.env as RCLONE_CONFIG_OBSIDIANB2_SECRET_ACCESS_KEY. launchd does not source
-# ~/.env, so do it here (interactive shells already have it).
+# Non-secret config (OBSIDIAN_VAULT, ...) still comes from ~/.env. launchd does
+# not source it, so do it here; interactive shells already have it.
 [ -f "$HOME/.env" ] && . "$HOME/.env"
 
+# The B2 secret comes from the login Keychain, NOT ~/.env. ~/.env is sourced by
+# .zshrc, so anything in it sits in the environment of every process on this
+# machine. Here it is exported only into this process tree, for rclone.
+#
+# Fails loudly on purpose: an empty credential must never be mistaken for
+# "nothing to sync". Needs the login keychain unlocked, so this must stay a
+# LaunchAgent in a logged-in GUI session -- never a LaunchDaemon.
+if ! RCLONE_CONFIG_OBSIDIANB2_SECRET_ACCESS_KEY="$(security find-generic-password \
+        -a obsidianb2 -s rclone-obsidianb2-secret -w </dev/null 2>&1)"; then
+    echo "obsidian-sync: cannot read the B2 secret from the Keychain." >&2
+    echo "  ${RCLONE_CONFIG_OBSIDIANB2_SECRET_ACCESS_KEY}" >&2
+    echo "  Keychain locked, or item missing (svc rclone-obsidianb2-secret)." >&2
+    exit 1
+fi
+if [[ -z "$RCLONE_CONFIG_OBSIDIANB2_SECRET_ACCESS_KEY" ]]; then
+    echo "obsidian-sync: Keychain returned an empty secret -- refusing to sync." >&2
+    exit 1
+fi
+export RCLONE_CONFIG_OBSIDIANB2_SECRET_ACCESS_KEY
+
 VAULT="${OBSIDIAN_VAULT:-$HOME/Obsidian/Main}"
-REMOTE="obsidianb2:narthur-obsidian"
+# No default: the bucket name is the only personal string in an otherwise
+# generic script, so it lives in ~/.env and this stays publishable. Failing
+# loudly beats defaulting to someone else's bucket name.
+REMOTE="${OBSIDIAN_B2_REMOTE:?OBSIDIAN_B2_REMOTE not set (expected in ~/.env, e.g. myremote:my-bucket)}"
 FILTERS="$HOME/.config/rclone/obsidian-bisync-filters.txt"
 
 if [[ ! -d "$VAULT" ]]; then
@@ -55,9 +78,12 @@ args=(
     --log-level INFO
 )
 
+# Healthchecks heartbeats are handled by cron-run (slug = obsidian-sync), which
+# wraps this script from launchd. Not `exec`, so the exit status is this
+# script's own and cron-run can act on it.
 if [[ "${1:-}" == "resync" ]]; then
     echo "obsidian-sync: establishing bisync baseline (--resync, newer wins)..."
-    exec rclone "${args[@]}" --resync --resync-mode newer
+    rclone "${args[@]}" --resync --resync-mode newer
+else
+    rclone "${args[@]}"
 fi
-
-exec rclone "${args[@]}"

@@ -38,8 +38,11 @@ cat > "$WRAPPER" <<WRAPPER_EOF
 # Re-run ~/.claude/skills/playwright/setup.sh if you upgrade the
 # @playwright/cli package or switch to a different node install.
 
-NODE=$NODE_BIN
-PLAYWRIGHT_CLI=$PLAYWRIGHT_CLI_JS
+# \$HOME is escaped so it stays literal in the generated wrapper -- the wrapper is
+# tracked in the public dotfiles repo, and an expanded path would bake in the
+# username. \$NODE_VERSION is deliberately NOT escaped: the pin is the point.
+NODE=\$HOME/.asdf/installs/nodejs/$NODE_VERSION/bin/node
+PLAYWRIGHT_CLI=\$HOME/.asdf/installs/nodejs/$NODE_VERSION/lib/node_modules/@playwright/cli/playwright-cli.js
 
 if [[ ! -x "\$NODE" ]]; then
   echo "ERROR: Node not found at \$NODE" >&2

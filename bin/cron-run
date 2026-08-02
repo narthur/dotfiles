@@ -1,8 +1,33 @@
 #!/usr/bin/env bash
 # Usage: cron-run <logname> <command> [args...]
-LOG_FILE="$HOME/.local/log/$1.log"
+#
+# Timestamps a scheduled job's output into ~/.local/log/<logname>.log, heartbeats
+# Healthchecks.io using <logname> as the check slug, and propagates the job's
+# real exit status.
+#
+# The exit status matters: piping the command through the timestamping loop makes
+# `$?` the *loop's* status, so every job routed through here reported success to
+# launchd no matter what actually happened. obsidian-sync failed on a stale lock
+# for six days in July 2026 while `launchctl list` showed last_exit=0.
+# PIPESTATUS[0] recovers the truth.
+SLUG="$1"
+LOG_FILE="$HOME/.local/log/$SLUG.log"
 mkdir -p "$(dirname "$LOG_FILE")"
 shift
+
+# Monitoring must never break the job: hc-ping always exits 0, and its warnings
+# go to the job's own log rather than launchd's stderr.
+hc-ping --start "$SLUG" 2>>"$LOG_FILE"
+
 "$@" 2>&1 | while IFS= read -r line; do
     printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$line"
 done >> "$LOG_FILE"
+rc=${PIPESTATUS[0]}
+
+if [ "$rc" -eq 0 ]; then
+    hc-ping "$SLUG" 2>>"$LOG_FILE"
+else
+    hc-ping --fail "$SLUG" 2>>"$LOG_FILE"
+fi
+
+exit "$rc"
