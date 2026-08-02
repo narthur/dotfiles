@@ -22,12 +22,17 @@
         <string>${HOME}/Obsidian/Main</string>
     </dict>
 
-    <!-- Every 30 minutes, matching the old remotely-save autoRun cadence.
-         StartInterval (not calendar) so it simply runs every 1800s the Mac is
-         awake; launchd coalesces a missed interval once on wake. bisync uses a
-         lock file, and --resilient handles an overlapping run from a slow sync. -->
+    <!-- Every 2 hours. StartInterval (not calendar) so it simply runs every
+         7200s the Mac is awake; launchd coalesces a missed interval once on wake.
+
+         Was 1800s to match the old remotely-save cadence, but a run takes ~22
+         minutes (26k files, 11GB, almost all listing — 6073 runs moved 0 bytes),
+         so the job was live ~73% of the time and any reboot had a ~3-in-4 chance
+         of killing it mid-run. Combined with an unexpiring lock that wedged the
+         job for 31 of 45 days across two episodes. At 7200s the duty cycle is
+         ~18%; --max-lock 5m in obsidian-sync makes a killed run self-heal. -->
     <key>StartInterval</key>
-    <integer>1800</integer>
+    <integer>7200</integer>
 
     <key>RunAtLoad</key>
     <false/>

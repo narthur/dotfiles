@@ -19,7 +19,24 @@ for template in "$HOME/.config/launchd/"*.plist; do
     dest="$HOME/Library/LaunchAgents/$name"
 
     # Only ${HOME} is templated; leave everything else literal.
-    envsubst '${HOME}' < "$template" > "$dest"
+    #
+    # Stamp a provenance banner into the installed copy. Editing the installed
+    # plist instead of the source is a silent failure mode: the edit works, and
+    # keeps working, right up until the next run of this script overwrites it.
+    # That already cost a reverted schedule change once. XML comments are ignored
+    # by launchd and survive plutil, so the warning rides along with the file.
+    envsubst '${HOME}' < "$template" | awk -v src="${template/#$HOME/\~}" '
+        {print}
+        !stamped && /<!DOCTYPE/ {
+            print "<!-- ==================================================================="
+            print "     GENERATED FILE - DO NOT EDIT."
+            print "     Source: " src
+            print "     Edits here are overwritten by the next `setup-launchd` run."
+            print "     Change the source, then run: setup-launchd"
+            print "     ================================================================ -->"
+            stamped = 1
+        }
+    ' > "$dest"
     echo "  Installed $dest"
 
     # Unload any existing instance, then wait for it to actually disappear.

@@ -73,6 +73,15 @@ args=(
     --max-delete 25
     --resilient
     --recover
+    #   --max-lock 5m
+    #       THE fix for the wedging. Without it a lock never expires (rclone
+    #       writes TimeExpires ~200 years out), so any run that dies leaves a
+    #       lock blocking every future run until someone clears it by hand. That
+    #       cost 31 of 45 days of backups across two episodes, one of 25 days.
+    #       rclone renews the lock every (max-lock - 1m) while the process lives,
+    #       so a 22-minute run is safe; a dead one clears in 5 minutes. The docs
+    #       recommend this specifically alongside --resilient and --recover.
+    --max-lock 5m
     --transfers 16
     --checkers 32
     --log-level INFO
