@@ -18,7 +18,9 @@ base_branch=$(gh pr view --json baseRefName -q .baseRefName 2>/dev/null || true)
 
 learnings=""
 learnings_entries=0
-lf=".git/info/review-loop-learnings.md"
+# ponytail: --git-common-dir, not .git — inside a worktree .git is a file, and the
+# learnings belong to the repo, not the worktree. Resolves in both cases.
+lf="$(git rev-parse --git-common-dir 2>/dev/null || echo .git)/info/review-loop-learnings.md"
 if [ -f "$lf" ]; then
   learnings=$(cat "$lf")
   learnings_entries=$(grep -c '^- ' "$lf" 2>/dev/null || echo 0)

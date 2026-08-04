@@ -34,7 +34,9 @@ fi
 chmod +x "$hook"
 
 # Keep it out of git tracking/status via the repo-local exclude.
-excl="$root/.git/info/exclude"
+# ponytail: --git-common-dir, not "$root/.git" — in a worktree that's a file, and
+# mkdir -p on it dies with "Not a directory". The exclude is repo-wide anyway.
+excl="$(git rev-parse --path-format=absolute --git-common-dir)/info/exclude"
 mkdir -p "$(dirname "$excl")"
 grep -qxF '.husky/pre-push' "$excl" 2>/dev/null || echo '.husky/pre-push' >> "$excl"
 
