@@ -162,3 +162,6 @@ alias cc='claude --enable-auto-mode'
 
 # Zoxide init should be the last thing in .bashrc
 eval "$(zoxide init bash)"
+
+# Vite+ bin (https://viteplus.dev)
+. "$HOME/.vite-plus/env"

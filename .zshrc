@@ -35,6 +35,9 @@ eval "$(zoxide init zsh)"
 export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
 
+# Vite+ bin (https://viteplus.dev)
+[ -f "$HOME/.vite-plus/env" ] && . "$HOME/.vite-plus/env"
+
 # Starship prompt - must be last
 eval "$(starship init zsh)"
 

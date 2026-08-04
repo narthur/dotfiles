@@ -149,6 +149,15 @@ fi
 # Make bun available in current session if just installed
 export PATH="$HOME/.bun/bin:$PATH"
 
+log_section "Vite+"
+# VP_NODE_MANAGER=no: node comes from asdf, so skip the installer's interactive prompt.
+if [ ! -x "$HOME/.vite-plus/bin/vp" ]; then
+    log "vp not found, installing..."
+    run "install vite-plus" bash -c 'curl -fsSL https://vite.plus | VP_NODE_MANAGER=no bash'
+else
+    log_success "vp already installed"
+fi
+
 log_section "YNAB CLI"
 if ! command -v ynab &>/dev/null; then
     log "ynab not found, installing..."
