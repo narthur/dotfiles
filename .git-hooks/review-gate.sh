@@ -62,7 +62,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
 	echo -e "  Branch: ${YELLOW}${branch}${NC}" >&2
 	echo -e "  Tip ${YELLOW}${local_sha:0:12}${NC} isn't in the reviewed set, and you authored unpushed commit(s) under it." >&2
 	echo -e "  Run ${BOLD}review-loop${NC} first. If this is genuinely beneath the loop, record that" >&2
-	echo -e "  honestly: ${BOLD}record-skipped.sh \"<reason>\"${NC} — do NOT hand-call record-reviewed.sh." >&2
+	echo -e "  honestly: ${BOLD}~/.claude/skills/review-loop/record-skipped.sh \"<reason>\"${NC} — do NOT hand-call record-reviewed.sh." >&2
 	echo -e "  Or bypass this one push without recording: ${BOLD}REVIEW_GATE_BYPASS=1 git push${NC}\n" >&2
 	exit 1
 done
