@@ -1,3 +1,9 @@
 # run artifacts — quote source under review, regenerated each run
 last-run.jsonl
 last-intent-run.jsonl
+
+# tracked in dotprivate — reference private taskratchet code, must never
+# land in the public dotfiles repo (already-tracked files are unaffected)
+fixtures.jsonl
+intents.jsonl
+taskratchet-baseline.md

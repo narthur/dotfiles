@@ -39,6 +39,25 @@ Then self-heal the pre-push gate for husky repos (husky's local `core.hooksPath`
 
 No-op unless this is a husky repo missing the `.husky/pre-push` delegator; when missing, it drops an untracked one that hands pre-push control to `~/.git-hooks/review-gate.sh`. Runs before any push this session, so the gate is in place by Step 8/14.
 
+## Step 0c: Backfill a deferred PR report (triggered)
+
+The push-gate forces the order `loop → push → create PR` for a fresh branch, so the loop almost always finishes **before** a PR exists. When that happens, Step 14 defers the summary comment and evidence to `.git/info/review-loop-pending-report.md` instead of skipping them (see Step 13/14). This step flushes that deferral once a PR appears.
+
+At the start of every invocation, after Step 0's context gather:
+
+```bash
+test -f .git/info/review-loop-pending-report.md && gh pr view --json number -q .number 2>/dev/null
+```
+
+If the pending file exists **and** a PR now exists for the branch:
+
+1. Post the file's contents as a PR comment (`gh pr comment <n> --body-file .git/info/review-loop-pending-report.md`).
+2. Run the Step 13 evidence gate now (the branch is pushed and testable) and reconcile the PR description (Step 14), which the no-PR exit couldn't do.
+3. Delete the pending file.
+4. If HEAD still equals the reviewed sha the deferral was recorded at (nothing changed since), this backfill **was** the reason to run — report what you posted and exit without re-reviewing. Otherwise continue into the loop normally to review the new commits.
+
+If the pending file exists but there's still no PR, leave it in place and continue.
+
 ## Step 2a: Learnings Staleness Sweep (triggered)
 
 When Step 0 reports `learnings_compaction_due = true` (≥40 entries), run the relevance-based sweep **once here, before the review agents**, so the whole run uses the slimmed file — then skip it for the rest of the run. Otherwise skip entirely. Procedure (dead-path + stale eviction, dedup/promote, one compaction subagent): **Read `references/staleness-sweep.md`**.
@@ -311,7 +330,7 @@ Runs **only after everything else passes** — a clean loop exit (auto-fix bucke
 
 **Skip entirely** (say so in one line in the final report) when either:
 
-- **No PR exists** for the branch (`gh pr view` fails) — there's nowhere to check or attach evidence.
+- **No PR exists** for the branch (`gh pr view` fails) — there's nowhere to attach evidence *yet*. This is **deferred, not dropped**: Step 14 records the deferral (`.git/info/review-loop-pending-report.md`) and Step 0c runs this gate once a PR appears. Only genuinely skip when the second condition also holds.
 - **The diff changes no runtime functionality** — docs, comments, config, dependency bumps, CI-only changes, or pure refactors already pinned by tests. The gate is about *changed behavior*, and when in doubt, run it.
 
 Otherwise the gate is active — **Read `references/evidence-gate.md`** and follow it: 13a (check the PR for sufficient existing evidence) → 13b (stand up the app and produce evidence yourself if missing — playwright for UI, real requests for API/CLI) → 13c (publish to the PR; or on a found issue, stop, fix, and restart the loop from cycle 1, capped at 2 restarts; or report "can't test" and don't push).
@@ -320,7 +339,7 @@ Otherwise the gate is active — **Read `references/evidence-gate.md`** and foll
 
 ### Reconcile the PR description, then post the summary comment
 
-On a clean loop exit with a PR: reconcile the description so it is accurate and complete for the now-final reviewed change (this is the counterpart to Step 4b, which deliberately left it alone during review), then post the report block as a PR comment. Skip the reconcile on a cycle-limit exit, a test-failure short-circuit, or a local branch with no PR; the comment posts on any terminal exit where a PR exists.
+On a clean loop exit with a PR: reconcile the description so it is accurate and complete for the now-final reviewed change (this is the counterpart to Step 4b, which deliberately left it alone during review), then post the report block as a PR comment. Skip the reconcile on a cycle-limit exit or a test-failure short-circuit. On a clean exit with **no PR yet**, both the reconcile and the comment are **deferred** — write the report to `.git/info/review-loop-pending-report.md` (per `references/report-format.md`) so Step 0c flushes them when the PR appears; the comment posts directly on any terminal exit where a PR already exists.
 
 Both procedures in full: **Read `references/report-format.md`.**
 

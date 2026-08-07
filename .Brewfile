@@ -69,6 +69,7 @@ cask "proton-pass"
 cask "signal"
 cask "slack"
 cask "steam"
+cask "tailscale-app"
 cask "telegram"
 cask "zed"
 # flatpak directives are Linux-only; brew bundle silently skips them on macOS

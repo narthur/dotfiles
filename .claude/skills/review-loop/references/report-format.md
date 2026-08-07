@@ -18,7 +18,7 @@ Then:
 
 ### Post the summary comment to the PR
 
-When a PR exists for the branch (`gh pr view` succeeds), post the same **Report format** below as a PR comment so the review outcome is visible on GitHub. Runs on any terminal exit — clean, cycle-limit, or test-failure — since each is a finished review. Skip only when no PR exists (local branch).
+When a PR exists for the branch (`gh pr view` succeeds), post the same **Report format** below as a PR comment so the review outcome is visible on GitHub. Runs on any terminal exit — clean, cycle-limit, or test-failure — since each is a finished review.
 
 ```bash
 gh pr comment <n> --body "$(cat <<'EOF'
@@ -27,14 +27,16 @@ EOF
 )"
 ```
 
+**No PR yet — defer, don't skip.** A fresh branch is pushed *after* the loop runs (the gate forces that order), so "no PR" is the normal first-branch case, not a reason to drop the summary. Write the report block — plus any evidence captured in Step 13 — to `.git/info/review-loop-pending-report.md` instead. Two things flush it, both running Step 0c's procedure (post the report, run the evidence gate, reconcile the description): (a) if you go on to create the PR **later in this same session**, flush it immediately (you still have this report in context); (b) otherwise Step 0c flushes automatically the next time the loop runs after the PR exists. Either way the summary and evidence reach the PR without the author having to notice they're missing.
+
 GitButler: use the equivalent PR comment for the workspace's PR. If the comment post fails, note it in the report and continue — don't retry.
 
 ### Report format
 
 ```
 review-loop complete: <N> cycle(s), <M> commits, pushed: <yes|no — reason>.
-Evidence gate: <passed — existing evidence | passed — evidence captured & posted (link) | skipped — <no PR | no functional changes> | blocked — <reason>>.
-PR description: <reconciled to final change | already accurate — no edit | skipped — <no PR | not converged (cycle limit / test failure)>>.
+Evidence gate: <passed — existing evidence | passed — evidence captured & posted (link) | deferred — no PR yet (flushes via Step 0c) | skipped — no functional changes | blocked — <reason>>.
+PR description: <reconciled to final change | already accurate — no edit | deferred — no PR yet (flushes via Step 0c) | skipped — not converged (cycle limit / test failure)>.
 
 Cycle 1: <summary>
 Cycle 2: <summary>

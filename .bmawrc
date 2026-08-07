@@ -1,0 +1,17 @@
+[
+  // ~/.bmawrc — array of ActivityWatch -> Beeminder mappings.
+  // Lines whose first non-space chars are // are stripped before parsing
+  // (JSON itself has no comments). Keep comments on their own line.
+  //
+  //   goal     Beeminder goal slug to post to (via `buzz add`).
+  //   category ActivityWatch category path, e.g. ["Work"] or ["Work","Programming"].
+  //            A parent path also counts its children: ["Work"] includes
+  //            ["Work","Programming"]. Must match your AW category rules exactly.
+  //   metric   "hours" (default) = summed active time in hours, 2 decimals.
+  //            "count" = number of window events in the category.
+  {
+    "goal": "example-goal",
+    "category": ["Work"],
+    "metric": "hours"
+  }
+]

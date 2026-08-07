@@ -24,3 +24,12 @@ finance/__pycache__/
 
 # Added by ggshield
 .cache_ggshield
+
+# Secrets backups — the real values live in ~/.env, never in git
+.env.bak-*
+
+# zsh completion cache (machine-specific)
+.zcompdump*
+
+# Ad-hoc vault backup tarballs (multi-GB)
+obsidian-backup-*.tgz
