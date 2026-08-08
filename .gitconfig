@@ -1,9 +1,9 @@
 [credential "https://github.com"]
 	helper = 
-	helper = !gh auth git-credential
+	helper = !/opt/homebrew/bin/gh auth git-credential
 [credential "https://gist.github.com"]
 	helper = 
-	helper = !gh auth git-credential
+	helper = !/opt/homebrew/bin/gh auth git-credential
 [init]
 	defaultBranch = main
 [user]
@@ -19,3 +19,5 @@
 	rebase = true
 [coderabbit]
 	machineId = cli/dba8a0bf170b4357bb2e4a1886b49777
+[url "https://github.com/"]
+	insteadOf = git@github.com:
