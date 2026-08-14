@@ -19,6 +19,7 @@ OUT="$HOME/.local/state/diag-snapshot.log"
 MAXLINES=8000                 # rolling trim; ~2min interval => keeps ~half a day
 LOAD_TRIGGER=4                # above this 1-min load, also dump log spammers
 INTERVAL=120                  # seconds between snapshots
+LOG_TIMEOUT=30                # hard cap on the `log show` spammer dump (see below)
 CRASH_DIRS=(/Library/Logs/DiagnosticReports "$HOME/Library/Logs/DiagnosticReports")
 mkdir -p "$(dirname "$OUT")"
 
@@ -43,6 +44,19 @@ snapshot() {
       echo "-- RECENT CRASH REPORTS (last 5m): $(print -r -- "$recent" | grep -c .) --"
       print -r -- "$recent" | xargs -n1 basename 2>/dev/null | sort | tail -6
     fi
+
+    # GPU/compositor early warning. On 2026-08-13 these started 40 min before
+    # WindowServer wedged and panicked the machine -- the longest lead time any
+    # signal gave. Nonzero and climbing => the compositor is stalled; log out to
+    # restart WindowServer before the watchdog does it the hard way.
+    # Predicate is scoped to WindowServer on purpose: an unscoped eventMessage
+    # match also hits `log`'s own audit trail, which echoes this query's text.
+    local fences
+    fences=$(/usr/bin/perl -e 'alarm shift; exec @ARGV' "$LOG_TIMEOUT" \
+      /usr/bin/log show --last 2m --style compact \
+        --predicate 'process == "WindowServer" AND eventMessage CONTAINS "timed out fence"' \
+      2>/dev/null | grep -c "timed out fence")
+    [ "${fences:-0}" -gt 0 ] && echo "-- GPU FENCE TIMEOUTS (last 2m): $fences --"
   } >> "$OUT"
 
   # load1 is the first value of vm.loadavg (space-separated originally)
@@ -54,7 +68,14 @@ snapshot() {
       # process name. (The old code omitted --style and split the wrong column,
       # which is why the Jul 18 dump showed "Default/Activity/Error" garbage
       # instead of airportd.)
-      /usr/bin/log show --last 2m --style compact 2>/dev/null \
+      # Hard-bounded: on 2026-08-13 this call is the prime suspect for wedging
+      # the whole loop for 44 min right before the panic (last snapshot was
+      # truncated mid-write at the moment the GPU started stalling). A hung
+      # `log show` must not take the forensics agent down with it.
+      # ponytail: macOS ships no timeout(1); perl's alarm+exec is the one-liner.
+      # If /usr/bin/perl ever disappears, `brew install coreutils` => gtimeout.
+      /usr/bin/perl -e 'alarm shift; exec @ARGV' "$LOG_TIMEOUT" \
+        /usr/bin/log show --last 2m --style compact 2>/dev/null \
         | awk '{print $4}' | sed -E 's/\[[0-9]+:[0-9a-f]+\]$//' \
         | sort | uniq -c | sort -rn | head -8
     } >> "$OUT"
