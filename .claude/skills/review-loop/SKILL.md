@@ -52,7 +52,7 @@ test -f .git/info/review-loop-pending-report.md && gh pr view --json number -q .
 If the pending file exists **and** a PR now exists for the branch:
 
 1. Post the file's contents as a PR comment (`gh pr comment <n> --body-file .git/info/review-loop-pending-report.md`).
-2. Run the Step 13 evidence gate now (the branch is pushed and testable) and reconcile the PR description (Step 14), which the no-PR exit couldn't do.
+2. Run the Step 13 evidence gate and the Step 13.5 measurement gate now (the branch is pushed and testable) and reconcile the PR description (Step 14), which the no-PR exit couldn't do.
 3. Delete the pending file.
 4. If HEAD still equals the reviewed sha the deferral was recorded at (nothing changed since), this backfill **was** the reason to run — report what you posted and exit without re-reviewing. Otherwise continue into the loop normally to review the new commits.
 
@@ -147,6 +147,7 @@ Agent #9 (intent reconciliation, Step 5) reviews the change against what it is *
 2. **Gate — decide whether Agent #9 runs at all.** Skip it (and the rest of this step) when the change has no reviewable intent to model against: dependency bumps, pure refactors/renames, formatting, config-only changes, or any diff whose purpose can't be stated as intended *behavior*. It earns its cost only on feature / behavior-changing work with a derivable goal.
 3. **Build the intent statement — do NOT edit the PR description here.** Distil the sources into an internal statement of the change's purpose and intended behavior for Agent #9. Keep it to GOALS ("users can reconnect a third-party account"), never claims about what the code does or that an edge case is handled — an intent derived by reading the implementation just mirrors the code and blinds Agent #9 to the omissions it exists to catch. If the sources are too thin to state a goal: derive one from the issue/commits, or (interactive runs only) ask the author; if none can be established, gate Agent #9 off (step 2). The description itself is made accurate and complete *later* — **Step 14 reconciles it against the final reviewed change**, when doing so is safe (the code is final, so describing it can't launder a bug into intent) and useful (the PR ends merge-ready).
 4. The resulting intent statement is what Agent #9's stage 1 consumes. Treat it as *desired behavior to be verified against the code*, not as ground truth about what the code does.
+5. **While intent is in hand, draft the measurement hypothesis** for Step 13.5 — one line: the user-visible effect this change is supposed to produce, stated directionally ("fewer users drop at the mapping step"). It costs nothing here and it's the honest version: written from the goal, before you've seen which numbers happen to be available. Carry it to Step 13.5, which turns it into a plan and verifies the instrumentation. Skip if that step's gate obviously won't fire (no user-facing behavior changes).
 
 ## Step 5: Parallel Review Agents
 
@@ -335,6 +336,20 @@ Runs **only after everything else passes** — a clean loop exit (auto-fix bucke
 
 Otherwise the gate is active — **Read `references/evidence-gate.md`** and follow it: 13a (check the PR for sufficient existing evidence) → 13b (stand up the app and produce evidence yourself if missing — playwright for UI, real requests for API/CLI) → 13c (publish to the PR; or on a found issue, stop, fix, and restart the loop from cycle 1, capped at 2 restarts; or report "can't test" and don't push).
 
+## Step 13.5: Impact Measurement Gate
+
+Runs **immediately after Step 13 passes**, on the same clean-exit precondition. Step 13 proves the change works; this gate proves you'll be able to tell whether it *helped*. It is the last point where that's still fixable, because the fix is code in this PR — instrumentation added after merge has no pre-ship baseline to compare against.
+
+**Skip entirely** (say so in one line in the final report) when any holds:
+
+- **The diff changes no user-facing behavior** — same condition as Step 13, plus internal-only changes whose effect no user could experience. When in doubt, run it.
+- **The repo has no measurement capability at all** — no product-analytics events, no metrics client, no telemetry, no queryable usage data. Don't invent a stack to satisfy the gate; that's a project decision, not a review finding. (Mirrors Agent #8's "skip if the project logs nothing".)
+- **No PR exists** for the branch — **deferred, not dropped**, exactly as Step 13: Step 14 records it in `.git/info/review-loop-pending-report.md` and Step 0c runs it once a PR appears.
+
+Otherwise the gate is active — **Read `references/measurement-gate.md`** and follow it: 13.5a (turn the Step 4b hypothesis into a five-line plan: effect, metric, baseline, window+threshold, guardrail) → 13.5b (verify in the code that each metric is actually emitted on the changed path, segmentable, flag-symmetric, and baseline-readable now) → 13.5c (publish the plan to the PR; or on a gap, stop, instrument in this PR, and restart the loop from cycle 1 — sharing Step 13's 2-restart cap; or waive with a stated reason).
+
+**A waiver is a real outcome, not a failure** — some changes genuinely can't be measured. It just has to be said out loud, with its reason, in the report and on the PR. What the gate exists to prevent is the silent version.
+
 ## Step 14: Final Report and Auto-Push
 
 ### Reconcile the PR description, then post the summary comment
@@ -387,6 +402,7 @@ If the push fails (network error, branch protection, missing upstream, non-fast-
 - **No upstream configured for the branch.** Don't infer one; report and stop.
 - **Branch is the repo's default branch (main/master).** Never auto-push to main; surface the unusual state instead.
 - **The Step 13 evidence gate is blocked or hit its restart cap.** Untested (or known-broken) functionality doesn't get pushed on your say-so.
+- **The Step 13.5 measurement gate is blocked or hit its restart cap.** An unmeasurable ship is a ship you can't learn from; the instrumentation belongs in this PR. (A *waived* gate is not blocked — that one pushes.)
 
 When skipping the auto-push, end the report with `Next step: <reason>; push when ready.` Don't pretend it was a clean exit.
 
