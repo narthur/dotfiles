@@ -33,3 +33,77 @@ finance/__pycache__/
 
 # Ad-hoc vault backup tarballs (multi-GB)
 obsidian-backup-*.tgz
+
+# Claude Code runtime state — regenerated, machine-specific, and high-volume.
+# Without these the routing check drowns in ~6.6k files and goes blind.
+.claude/projects/
+.claude/file-history/
+.claude/plugins/
+.claude/status-cache/
+.claude/shell-snapshots/
+.claude/logs/
+.claude/paste-cache/
+.claude/backups/
+.claude/sessions/
+.claude/jobs/
+.claude/tasks/
+.claude/security/
+
+# gcloud credentials and state
+.config/gcloud/
+
+# Per-run caches, logs, locks and backups — regenerated on demand.
+.claude/cache/
+.claude/daemon/
+.claude/daemon.*
+.claude/daemon-auth-*
+.claude/image-cache/
+.claude/review-loop/
+.claude/usage-cache*
+.claude/history.jsonl
+.claude/skill-usage.log
+.claude/gh-pr-status-cache.json*
+.claude/mcp-needs-auth-cache.json
+.claude/.last-cleanup
+.claude/.last-update-result.json
+.claude/.ponytail-active
+*.bak
+*.bak-*
+*.v2-backup
+
+# Machine-local binaries, state and logs
+.local/bin/
+.local/share/
+.local/state/
+.local/log/
+.config/tmux/plugins/
+.config/zed/prompts/
+
+# gh auth token
+.config/gh/
+
+# Third-party skills installed from upstream — reinstall, don't vendor.
+.claude/skills/agents-sdk/
+.claude/skills/cloudflare/
+.claude/skills/cloudflare-email-service/
+.claude/skills/durable-objects/
+.claude/skills/gh-stack/
+.claude/skills/humanizer/
+.claude/skills/sandbox-sdk/
+.claude/skills/turnstile-spin/
+.claude/skills/web-perf/
+.claude/skills/workers-best-practices/
+.claude/skills/wrangler/
+.claude/hooks/logs/
+fires.log
+*.md5
+.config/uv/uv-receipt.json
+.config/configstore/
+
+# Tool state with machine-absolute paths or install hashes
+.config/bin/config.json
+.config/hunk/state.json
+.config/varlock/config.json
+
+# Contains a live Make API key — belongs in ~/.env, never in git
+.config/make-cli/config.json

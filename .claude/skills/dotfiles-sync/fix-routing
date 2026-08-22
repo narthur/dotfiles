@@ -72,23 +72,12 @@ fi
 
 # Find and handle untracked files
 echo -e "\n${YELLOW}=== Untracked Files ===${NC}"
-all_files=$(git -C ~ --git-dir="$DOTFILES_DIR" --work-tree=~ ls-files -o --exclude-standard 2>/dev/null | sort)
-
+# ponytail: shared with check-routing so the two never disagree. The old scan
+# here walked all of $HOME unbounded (~786k files) and showed an arbitrary 30.
 untracked_both=()
 while IFS= read -r file; do
-    [[ -z "$file" ]] && continue
-    
-    if echo "$dotfiles_tracked" | grep -q "^$file\$"; then
-        continue
-    fi
-    if echo "$dotprivate_tracked" | grep -q "^$file\$"; then
-        continue
-    fi
-    
-    [[ -d "$HOME/$file" ]] && continue
-    
-    untracked_both+=("$file")
-done <<< "$all_files"
+    [[ -n "$file" ]] && untracked_both+=("$file")
+done < <(get_untracked_both "$DOTFILES_DIR" "$DOTPRIVATE_DIR")
 
 if [[ ${#untracked_both[@]} -eq 0 ]]; then
     echo -e "${GREEN}✓ No untracked files on disk${NC}"

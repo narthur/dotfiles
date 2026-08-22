@@ -40,7 +40,9 @@ git -C ~ --git-dir=~/.dotfiles-private --work-tree=~ <cmd>
 
 - **`ls-tree` + `--work-tree`**: Do NOT pass `--work-tree` when running `ls-tree` — it causes the output to be empty. Use `git --git-dir=~/.dotfiles ls-tree ...` with no `--work-tree`.
 - **Path resolution**: Always use `-C ~` for `status`, `add`, `diff` commands. Without it, git resolves paths relative to the current working directory instead of the work tree.
-- **Cross-repo noise**: Each repo sees the other's files as "untracked" when using `status -u`. This is expected — filter by path or cross-reference both repos' tracked file lists to find truly untracked files.
+- **`status -u` does not work**: both repos set `status.showUntrackedFiles=no`, so the untracked section is silently empty. Use `git ... ls-files -o --exclude-standard` instead, which ignores that setting.
+- **`--work-tree=~` does not expand**: the tilde stays literal after `=` and git fails with "must be run in a work tree". Write `--work-tree="$HOME"`.
+- **Cross-repo noise**: each repo reports the other's tracked files as untracked. Intersect the two `ls-files -o` lists — a file absent from both is genuinely untracked. `get_untracked_both` in `lib/routing.sh` does this and bounds the scan to managed top-level paths (unbounded it walks ~786k files in `$HOME`).
 
 ## What Goes Where
 
@@ -151,30 +153,6 @@ The fixer prompts you for **every decision**:
 When in doubt, read the file or skill description to understand its actual purpose vs. its naming or dependencies.
 
 The fixer stages all your choices but never commits or pushes—return to dotfiles-sync for final review.
-
-#### 1c: Check for untracked skills (alternative)
-
-List all skill directories on disk:
-
-```bash
-ls -d ~/.claude/skills/*/
-```
-
-List skill files tracked in each repo (no `--work-tree` with `ls-tree`):
-
-```bash
-git --git-dir=~/.dotfiles ls-tree -r --name-only HEAD -- .claude/skills/
-git --git-dir=~/.dotfiles-private ls-tree -r --name-only HEAD -- .claude/skills/
-```
-
-Check for untracked files within skill directories:
-
-```bash
-git -C ~ --git-dir=~/.dotfiles --work-tree=~ status -u -- .claude/skills/
-git -C ~ --git-dir=~/.dotfiles-private --work-tree=~ status -u -- .claude/skills/
-```
-
-(If a repo has no commits yet, `ls-tree` will fail — treat it as empty.)
 
 ### Step 2: Categorize
 
@@ -335,7 +313,7 @@ git -C ~ --git-dir=~/.dotfiles-private --work-tree=~ push
 
 ## Tips
 
-- `status` without `-u` only shows tracked files with changes — the noise-free view.
-- `status -u` shows untracked files too, but each repo will report the other's files as untracked. Filter by path or cross-reference both repos' tracked lists.
+- `status` without `-u` shows tracked files with changes — that part works fine.
+- For untracked files, run `check-routing`; don't hand-roll it. See Known Quirks for why `status -u` lies here.
 - When in doubt about public vs. private, prefer `dotprivate` — easier to move public than to scrub history.
 - `add` commands can be batched: `git -C ~ --git-dir=~/.dotfiles-private --work-tree=~ add ~/.claude/skills/foo/ ~/.claude/skills/bar/`

@@ -7,11 +7,29 @@ get_tracked_files() {
     git --git-dir="$git_dir" ls-tree -r --name-only HEAD 2>/dev/null || echo ""
 }
 
-# Get all untracked files on disk in a path (using git -C ~ --git-dir --work-tree)
-get_untracked_files() {
-    local git_dir="$1"
-    local path="${2:-.}"
-    git -C ~ --git-dir="$git_dir" --work-tree=~ status -u --porcelain -- "$path" 2>/dev/null | awk '{print $2}'
+# Files untracked in BOTH repos, one per line.
+#
+# ponytail: `ls-files -o`, not `status -u` — both repos set
+# status.showUntrackedFiles=no, which silently empties the status form. It also
+# applies real gitignore semantics instead of hand-rolled glob matching.
+#
+# Bounded to the top-level paths the repos actually manage, derived from what is
+# tracked, so a newly managed directory is picked up with no edit here. Unbounded
+# it walks all of $HOME (~786k files) and the output is unusable.
+#
+# Each repo reports the other's tracked files as "other", so intersect the two
+# lists: a file absent from both is genuinely untracked.
+get_untracked_both() {
+    local dotfiles_dir="${1:-$HOME/.dotfiles}"
+    local dotprivate_dir="${2:-$HOME/.dotfiles-private}"
+    local paths
+    paths=$(printf '%s\n%s\n' "$(get_tracked_files "$dotfiles_dir")" \
+                                "$(get_tracked_files "$dotprivate_dir")" \
+            | awk -F/ 'NF{print $1}' | sort -u)
+    [[ -z "$paths" ]] && return 0
+    comm -12 \
+      <(git -C ~ --git-dir="$dotfiles_dir"   --work-tree="$HOME" ls-files -o --exclude-standard -- $paths | sort) \
+      <(git -C ~ --git-dir="$dotprivate_dir" --work-tree="$HOME" ls-files -o --exclude-standard -- $paths | sort)
 }
 
 # Check if a file is tracked in a repo
@@ -116,4 +134,4 @@ get_tracked_status() {
 }
 
 # Export functions for sourcing
-export -f get_tracked_files get_untracked_files is_tracked suggestion_for_file git_add git_rm_cached get_tracked_status
+export -f get_tracked_files get_untracked_both is_tracked suggestion_for_file git_add git_rm_cached get_tracked_status
