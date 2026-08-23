@@ -106,8 +106,10 @@ def resolve_runner(runners: list[str]) -> list[str] | None:
     """First runner spec whose base command exists -> argv prefix."""
     for spec in runners:
         kind, _, payload = spec.partition(":")
-        if kind == "path" and shutil.which(payload):
-            return [payload]
+        if kind == "path":
+            payload = os.path.expanduser(payload)
+            if shutil.which(payload):
+                return [payload]
         if kind == "npx" and shutil.which("npx"):
             return ["npx", "--yes", payload]
         if kind == "bunx" and shutil.which("bunx"):
@@ -387,7 +389,7 @@ def build_argv(base, args, target_paths, report_path):
         elif a == "{report}":
             argv.append(str(report_path))
         else:
-            argv.append(a)
+            argv.append(os.path.expanduser(a))
     return argv
 
 

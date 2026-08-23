@@ -243,3 +243,16 @@ target = "dir"
 count = "semgrep"
 accepts_files = true
 install_hint = "uv tool install semgrep"
+
+# ---- Dependency hygiene: e18e module-replacements data via eslint-plugin-depend ----
+# Standalone: its own vendored eslint + config in the skill dir, so it never
+# touches (or needs) the repo's ESLint setup and doesn't collide with js-lint.
+[depend]
+configs = ["package.json"]
+needs_config = true
+runners = ["path:~/.claude/skills/static-analysis/depend/node_modules/.bin/eslint"]
+cmd = ["--no-config-lookup", "--config", "~/.claude/skills/static-analysis/depend/eslint.config.mjs", "-f", "json", "package.json"]
+target = "none"
+count = "eslint"
+accepts_files = false
+install_hint = "npm install --prefix ~/.claude/skills/static-analysis/depend"

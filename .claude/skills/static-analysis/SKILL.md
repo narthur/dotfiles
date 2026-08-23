@@ -49,7 +49,9 @@ emits clean JSON; otherwise it falls back to exit-code + line count automaticall
 
 Registry covers the languages actually in use here (TS/JS, Ruby/Rails, Python,
 Go, CSS/SCSS, Markdown, HTML, YAML/GitHub Actions, SQL, Shell, Docker) plus
-all-files secret (gitleaks) and SAST (semgrep) scanning. Overlapping tools are
+all-files secret (gitleaks) and SAST (semgrep) scanning, plus dependency
+hygiene (**depend**: e18e module-replacements data via eslint-plugin-depend,
+linting `package.json` for deps with native/lighter/maintained replacements). Overlapping tools are
 pruned to one per concern; the JS/TS linter is chosen by the repo's own config
 (biome.json → Biome, eslint config → ESLint, else oxlint).
 

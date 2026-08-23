@@ -107,3 +107,15 @@ fires.log
 
 # Contains a live Make API key — belongs in ~/.env, never in git
 .config/make-cli/config.json
+
+# static-analysis: vendored ESLint runner for the `depend` tool; package.json
+# and the lockfile are tracked, the tree is not.
+.claude/skills/static-analysis/depend/node_modules/
+.claude/skills/static-analysis/__pycache__/
+
+# Herdr runtime state and vendor-installed skills
+.config/herdr/*.log
+.config/herdr/session.json
+.config/herdr/.plugins.lock
+.claude/skills/herdr
+.agents/

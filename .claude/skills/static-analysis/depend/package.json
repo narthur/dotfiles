@@ -1,0 +1,11 @@
+{
+  "name": "static-analysis-depend",
+  "private": true,
+  "type": "module",
+  "description": "Standalone ESLint runner for eslint-plugin-depend (e18e module-replacements data). Lints a repo's package.json without touching the repo's own ESLint config.",
+  "dependencies": {
+    "@eslint/json": "^0.13.0",
+    "eslint": "^9.0.0",
+    "eslint-plugin-depend": "^1.5.0"
+  }
+}
