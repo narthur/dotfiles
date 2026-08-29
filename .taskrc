@@ -1,0 +1,2 @@
+# Taskwarrior config. Config only — task data lives in data.location and is NOT tracked.
+data.location=~/.local/share/task
