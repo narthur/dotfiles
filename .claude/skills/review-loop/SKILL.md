@@ -41,26 +41,38 @@ No-op unless this is a husky repo missing the `.husky/pre-push` delegator; when 
 
 ## Step 0c: Backfill a deferred PR report (triggered)
 
-The push-gate forces the order `loop → push → create PR` for a fresh branch, so the loop almost always finishes **before** a PR exists. When that happens, Step 14 defers the summary comment and evidence to `.git/info/review-loop-pending-report.md` instead of skipping them (see Step 13/14). This step flushes that deferral once a PR appears.
-
-At the start of every invocation, after Step 0's context gather:
+The push-gate forces the order `loop → push → create PR` for a fresh branch, so the loop almost always finishes **before** a PR exists. Step 14 defers the summary comment and evidence to `.git/info/review-loop-pending-report.md` rather than dropping them; this step flushes that once a PR appears.
 
 ```bash
 test -f .git/info/review-loop-pending-report.md && gh pr view --json number -q .number 2>/dev/null
 ```
 
-If the pending file exists **and** a PR now exists for the branch:
-
-1. Post the file's contents as a PR comment (`gh pr comment <n> --body-file .git/info/review-loop-pending-report.md`).
-2. Run the Step 13 evidence gate and the Step 13.5 measurement gate now (the branch is pushed and testable) and reconcile the PR description (Step 14), which the no-PR exit couldn't do.
-3. Delete the pending file.
-4. If HEAD still equals the reviewed sha the deferral was recorded at (nothing changed since), this backfill **was** the reason to run — report what you posted and exit without re-reviewing. Otherwise continue into the loop normally to review the new commits.
-
-If the pending file exists but there's still no PR, leave it in place and continue.
+Nothing pending, or still no PR → continue (leave the file in place). Both present → **Read `references/report-format.md`** and follow its *Backfilling a deferred report* section.
 
 ## Step 2a: Learnings Staleness Sweep (triggered)
 
 When Step 0 reports `learnings_compaction_due = true` (≥40 entries), run the relevance-based sweep **once here, before the review agents**, so the whole run uses the slimmed file — then skip it for the rest of the run. Otherwise skip entirely. Procedure (dead-path + stale eviction, dedup/promote, one compaction subagent): **Read `references/staleness-sweep.md`**.
+
+Also run the vendored-prompt drift check here (cheap, no LLM):
+
+```bash
+python3 ~/.claude/skills/review-loop/upstream-check.py
+```
+
+`references/security-review.md` vendors Anthropic's `/security-review` prompt, which is compiled into the Claude Code binary and so updates silently whenever Claude Code does. On `drift: true`, note it in the Step 14 report and offer once to diff (`--extract`) and reconcile — never block the run, and never auto-adopt: some departures are deliberate.
+
+## Step 2b: Threat model — bootstrap, staleness, update
+
+Runs **once per run, before the loop** (the artifact is repo-scoped, not cycle-scoped). Maintains `<git-common-dir>/info/review-loop-threat-model.md`, the only place repo-specific security context survives between runs. **Read `references/threat-model.md`** for the file format, the bootstrap brief, and the update brief.
+
+```bash
+python3 ~/.claude/skills/review-loop/threat-model.py
+```
+
+- **`exists: false`** → run the **bounded bootstrap** (one `sonnet` agent, hard caps: ~30 files read, ~60 lines written, four questions only). Skip entirely on a repo with no attacker-reachable surface — write one line saying so, so the next run doesn't retry.
+- **`exists: true`** → run the **update agent** (one `sonnet` agent) with the script output plus this cycle's diff. `stale[]` is the exact worklist: each entry's cited file changed since its commit pin, so the claim needs re-reading and then re-pinning, rewriting, or deleting. Skip the agent entirely when `stale` is empty and the diff touches no security-relevant surface.
+
+Every claim is **OBSERVED** (verified, carries `[file:line @ sha]`) or **INFERRED** (unverified, uncited). The consumer treats OBSERVED as fact and INFERRED as a hypothesis to check. This split exists because the user is not a security expert and cannot audit this file — it makes a wrong inference cost a redundant check rather than a missed vulnerability.
 
 ## Step 3b: Trivial-diff fast path
 
@@ -71,7 +83,7 @@ Before entering the main loop, check the diff size. Step 0's `context.sh` alread
 
 When in doubt (any logic touched, or borderline size), do NOT take the fast path — run the full loop. The fan-out's value is independent perspectives on substantial code; a typo or a version bump doesn't earn six agents plus scorers.
 
-**Fast path:** run **no conditional agents** (#7–#10) — a logic-free sub-30-line diff can't earn a structural proposal, an intent reconciliation, or the `gh` calls Agent #10 costs. Still run the Step 4a static-analysis pass (it's a deterministic subprocess, near-zero token cost, and catches secrets/SAST), then spawn **one** review subagent (`model: sonnet` — a sub-30-line, logic-free diff doesn't earn the top tier) covering the union of Agents #1 (CLAUDE.md), #2 (bugs), #4 (comments), and #5 (security) — pass it the diff, the learnings file, and the style default. Score its findings with **one** batched Haiku scorer (Step 6), then run Steps 7–14 exactly as normal (auto-fix / ask / test / commit / evidence gate / push). Report it as a single fast-path cycle. If that reviewer surfaces anything that changes program logic (an applied fix that isn't doc/config/comment-only), fall back to the full loop from cycle 1 — the fast path's premise (no logic under review) no longer holds.
+**Fast path:** run **no conditional agents** (#7–#10) — a logic-free sub-30-line diff can't earn a structural proposal, an intent reconciliation, or the `gh` calls Agent #10 costs. Still run the Step 4a static-analysis pass (it's a deterministic subprocess, near-zero token cost, and catches secrets/SAST), then spawn **one** review subagent (`model: sonnet` — a sub-30-line, logic-free diff doesn't earn the top tier) covering the union of Agents #1 (CLAUDE.md), #2 (bugs), #4 (comments), and the security review's Stage-1 finder — pass it the diff, the learnings file, the threat model, and the style default. Score its findings with **one** batched Haiku scorer (Step 6), then run Steps 7–14 exactly as normal (auto-fix / ask / test / commit / evidence gate / push). Report it as a single fast-path cycle. If that reviewer surfaces anything that changes program logic (an applied fix that isn't doc/config/comment-only), fall back to the full loop from cycle 1 — the fast path's premise (no logic under review) no longer holds.
 
 ### Fast-path re-entry — the follow-up commit after a clean exit
 
@@ -151,14 +163,14 @@ Agent #9 (intent reconciliation, Step 5) reviews the change against what it is *
 
 ## Step 5: Parallel Review Agents
 
-Spawn the review subagents in parallel (single message, multiple Agent tool calls). Agents #1–#6 always run. Agents #7 (structural simplification) and #8 (observability coverage) run **only on substantial diffs**; Agent #9 (intent reconciliation) runs **only in cycle 1 and only when Step 4b established a reviewable intent**; Agent #10 (prior review feedback) runs **only in cycle 1 and only when `gh` can reach the repo** — see each agent's gating rule.
+Spawn the review subagents in parallel (single message, multiple Agent tool calls). Agents #1–#4 and #6 always run; the **security review** (which replaces the old Agent #5) runs alongside them on every cycle — see below. Agents #7 (structural simplification) and #8 (observability coverage) run **only on substantial diffs**; Agent #9 (intent reconciliation) runs **only in cycle 1 and only when Step 4b established a reviewable intent**; Agent #10 (prior review feedback) runs **only in cycle 1 and only when `gh` can reach the repo** — see each agent's gating rule.
 
 **This cycle's review scope** (Step 4 loop, step b): `git diff origin/<base_branch>...HEAD` on cycle 1, or `git diff <prev-cycle-sha>...HEAD` on cycles 2+. Below, "the diff" means this scope; "the whole changed files" means those files' full contents at HEAD.
 
 **Two agent classes — they get different context:**
 
 - **File-scoped** — **#1 CLAUDE.md, #2 bugs, #4 comments**. These reason *within* a file, so give them the **whole changed files**, not just the diff. Omission bugs — state that should reset/invalidate but doesn't, a contract left unenforced, an error path that logs instead of throwing, a flag set before the action it gates — are invisible in a diff-of-additions and only surface against the full file. (Measured on this skill's eval: whole-file flipped a modified-file omission miss from 1/3 → 3/3; diff-only stayed blind. See `evals/`.)
-- **Diff-scoped** — **#3 history, #5 security, #6 tests, #7 structural, #8 observability, #10 prior review feedback**. These reason *across* files and relationships, so give them the whole cycle diff (they may still read *beyond* it per their rules — the scope only bounds what counts as "under review"). One agent each.
+- **Diff-scoped** — **#3 history, #6 tests, #7 structural, #8 observability, #10 prior review feedback**. These reason *across* files and relationships, so give them the whole cycle diff (they may still read *beyond* it per their rules — the scope only bounds what counts as "under review"). One agent each.
 
 **Batching the file-scoped agents (context budget).** Don't hand one agent every changed file (attention dilutes — measured: whole-PR context tanked recall to 0) nor spawn one agent per file (needless fan-out and cost). Instead run:
 
@@ -176,9 +188,7 @@ Each agent must also receive:
 
 **Model tier (pass to the Agent tool's `model` param):** pin **every** review agent to `sonnet`. Rationale and the decision record: `references/model-choice.md` (short version — Sonnet 5 lands near Opus 4.8 on review-defect-finding, so the top tier no longer buys enough to justify its cost, and a single review fan-out was burning a whole Opus session).
 
-- **All review agents — pin to `sonnet`**: **#1 CLAUDE.md**, **#2 bugs**, **#3 git history**, **#4 comments**, **#5 security**, **#6 test coverage**, **#7 structural**, **#8 observability**, **#9 intent-recon**, **#10 prior review feedback**.
-
-`sonnet` currently resolves to Sonnet 5, and the pin is a *ceiling* not a floor: on an Opus session it pins the deep agents (#2/#5/#7/#9) *down* to Sonnet 5 (the savings); on a Haiku session it pins them *up* to Sonnet 5 (deep reasoning still gets a capable model). If you ever want Opus back on a specific agent, unpin **#5 or #7** first — they're single calls, so Opus there is cheap. Leave **#2 pinned regardless**: it's the only deep agent that's batched (a PR that packs into 3 batches runs 3 instances of #2), so its fan-out is what actually burns the session on a big diff.
+- **All review agents — pin to `sonnet`**: **#1 CLAUDE.md**, **#2 bugs**, **#3 git history**, **#4 comments**, **#6 test coverage**, **#7 structural**, **#8 observability**, **#9 intent-recon**, **#10 prior review feedback**, and both stages of the **security review**.
 
 **Read `references/agent-roster.md` before spawning.** It carries the style-default paragraph every agent receives verbatim, plus the focus brief for each of #1–#6:
 
@@ -188,8 +198,21 @@ Each agent must also receive:
 | 2 | Bug scan — commission *and* omission | file-scoped, whole-file, batched |
 | 3 | Git history | changed regions, via `git log -p -L` / `git blame` |
 | 4 | Code comments compliance | file-scoped, whole-file, batched |
-| 5 | Security | diff |
+| — | **Security review** (replaces #5) | diff + threat model — **`references/security-review.md`** |
 | 6 | Test coverage | diff |
+
+### Security review (replaces Agent #5) — **Read `references/security-review.md`**
+
+Not one of the numbered roster agents any more. It is Anthropic's `/security-review` prompt, vendored, whose exclusion list and precedents were tuned on production false positives across many repos — plus two additive departures: the **threat model is injected** rather than re-derived each run, and findings **route into the loop** instead of terminating in a markdown report.
+
+Two stages, and the fan-out is on *verification*, not discovery:
+
+1. **Finder** — one `sonnet` agent. Gets the cycle diff, the changed files, the threat model, and the learnings file.
+2. **False-positive filter** — **one `sonnet` subagent per finding, in parallel**, each returning a confidence 1-10. Usually 0-3 of these; on a clean diff, zero.
+
+**Runs every cycle** except the fast path. **On cycles 2+, run it only if a security fix was applied last cycle**, scoped to the applied hunks — authorization fixes are always-ask, so the user is their sole reviewer, and nothing else re-reads them.
+
+**Do not "improve" the exclusion list from first principles.** Amend it only through the threat model's per-repo override (`## Not an issue here` / `## Watch this spot`), which is evidence-backed by construction.
 
 ### Agents #7, #8, #9, #10 — conditional (focus detail in `references/conditional-agents.md`)
 
@@ -201,6 +224,8 @@ Evaluate each gate every run; the gate is here, the focus/scoring/routing is in 
 - **#10 Prior review feedback** `[sonnet]` — spawn **only in cycle 1**, and only when `gh` is authenticated and the repo has a GitHub remote. Mines review comments on past merged PRs that touched the same files and checks whether any apply again here. Skip on a repo with no PR history for the changed files. Normal Step 6 rubric; findings carry a citation to the prior comment.
 
 ## Step 6: Haiku Scoring
+
+**Security findings do not come here.** The security review's Stage-2 filter *is* their scorer (confidence 1-10 → score ×10); do not also run a Haiku scorer over them. Their floor is higher than the loop's general band — see `references/security-review.md`.
 
 **Score per review agent, not per finding.** Spawn **one Haiku scorer subagent per review agent that returned findings** (so the scorers run in parallel, one alongside each finder). Each scorer receives that agent's *entire* finding-list and scores every finding in a single pass. Do NOT spawn one scorer per finding — that re-ships the diff once per finding and is the loop's biggest token sink. If a single agent returned an unusually large batch (>~12 findings), split it across two scorer calls to keep each pass careful, but never go back to one-per-finding.
 
@@ -259,23 +284,7 @@ After auto-fixes are applied, present the remaining 50-79 findings as one AskUse
 
 Apply approved fixes the same way as Step 7.
 
-### Framing the question for non-expert readers
-
-The user is choosing whether to apply a fix; they need enough context to decide without re-reading the diff. The Haiku scorer's confidence was 50-79, which means *you* aren't sure either — so the user is genuinely being asked to make a judgment call.
-
-Before the options, write a short framing in the `question` field that covers:
-
-1. **Why you're asking instead of auto-fixing** — name the specific Step 8a dimension(s) that pushed this finding into ask-user (e.g. "high blast radius — touches 4 files and changes an exported signature", "high forward-binding — introduces a new helper module other code will follow", "suggested fix conflicts with current state — needs human resolution", "learnings entry says always ask about X"). One short clause is enough. This tells the user *why their input is required*, not just what the finding is.
-2. **What the code in question does**, in plain language — name the function/file, but explain its role without assuming the user remembers the architecture.
-3. **What the reviewer is concerned about**, stated as the concrete risk (not the abstract category). "If the user signs out mid-fetch, the old friend list could overwrite the new one" beats "race condition in async state writes."
-4. **Why it's borderline** — what makes the issue real, and what makes it possibly not worth fixing (e.g. "currently safe because X, but X isn't guaranteed forever").
-5. **What changes if applied** — number of lines, whether tests change, whether behavior changes for any current user.
-
-Write this for a reader who knows the codebase shallowly. Avoid jargon the user wouldn't have used themselves (UUID, predicate, idempotent, etc.) unless you also define it inline. If a term is load-bearing for the decision, define it in one phrase.
-
-**If the user replies "I don't understand" / "explain more" / similar**, do not just re-ask. Step back and explain the finding from first principles in your text response — what the function does, what the situation is, what the answer is today, what the reviewer suggests, and a side-by-side trade-off (a short markdown table works well). Then re-issue the question with a tighter framing. The user should be able to act on the second ask without further questions.
-
-**Do not surface uncertainty by making the user resolve it.** If your scorer landed at 50-79, that's because the finding is genuinely ambiguous. Frame it as "judgment call" rather than "I'm not sure" — the user is the decider, not the rubber-stamp.
+The framing matters as much as the routing — the user is making a judgment call you couldn't make, on code they may know shallowly. **Read `references/scoring-and-routing.md`** ("Framing the question") before writing the `question` field.
 
 ## Step 9: Test Run
 
@@ -310,7 +319,9 @@ After committing, record this commit's sha (`git rev-parse HEAD`) as the previou
 
 On Step 8b outcomes, record learnings in `.git/info/review-loop-learnings.md` (two sections: **Dismissed**, **Accepted patterns**). It's re-shipped to every agent, so keep it a curated index, not a log.
 
-**Also record every Agent #10 finding that survived** — including ones auto-fixed at Step 7, which never reach Step 8b. #10 is the only agent whose findings come from outside the repo (`gh` review history), and it runs at most once per branch, so an unrecorded #10 finding costs the same API calls to rediscover next time. Write it to **Accepted patterns** with its citation intact ("PR #1042, @jakecoble: don't call this from the request path"). This is how a repo's most-repeated human review feedback migrates from GitHub into the local learnings file, where Agents #1–#6 see it for free on every subsequent run.
+**Also record every Agent #10 finding that survived** — including ones auto-fixed at Step 7, which never reach Step 8b. #10 is the only agent whose findings come from outside the repo (`gh` review history), and it runs at most once per branch, so an unrecorded #10 finding costs the same API calls to rediscover next time. Write it to **Accepted patterns** with its citation intact ("PR #1042, @jakecoble: don't call this from the request path"). This is how a repo's most-repeated human review feedback migrates from GitHub into the local learnings file, where Agents #1–#4 and #6 see it for free on every subsequent run.
+
+**Security dismissals go to the threat model, not here.** When the user skips a *security* finding at Step 8b, write it under `## Not an issue here` in `<git-common-dir>/info/review-loop-threat-model.md` with today's date and a `[path @ sha]` pin. That file is the per-repo override channel for the vendored exclusion list, and it is the only section the security review reads for suppressions. A security dismissal in the learnings file is invisible to it.
 
 Do the edits with `learn.py` — you judge match/novelty/section; the script does the dated surgery:
 - Re-match of an existing entry → `python3 ~/.claude/skills/review-loop/learn.py bump <file> "<substring>"` (bumps its date to today — the freshness signal Step 2a depends on).
@@ -322,6 +333,8 @@ For the entry shape, the dedup/promote judgment, the per-Step-8b-outcome mapping
 ## Step 12: "Remember X" Requests During the Session
 
 If the user says "remember X", "always check Y here", "this repo cares about Z", or similar at any point during the session, immediately append to `.git/info/review-loop-learnings.md` under the appropriate section (Dismissed for "stop flagging…", Accepted for "always flag…"). Acknowledge with one sentence. Do not derail the loop.
+
+If what the user wants remembered is a **security** concern anchored to a location ("keep an eye on this", "this spot is sensitive", "don't let anything widen that"), write it under `## Watch this spot` in the threat model instead, with a `[path:line @ sha]` pin. Those entries *override* the vendored exclusion list: a finding landing on a watched location is reported even when a generic precedent would drop it. This is the channel that keeps a repo-specific risk (e.g. a Sentry depth limit that is load-bearing PII containment) from being filtered away as routine.
 
 If the user explicitly says "remember globally" or "remember for all repos", offer to also write to `~/.claude/projects/-home-narthur/memory/` as a separate auto-memory entry.
 
@@ -346,69 +359,43 @@ Runs **immediately after Step 13 passes**, on the same clean-exit precondition. 
 - **The repo has no measurement capability at all** — no product-analytics events, no metrics client, no telemetry, no queryable usage data. Don't invent a stack to satisfy the gate; that's a project decision, not a review finding. (Mirrors Agent #8's "skip if the project logs nothing".)
 - **No PR exists** for the branch — **deferred, not dropped**, exactly as Step 13: Step 14 records it in `.git/info/review-loop-pending-report.md` and Step 0c runs it once a PR appears.
 
-Otherwise the gate is active — **Read `references/measurement-gate.md`** and follow it: 13.5a (turn the Step 4b hypothesis into a five-line plan: effect, metric, baseline, window+threshold, guardrail) → 13.5b (verify in the code that each metric is actually emitted on the changed path, segmentable, flag-symmetric, and baseline-readable now) → 13.5c (publish the plan to the PR; or on a gap, stop, instrument in this PR, and restart the loop from cycle 1 — sharing Step 13's 2-restart cap; or waive with a stated reason).
+Otherwise the gate is active — **Read `references/measurement-gate.md`** and follow it: 13.5a (turn the Step 4b hypothesis into a five-line plan: effect, metric, baseline, window+threshold, guardrail) → 13.5b (verify in the code that each metric is actually emitted on the changed path, segmentable, flag-symmetric, and baseline-readable now) → 13.5c (publish the plan to the PR, **put it in a commit message so it survives in git**, and **file a Taskwarrior follow-up due at the window's end carrying the exact query**; or on a gap, stop, instrument in this PR, and restart the loop from cycle 1 — sharing Step 13's 2-restart cap; or waive with a stated reason).
 
 **A waiver is a real outcome, not a failure** — some changes genuinely can't be measured. It just has to be said out loud, with its reason, in the report and on the PR. What the gate exists to prevent is the silent version.
 
 ## Step 14: Final Report and Auto-Push
 
-### Reconcile the PR description, then post the summary comment
+Four things, in order. **Read `references/finish.md`** for the rules behind each — the reconcile's
+timing, the record-reviewed honesty rule, and the full "when NOT to auto-push" spec.
 
-On a clean loop exit with a PR: reconcile the description so it is accurate and complete for the now-final reviewed change (this is the counterpart to Step 4b, which deliberately left it alone during review), then post the report block as a PR comment. Skip the reconcile on a cycle-limit exit or a test-failure short-circuit. On a clean exit with **no PR yet**, both the reconcile and the comment are **deferred** — write the report to `.git/info/review-loop-pending-report.md` (per `references/report-format.md`) so Step 0c flushes them when the PR appears; the comment posts directly on any terminal exit where a PR already exists.
+1. **Reconcile the PR description, then post the report as a PR comment.** Clean exit with a PR
+   only. Skip the reconcile on a cycle-limit or test-failure exit. Clean exit with **no PR yet** →
+   both are *deferred* to `.git/info/review-loop-pending-report.md`, and Step 0c flushes them.
 
-Both procedures in full: **Read `references/report-format.md`.**
+2. **Record the reviewed commit** — clean exit only, **before** the push decision:
 
-### Record the reviewed commit
+   ```bash
+   ~/.claude/skills/review-loop/record-reviewed.sh
+   ```
 
-On a **clean loop exit** (auto-fix bucket empty, tests green, no unresolved high-risk findings), record the reviewed HEAD so the pre-push review-gate recognizes it — **before** the auto-push decision below, so both this run's auto-push and any later *manual* push of the same HEAD pass the gate:
+   This is the skill's completion stamp: it asserts the loop actually looked at this tip. Never
+   hand-call it to clear the pre-push gate on a change the loop didn't examine — re-run the Step 3b
+   fast path, or state the judgment with `record-skipped.sh "<reason>"`, which clears the gate
+   while recording a *distinct* state that can't masquerade as a review.
 
-```bash
-~/.claude/skills/review-loop/record-reviewed.sh
-```
+3. **Decide the push with the checker**, never by re-deriving the checklist:
 
-Skip this on a **cycle-limit** or **test-failure** exit — that tree isn't a converged, reviewed state, so it shouldn't be waved through a later push. (The gate itself lives in `~/.git-hooks/review-gate.sh`; it blocks pushing commits you authored whose tip isn't recorded here, bypassable with `REVIEW_GATE_BYPASS=1`.)
+   ```bash
+   python3 ~/.claude/skills/review-loop/push-check.py --clean-exit \
+     --gate-state <passed|skipped|blocked> [--unresolved-skip] \
+     --branch <current> --default-branch <default>
+   ```
 
-**`record-reviewed.sh` is this skill's completion stamp — it means the loop actually looked at this tip.** It is called *here, by the loop*, after a real review pass (full loop or the Step 3b fast path — both count). Do **not** hand-call it to clear the pre-push gate on a change the loop never examined: that records a review that never happened. If you make a tiny follow-up commit after a clean exit — a comment, a doc line, a config value — you have two honest options and this is not one of them:
+   Push only on `push: true` (`git push`, or `but push <branch>` in a GitButler workspace). On
+   `false`, surface `reason` and end the report with `Next step: <reason>; push when ready.` If the
+   push itself fails, surface the error verbatim and continue — don't retry, don't force.
 
-- **Run the fast-path re-entry** (below) — it's cheap, and if it's genuinely fast-path-eligible it ends by calling `record-reviewed.sh` legitimately.
-- **Record it as skipped**, if you judge it beneath even the fast path: `~/.claude/skills/review-loop/record-skipped.sh "<reason>"`. This clears the gate but writes a *distinct* state (skipped, with your reason) that never masquerades as reviewed. A reason is required, so the judgment is stated, not silent.
-
-"It's just a comment" is precisely the rationalization the gate exists to catch. Judging a change beneath the loop is a legitimate call — making that call *silently look like a review* is not. Record-skipped keeps the judgment and the honesty.
-
-### When to auto-push
-
-Make this decision with the checker rather than re-deriving the checklist — pushing to the wrong branch or a non-converged tree is the costly mistake:
-
-```bash
-python3 ~/.claude/skills/review-loop/push-check.py --clean-exit \
-  --gate-state <passed|skipped|blocked> [--unresolved-skip] \
-  --branch <current> --default-branch <default>
-```
-
-Pass the loop-state flags you know (omit `--clean-exit` if the loop didn't converge); it checks the git facts itself (branch is the default? upstream configured?) and emits `{push, reason}`. **Push only when `push` is true**; when false, surface `reason` in the report and stop. The "When NOT to auto-push" cases below are exactly what it encodes — kept here as the spec.
-
-When it says push:
-
-- **Standard git:** `git push`
-- **GitButler workspace:** `but push <branch-name>`
-
-If the push fails (network error, branch protection, missing upstream, non-fast-forward), surface the error verbatim in the final report and continue — don't retry, don't force.
-
-### When NOT to auto-push
-
-- **Tests failed mid-loop** (Step 9 short-circuit). The branch is in a known-broken state; don't propagate.
-- **Cycle limit reached with unaddressed ≥80 findings.** The loop didn't converge.
-- **The user explicitly skipped a 50-79 finding without "remember as dismissal pattern".** That's an unresolved ambiguity the user might still want to think about; let them push when ready.
-- **No upstream configured for the branch.** Don't infer one; report and stop.
-- **Branch is the repo's default branch (main/master).** Never auto-push to main; surface the unusual state instead.
-- **The Step 13 evidence gate is blocked or hit its restart cap.** Untested (or known-broken) functionality doesn't get pushed on your say-so.
-- **The Step 13.5 measurement gate is blocked or hit its restart cap.** An unmeasurable ship is a ship you can't learn from; the instrumentation belongs in this PR. (A *waived* gate is not blocked — that one pushes.)
-
-When skipping the auto-push, end the report with `Next step: <reason>; push when ready.` Don't pretend it was a clean exit.
-
-### Report format
-
-The exact block to emit — and to reuse as the PR comment above — is in **`references/report-format.md`**.
+4. **Emit the report** — the exact block is in `references/report-format.md`.
 
 ## Quick Reference
 
@@ -426,3 +413,6 @@ The exact block to emit — and to reuse as the PR comment above — is in **`re
 | Auto-fix | 50-79 | all three dimensions low-risk | Apply silently; note in commit message |
 | Ask user | 50-79 | any dimension high-risk OR fix unclear OR `always ask` rule applies | Batch via AskUserQuestion |
 | Skip | <50 | (any) | Reported in final summary count only |
+| Ask user | (any) | authorization finding (`5-security-authz`) | Never auto-apply — a wrong authz fix locks out real users |
+| Auto-fix / Ask | ≥80 | security, non-authz | Stage-2 filter confidence ×10; normal risk profile |
+| Skip | <80 | security (any) | **Listed line-by-line** in the report — no 50-79 band for security |

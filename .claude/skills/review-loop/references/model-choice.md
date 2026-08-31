@@ -8,7 +8,7 @@ fan-out). Read this before changing a `[model: ...]` tag.
 **All review agents — #1 through #9 — are pinned to `sonnet`.** `sonnet`
 currently resolves to **Sonnet 5**.
 
-Previously the deep-reasoning agents (#2 bugs, #5 security, #7 structural,
+Previously the deep-reasoning agents (#2 bugs, the security finder, #7 structural,
 #9 intent-recon) were left *unpinned* so they inherited the session model —
 Opus on an Opus session — on the theory that a missed inference there is a
 missed real defect and so "earns the top tier."
@@ -39,7 +39,7 @@ missed real defect and so "earns the top tier."
   its fan-out is what actually multiplies cost on a big diff. Unpinning it would
   reintroduce the exact problem this decision fixed.
 
-- **If review quality ever slips**, unpin **#5 (security)** or **#7
+- **If review quality ever slips**, unpin **the security finder** or **#7
   (structural)** first — they're single calls per run, so putting Opus back on
   them is cheap. Do not unpin #2.
 

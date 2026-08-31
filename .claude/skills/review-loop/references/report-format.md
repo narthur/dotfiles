@@ -55,6 +55,15 @@ Intent questions (Agent #9 — reconciled against PR intent, not applied, your c
 Auto-applied low-risk 50-79 (no ask):
 - <list with one-line summary each — visible to the user since they didn't see the ask>
 
+Security findings below the action floor (confidence < 8/10 — considered, not actioned):
+- <file:line — category — one-clause description (confidence N/10)>
+(One line each, never a bare count. This is the ONLY place a wrongly-dropped security finding can
+surface for a non-expert reader, so it is not collapsible the way the <50 bucket below is. Omit the
+section entirely only when there were none.)
+
+Threat model (Step 2b): <bootstrapped — N claims | updated — R re-verified, A added, D dropped | unchanged>.
+Upstream security prompt (Step 2a): <in sync at claude-code X.Y.Z | DRIFT — vendored X.Y.Z, installed A.B.C; run `upstream-check.py --extract` to diff>.
+
 Static-analysis (Step 4a): autofixed <count>; security/secret/SAST findings <resolved/surfaced>; quality residue by tool: <tool=N, …>; skipped tools: <list or none>.
 
 Learnings sweep (Step 2a): <ran — dropped N (D dead-path, S stale), promoted P, now E entries | not triggered — <E> entries>.
@@ -65,3 +74,15 @@ Remaining 50-79 findings the user skipped or didn't address:
 Remaining <50 findings (low confidence, not surfaced):
 - <count only, not detail>
 ```
+
+
+## Backfilling a deferred report (Step 0c)
+
+Reached when `.git/info/review-loop-pending-report.md` exists **and** a PR now exists for the
+branch. (Pending file but still no PR → leave it in place and continue the run.)
+
+1. Post the file's contents as a PR comment (`gh pr comment <n> --body-file .git/info/review-loop-pending-report.md`).
+2. Run the Step 13 evidence gate and the Step 13.5 measurement gate now (the branch is pushed and testable) and reconcile the PR description (Step 14), which the no-PR exit couldn't do.
+3. Delete the pending file.
+4. If HEAD still equals the reviewed sha the deferral was recorded at (nothing changed since), this backfill **was** the reason to run — report what you posted and exit without re-reviewing. Otherwise continue into the loop normally to review the new commits.
+

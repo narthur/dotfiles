@@ -29,10 +29,26 @@ Anything failing is a **gap**, and gaps block — see below.
 
 ## 13.5c: Outcome
 
-**Plan complete, instrumentation verified** → publish it and pass:
+**Plan complete, instrumentation verified** → publish it, make it survive, schedule the read, and pass:
 
-1. Add an `## Impact measurement` section to the PR description with the five lines (Step 14 reconciles the body anyway — fold it in there), or post it as a PR comment if the description is the author's and you'd be rewriting it.
-2. Gate passes → continue to Step 14.
+1. **Add an `## Impact measurement` section to the PR description** with the five lines (Step 14 reconciles the body anyway — fold it in there), or post it as a PR comment if the description is the author's and you'd be rewriting it. **This is the review surface — it is where a reviewer can argue with the threshold before it's too late.**
+
+2. ⭐⭐ **PUT THE PLAN IN A COMMIT MESSAGE TOO. The PR description alone does not survive.** A `git clone` captures commits, never PR bodies, so a plan that lives only in GitHub metadata dies the day repo access does — which is exactly how the `pa11y-ratchet` CI baselines were lost (see `Fieldnotes/Capturing Impact Evidence At The Time`). **Most repos here squash with `squash_merge_commit_message: COMMIT_MESSAGES`, which concatenates every commit message into the squash body — so a plan in any one commit lands in `main` automatically, and the existing per-commit rationale is preserved.**
+
+   - If 13.5b required a telemetry commit, put the five lines in **that commit's body**.
+   - Otherwise make one empty commit:
+     ```bash
+     git commit --allow-empty -m "docs(impact): measurement plan" -m "$PLAN"
+     ```
+   - ⚠️ **If the repo is set to `PR_BODY` instead, the description already reaches the commit — skip the extra commit rather than duplicating it.** Check with `gh api repos/{owner}/{repo} --jq .squash_merge_commit_message`.
+
+3. ⭐⭐ **SCHEDULE THE READ, OR THE WINDOW IS DECORATION.** A threshold nobody returns to is worth nothing: the numbers exist during the window and are gone afterwards, which is the single most common way impact evidence is lost. **Before passing the gate, file the follow-up:**
+   ```bash
+   task add due:<window end> project:impact "read impact metric for <repo>#<pr>: <the exact query>"
+   ```
+   **Put the literal query in the task, not a description of it** — future-you must be able to run it without reconstructing anything. If Taskwarrior isn't available in the environment, write the same line into the PR as a checklist item and say in the report that the read is unscheduled.
+
+4. Gate passes → continue to Step 14.
 
 **Instrumentation gap** → **stop; do not push.**
 

@@ -30,9 +30,11 @@ in `conditional-agents.md`.
 - For each changed file, read existing comments (in-line, doc comments, header)
 - Flag changes that violate explicit guidance in comments (e.g. "// must stay alphabetized", "# do not call from main thread")
 
-### Agent #5 — Security `[model: sonnet]`
-- Look for: injection risks (SQL, command, template), hardcoded secrets/keys/tokens, missing auth checks on routes/handlers, unsafe deserialization (pickle, eval, yaml.load), path traversal, missing CSRF/CORS where relevant, broken access control
-- Be specific about the vulnerability class and how an attacker triggers it
+### Agent #5 — Security — **superseded**
+Replaced by the two-stage security review in **`references/security-review.md`** (Anthropic's
+vendored `/security-review` prompt + the per-repo threat model). It is not spawned from this
+roster and takes none of the briefs here — not even the style default. Findings bypass Haiku
+scoring; its own Stage-2 filter scores them.
 
 ### Agent #6 — Test coverage `[model: sonnet]`
 - Identify substantive logic changes (not pure refactors, not formatting)

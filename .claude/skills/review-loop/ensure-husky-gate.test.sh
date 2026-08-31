@@ -2,7 +2,8 @@
 # Self-check for ensure-husky-gate.sh: creates delegator in a husky repo, is
 # idempotent, no-ops in non-husky repos, and won't clobber an existing hook.
 set -euo pipefail
-script="$(dirname "$0")/ensure-husky-gate.sh"
+# Absolute: the tests cd into temp repos, so a $0-relative path breaks after the first cd.
+script="$(cd "$(dirname "$0")" && pwd)/ensure-husky-gate.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 

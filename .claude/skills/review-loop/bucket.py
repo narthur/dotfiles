@@ -10,6 +10,8 @@ mechanical bucketing, so the thresholds land identically every run.
 
 Input: JSON array of findings, each {id, agent, score, risk, always_ask}.
 - agent "7-structural" or "9-intent" -> always ask (a proposal, never auto-applied), even at >=80.
+- agent "5-security-authz" -> always ask (an authz fix locks real users out if wrong).
+- security agents -> nothing below 80 is actioned; see SECURITY_AGENTS below.
 - always_ask true -> ask (unclear/conflicting fix, or CLAUDE.md / learnings 'always ask about X').
 - risk "low"/"high" is consulted only for 50-79; missing risk defaults to ask (safe).
 Output: {auto_fix, ask, skip} lists, each entry tagged with its routing reason.
@@ -17,12 +19,22 @@ Output: {auto_fix, ask, skip} lists, each entry tagged with its routing reason.
 import json
 import sys
 
-ASK_ALWAYS_AGENTS = {"7-structural", "9-intent"}
+# Security findings are scored by the Stage-2 false-positive filter, not Haiku
+# (score = filter confidence x 10). Upstream's threshold is 8/10, and honoring it
+# is most of what buys the low false-positive rate — so security has no 50-79 ask
+# band. Sub-80 is skipped here but NOT lost: Step 14 lists it in the report, which
+# is the only place a wrongly-dropped security finding can surface for a non-expert.
+SECURITY_AGENTS = {"5-security", "5-security-authz"}
+SECURITY_FLOOR = 80
+
+ASK_ALWAYS_AGENTS = {"7-structural", "9-intent", "5-security-authz"}
 
 
 def route(f):
     agent = f.get("agent", "")
     score = int(f.get("score", 0))
+    if agent in SECURITY_AGENTS and score < SECURITY_FLOOR:
+        return "skip", "security: filter confidence < 8/10 (report-only, Step 14)"
     if agent in ASK_ALWAYS_AGENTS:
         return "ask", f"{agent}: proposal, never auto-applied"
     if f.get("always_ask"):
@@ -53,6 +65,13 @@ def _selftest():
     assert route({"agent": "7-structural", "score": 95})[0] == "ask"    # overrides >=80
     assert route({"agent": "9-intent", "score": 90})[0] == "ask"
     assert route({"agent": "2-bugs", "score": 90, "always_ask": True})[0] == "ask"
+    # Security: no 50-79 band — sub-80 is report-only, never an interruption.
+    assert route({"agent": "5-security", "score": 70, "risk": "low"})[0] == "skip"
+    assert route({"agent": "5-security", "score": 60, "risk": "high"})[0] == "skip"
+    assert route({"agent": "5-security", "score": 80, "risk": "low"})[0] == "auto_fix"
+    # Authz always asks above the floor, and is still floored below it.
+    assert route({"agent": "5-security-authz", "score": 100, "risk": "low"})[0] == "ask"
+    assert route({"agent": "5-security-authz", "score": 70})[0] == "skip"
     print("ok")
 
 
