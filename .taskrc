@@ -2,3 +2,18 @@
 data.location=~/.local/share/task
 news.version=3.5.0
 reserved.lines=3
+
+# Source note in the Obsidian vault for tasks transcribed by the pilot skill.
+uda.src.type=string
+uda.src.label=Source
+
+# Colors: TW merges rules, so bg-setting rules (blocking/blocked/active)
+# collide with fg-only rules (due/overdue) -> red on white, red on brown.
+# Use bold/underline instead of backgrounds so the fg colors stay readable.
+color.active=bold underline rgb410
+color.blocking=bold color15
+color.blocked=color245
+# due was color1 (dark red) on the dark alternate row - poor contrast.
+# Ramp: due=yellow, due.today=orange, overdue=bright red.
+color.due=color3
+report.next.columns=id,start.age,entry.age,depends,priority,project,tags,recur,scheduled.countdown,due.relative,until.remaining,description.count,urgency
