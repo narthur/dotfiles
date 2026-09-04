@@ -67,8 +67,8 @@ exec --no-startup-id nm-applet
 # Blueman applet for Bluetooth management
 exec --no-startup-id blueman-applet
 
-# Set desktop background
-exec --no-startup-id feh --bg-scale $HOME/Pictures/backgrounds/wallhaven-z8235j.png
+# Set desktop background (restores last wallpaper set via feh / Thunar action)
+exec_always --no-startup-id ~/.fehbg
 
 # Use amixer to adjust volume in ALSA.
 set $refresh_i3status killall -SIGUSR1 i3status
@@ -227,6 +227,8 @@ bindsym $mod+r mode "resize"
 bar {
         status_command i3blocks
         font pango:monospace 12
-        # Use first available output instead of primary (which is disconnected)
-        tray_output HDMI-0
+        # Render the systray on whichever output is currently marked primary
+        # (xrandr --output <name> --primary). Was pinned to HDMI-0 back when
+        # this was a multi-monitor setup; HDMI-0 is now disconnected.
+        tray_output primary
 }

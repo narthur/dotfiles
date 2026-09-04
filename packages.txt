@@ -30,6 +30,7 @@ python3-tinycss2
 python3-venv
 qt6ct
 rofi
+rsync
 shfmt
 simplescreenrecorder
 stripe

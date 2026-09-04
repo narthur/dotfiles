@@ -3,7 +3,9 @@
 
 PATH=$HOME/bin:$HOME/.local/bin:/opt/homebrew/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin
 
-*/10 * * * * cron-run sync-work-time $HOME/bin/sync-work-time
+# sync-work-time posts hours to Beeminder `bizsys`. Skipped on personal-only
+# machines (currently: darkpc). Add other hostnames to the guard as needed.
+*/10 * * * * [ "$(hostname -s)" != darkpc ] && cron-run sync-work-time $HOME/bin/sync-work-time
 0 */6 * * * cron-run aw-export-snapshot $HOME/bin/aw-export-snapshot
 
 # Moved to launchd (~/.config/launchd/, installed via setup-launchd):
