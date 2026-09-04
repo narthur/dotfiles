@@ -8,6 +8,11 @@ PATH=$HOME/bin:$HOME/.local/bin:/opt/homebrew/bin:/home/linuxbrew/.linuxbrew/bin
 */10 * * * * [ "$(hostname -s)" != darkpc ] && cron-run sync-work-time $HOME/bin/sync-work-time
 0 */6 * * * cron-run aw-export-snapshot $HOME/bin/aw-export-snapshot
 
-# Moved to launchd (~/.config/launchd/, installed via setup-launchd):
-#   crm-sync-bm  — cron can't read ~/Documents (macOS TCC); find returned 0 and zeroed the goals.
-#   backup-urls  — weekly 3am job that cron skips while asleep; launchd reruns it on wake.
+# On macOS these two run from launchd (~/.config/launchd/, installed via
+# setup-launchd): crm-sync-bm because cron can't read ~/Documents under TCC
+# (find returned 0 and zeroed the goals), backup-urls because cron silently
+# skips a job scheduled while the machine is asleep. Linux has neither problem
+# and no launchd, so cron owns them there -- the guard is what keeps macOS from
+# running each job twice. Schedules match the plists.
+55 * * * * [ "$(uname -s)" = Linux ] && cron-run crm-sync-bm $HOME/bin/crm-sync-bm
+0 3 * * 0 [ "$(uname -s)" = Linux ] && cron-run backup-urls $HOME/bin/backup-urls
