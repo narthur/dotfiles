@@ -37,6 +37,12 @@ for git_dir in "$HOME/.dotfiles" "$HOME/.dotfiles-private"; do
   fi
   
   echo "Pulling $(basename $git_dir)..."
+  # `git clone --bare` never writes remote.origin.fetch, so a bare `git fetch`
+  # silently fetches nothing, no remote-tracking branch exists, and status
+  # reports "up to date" while the remote is ahead. Self-heal on every machine.
+  git --git-dir="$git_dir" config --get remote.origin.fetch >/dev/null 2>&1 ||
+    git --git-dir="$git_dir" config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+
   # Use fetch + merge instead of pull (pull doesn't work well with bare repos)
   git --git-dir="$git_dir" fetch
   git -C "$HOME" --git-dir="$git_dir" --work-tree="$HOME" merge FETCH_HEAD
