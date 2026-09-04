@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.narthur.impact-snapshot</string>
+
+    <!-- Route through cron-run for timestamped logging + Healthchecks heartbeat
+         (~/.local/log/impact-snapshot.log). -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>${HOME}/bin/cron-run</string>
+        <string>impact-snapshot</string>
+        <string>${HOME}/bin/impact-snapshot</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>${HOME}/bin:${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <!-- Monthly, 1st at 04:00. These metrics move slowly, so a denser cadence
+         would add noise without adding history. launchd reruns a missed
+         interval once on wake, which matters on a laptop that sleeps at 4am. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Day</key>
+        <integer>1</integer>
+        <key>Hour</key>
+        <integer>4</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

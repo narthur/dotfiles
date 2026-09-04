@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.narthur.finance-sync</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>${HOME}/.local/bin/finance-sync</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>${HOME}/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin</string>
+  </dict>
+
+  <!-- 07:17, not on the hour: SimpleFIN asks clients to stagger requests, and it
+       keeps clear of job-poll at 06:30. Daily is the right cadence -- SimpleFIN
+       refreshes each account about once a day and caps you at 24 requests. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>7</integer>
+    <key>Minute</key>
+    <integer>17</integer>
+  </dict>
+
+  <!-- A LaunchAgent, not a LaunchDaemon: reading the credential needs the login
+       keychain unlocked, which only holds inside a logged-in GUI session. -->
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>${HOME}/Library/Logs/finance-sync.log</string>
+  <key>StandardErrorPath</key>
+  <string>${HOME}/Library/Logs/finance-sync.log</string>
+</dict>
+</plist>

@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.narthur.archive-backup</string>
+
+    <!-- Route through cron-run for timestamped logging + a Healthchecks
+         heartbeat (~/.local/log/archive-backup.log). A backup that fails
+         silently is worse than no backup, because it is trusted. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>${HOME}/bin/cron-run</string>
+        <string>archive-backup</string>
+        <string>${HOME}/bin/archive-backup</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>${HOME}/bin:${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <!-- Weekly, Sunday 05:00 — after backup-urls (03:00) so two network jobs
+         don't contend. These archives change rarely; the first run moves ~13GB,
+         every later run moves almost nothing. launchd reruns a missed interval
+         once on wake, which matters on a laptop asleep at 5am. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>5</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <!-- Uploading gigabytes must not fight the foreground for I/O. -->
+    <key>LowPriorityIO</key>
+    <true/>
+    <key>Nice</key>
+    <integer>10</integer>
+</dict>
+</plist>

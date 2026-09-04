@@ -2,30 +2,35 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>Label</key>
-	<string>com.narthur.colima-autostop</string>
-	<key>ProgramArguments</key>
-	<array>
-		<string>${HOME}/.local/bin/colima-autostop.sh</string>
-	</array>
+  <key>Label</key>
+  <string>com.narthur.bedtime-beemind</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${HOME}/.local/bin/bedtime-beemind</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>${HOME}/.local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+  </dict>
     <!-- StartCalendarInterval, not StartInterval: launchd's interval timers on this
          Mac wedge — every StartInterval agent silently stops firing while calendar
          ones keep running. Seen 2026-08-29/30 and again 2026-09-03, when this job
          stopped for 21 hours with nothing reporting it. kickstart runs a job once
          but does not re-arm the timer, so only a reboot cleared it. Calendar
          scheduling has never wedged. Cadence below is every 15 minutes. -->
-	<key>StartCalendarInterval</key>
-	<array>
+  <key>StartCalendarInterval</key>
+  <array>
         <dict><key>Minute</key><integer>0</integer></dict>
         <dict><key>Minute</key><integer>15</integer></dict>
         <dict><key>Minute</key><integer>30</integer></dict>
         <dict><key>Minute</key><integer>45</integer></dict>
-	</array>
-	<key>RunAtLoad</key>
-	<true/>
-	<key>StandardOutPath</key>
-	<string>/tmp/colima-autostop.log</string>
-	<key>StandardErrorPath</key>
-	<string>/tmp/colima-autostop.log</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>${HOME}/Library/Logs/bedtime-beemind.log</string>
+  <key>StandardErrorPath</key>
+  <string>${HOME}/Library/Logs/bedtime-beemind.log</string>
 </dict>
 </plist>

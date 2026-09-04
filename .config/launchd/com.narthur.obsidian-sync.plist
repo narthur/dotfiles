@@ -31,8 +31,27 @@
          of killing it mid-run. Combined with an unexpiring lock that wedged the
          job for 31 of 45 days across two episodes. At 7200s the duty cycle is
          ~18%; --max-lock 5m in obsidian-sync makes a killed run self-heal. -->
-    <key>StartInterval</key>
-    <integer>7200</integer>
+    <!-- StartCalendarInterval, not StartInterval: launchd's interval timers on this
+         Mac wedge — every StartInterval agent silently stops firing while calendar
+         ones keep running. Seen 2026-08-29/30 and again 2026-09-03, when this job
+         stopped for 21 hours with nothing reporting it. kickstart runs a job once
+         but does not re-arm the timer, so only a reboot cleared it. Calendar
+         scheduling has never wedged. Cadence below is every 2 hours on even hours. -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Hour</key><integer>0</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Hour</key><integer>2</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Hour</key><integer>4</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Hour</key><integer>12</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Hour</key><integer>14</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Hour</key><integer>16</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Hour</key><integer>18</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Hour</key><integer>20</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Hour</key><integer>22</integer><key>Minute</key><integer>0</integer></dict>
+    </array>
 
     <key>RunAtLoad</key>
     <false/>

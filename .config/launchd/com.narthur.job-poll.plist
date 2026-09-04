@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>OBSIDIAN_VAULT</key>
+		<string>${HOME}/Obsidian/Main</string>
+		<key>PATH</key>
+		<string>${HOME}/bin:${HOME}/.local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+	</dict>
+	<key>Label</key>
+	<string>com.narthur.job-poll</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>${HOME}/bin/cron-run</string>
+		<string>job-poll</string>
+		<string>${HOME}/.local/bin/job-poll</string>
+	</array>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>StandardErrorPath</key>
+	<string>${HOME}/Library/Logs/job-poll.log</string>
+	<key>StandardOutPath</key>
+	<string>${HOME}/Library/Logs/job-poll.log</string>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>6</integer>
+		<key>Minute</key>
+		<integer>30</integer>
+	</dict>
+</dict>
+</plist>
