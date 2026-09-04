@@ -33,15 +33,8 @@ A caller (`drive-pr`/`pr-triage`) has usually done these already; when invoked s
    ```bash
    gh pr view <number> --json number,headRefName,baseRefName,isCrossRepository
    ```
-   - **Standard git**: `gh pr checkout <number>`.
-   - **GitButler workspace** (current branch is `gitbutler/workspace`): do **not** `gh pr checkout` (it leaves the workspace). Find the matching virtual branch with `but status`; if none is applied, stop and ask rather than work on the wrong branch.
-   Re-verify with `git branch --show-current` / `but status` before proceeding.
-2. **Detect workspace type** (selects the retrieval script):
-   ```bash
-   git branch --show-current
-   ```
-   - `gitbutler/workspace` → use `but-feedback.sh` + GitButler commands.
-   - otherwise → use `pr-feedback.sh` + standard git.
+   Then `gh pr checkout <number>` (handles cross-repo forks).
+   Re-verify with `git branch --show-current` before proceeding.
 
 ## Interactive vs non-interactive
 
@@ -72,10 +65,6 @@ This is the only circumstance in which human feedback may be left without an int
 Run the script for the workspace type before doing anything else:
 
 ```bash
-# GitButler workspace
-~/.claude/skills/resolve-feedback/but-feedback.sh --limit 1
-
-# Standard git
 ~/.claude/skills/resolve-feedback/pr-feedback.sh --limit 1
 ```
 
@@ -161,9 +150,7 @@ All script paths are under `~/.claude/skills/resolve-feedback/`.
    - Review thread: `resolve-feedback.sh <thread-id>`
    - Review summary: `dismiss-comment.sh <review-id>`
    - Generic comment: `dismiss-comment.sh <comment-id>`
-3. Stage and commit **locally** (conventional commits — see below):
-   - **GitButler**: `but status` to find the PR's virtual branch → `but rub <file> <branch>` → `but commit <branch> -m "..."`
-   - **Standard git**: `git add` + `git commit -m "..."`
+3. Stage and commit **locally** (conventional commits — see below): `git add` + `git commit -m "..."`
 4. **Do NOT push** — commits accumulate locally for the caller.
 5. Return to Step 1.
 
@@ -227,7 +214,6 @@ All under `~/.claude/skills/resolve-feedback/`.
 | Command | Purpose |
 | --- | --- |
 | `pr-feedback.sh [--limit N] [--all]` | Retrieve standard PR feedback |
-| `but-feedback.sh [--limit N] [--all]` | Retrieve GitButler workspace feedback |
 | `resolve-feedback.sh <thread-id>` | Mark a review thread resolved (`resolveReviewThread`) |
 | `resolve-feedback.sh <thread-id> --unresolve` | Re-open a resolved thread |
 | `dismiss-comment.sh <comment-id>` | Mark a review summary / generic comment addressed (local) |
@@ -240,12 +226,3 @@ All under `~/.claude/skills/resolve-feedback/`.
 
 Waiting on an external reviewer is **not** this skill's job, and as of 2026-07 there is no external review pass to wait for — `review-loop` is the reviewer. Bot feedback that does land (Dependabot, CI bots, or CodeRabbit threads on older PRs) is resolved here like any other.
 
-### Git operations by workspace type
-
-| Operation | GitButler workspace | Standard git |
-| --- | --- | --- |
-| Status/branches | `but status` | `git status` |
-| Stage file to branch | `but rub <file> <branch>` | `git add <file>` |
-| Commit to branch | `but commit <branch> -m "..."` | `git commit -m "..."` |
-
-In a GitButler workspace, multiple virtual branches can be applied at once — use `but status` to identify the one tied to the PR, then `but rub` / `but commit <branch>`. A bare `git commit` bypasses virtual-branch management.

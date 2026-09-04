@@ -6,15 +6,6 @@ a field you need. Don't run this bash by hand when the JSON already has the answ
 
 ## Detecting Workspace Type
 
-Before starting, check the current git branch:
-
-```bash
-git branch --show-current
-```
-
-- If branch is `gitbutler/workspace` → use GitButler commands (`but status`, `but rub <file> <branch>`, `but commit <branch> -m "..."`)
-- Otherwise → use standard git commands
-
 ## Step 1: Determine Base Branch
 
 Try these in order; use the first that returns a value:

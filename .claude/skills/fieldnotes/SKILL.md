@@ -5,7 +5,7 @@ description: "Load Fieldnotes context and conventions. Use when starting work on
 
 # Fieldnotes
 
-Fieldnotes is an Obsidian folder at `$OBSIDIAN_VAULT/Fieldnotes` (`$OBSIDIAN_VAULT` is an env var; falls back to `~/vaults/Main` if unset) that supplements the auto-memory system.
+Fieldnotes is an Obsidian folder at `$OBSIDIAN_VAULT/Fieldnotes` (`$OBSIDIAN_VAULT` is an env var; falls back to `$OBSIDIAN_VAULT` if unset) that supplements the auto-memory system.
 
 Fieldnotes is **shared** — read and edited by both the user and the agent. Treat it as a collaborative workspace. Contrast with `~/.claude/projects/.../memory/`, which is agent-only private notes.
 

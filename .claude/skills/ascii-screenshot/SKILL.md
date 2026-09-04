@@ -114,6 +114,4 @@ you, so you can rasterise it elsewhere.
 ## Related skills
 
 - **surge-image-upload** — host the PNG at a public URL for markdown embeds.
-- **github-image-upload** — alternative host (GitHub user-attachments, needs a
-  logged-in browser).
 - **playwright** — for GUI/web screenshots (not terminal output).

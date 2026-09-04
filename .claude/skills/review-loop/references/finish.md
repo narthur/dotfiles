@@ -71,8 +71,7 @@ non-converged tree is the costly mistake, and a script cannot talk itself into i
 
 When it says push:
 
-- **Standard git:** `git push`
-- **GitButler workspace:** `but push <branch-name>`
+`git push`
 
 If the push fails (network error, branch protection, missing upstream, non-fast-forward), surface
 the error verbatim in the final report and continue — do not retry, do not force.

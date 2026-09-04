@@ -67,7 +67,7 @@ In batch mode you also: do **not** take over base-integration or CI duties unles
 
 **NEVER skip steps or jump ahead**, regardless of how you were invoked or what instructions you received. Even if the user says "just fix X in file Y":
 
-1. You MUST still start from Step 0 (Resolve Target PR) → Step 0.5 (workspace) → Step 0.7 (integrate base) → Step 1 (delegate feedback) — if the user passed a PR number/URL, switch to that PR first; never assume the current branch is right.
+1. You MUST still start from Step 0 (Resolve Target PR) → Step 0.7 (integrate base) → Step 1 (delegate feedback) — if the user passed a PR number/URL, switch to that PR first; never assume the current branch is right.
 2. You MUST drive the feedback dimension through the **`resolve-feedback` skill**, not by hand-editing files. That skill runs the retrieval scripts that surface the thread IDs needed to actually mark feedback resolved.
 3. You MUST NOT edit files **to address feedback** outside the resolve-feedback delegation. (Editing to integrate the base branch in Step 0.7, or to fix CI in Step 9b, is a separate concern governed by those steps.)
 
@@ -77,7 +77,7 @@ In batch mode you also: do **not** take over base-integration or CI duties unles
 
 # Drive-PR Workflow
 
-**ALWAYS start at Step 0 (resolve target PR) → Step 0.5 (workspace type) → Step 0.7 (integrate base / resolve conflicts) → Step 1 (delegate feedback), then proceed through each step in order.**
+**ALWAYS start at Step 0 (resolve target PR) → Step 0.7 (integrate base / resolve conflicts) → Step 1 (delegate feedback), then proceed through each step in order.**
 
 ## Step 0: Resolve Target PR
 
@@ -88,23 +88,10 @@ If the user passed a PR number, URL, or branch (e.g. `/drive-pr https://github.c
    ```bash
    gh pr view <number> --json number,headRefName,headRepositoryOwner,headRepository,isCrossRepository,baseRefName
    ```
-3. Check out the PR's head:
-   - **Standard git**: `gh pr checkout <number>` (handles cross-repo forks).
-   - **GitButler workspace** (current branch is `gitbutler/workspace`): do **not** use `gh pr checkout` — it would leave the workspace. Locate the matching virtual branch with `but status` (name should match the PR's `headRefName`). If none is applied, stop and ask rather than work on the wrong branch.
-4. Re-run `git branch --show-current` (or `but status`) and verify it matches the PR.
+3. Check out the PR's head: `gh pr checkout <number>` (handles cross-repo forks).
+4. Re-run `git branch --show-current` and verify it matches the PR.
 
 If no argument was provided, continue with the current branch.
-
-## Step 0.5: Detect Workspace Type
-
-```bash
-git branch --show-current
-```
-
-- `gitbutler/workspace` → GitButler workspace (GitButler commands; `resolve-feedback` will use `but-feedback.sh`).
-- otherwise → standard git workflow.
-
-When in a GitButler workspace, multiple virtual branches can be applied at once. Use `but status` to see them; the one tied to the PR typically matches the PR's source branch.
 
 ## Step 0.7: Integrate Base & Resolve Conflicts
 
@@ -119,8 +106,7 @@ Before feedback or review work on a possibly-stale branch, make sure the PR can 
    - `BEHIND` / `blocked` because the base moved → integrate so CI and review run against current base.
    - `mergeable: UNKNOWN` → GitHub is still computing; re-query once after a beat.
 2. **Integrate the base branch** (`origin/<baseRefName>`), preferring a **merge** over a rebase when history already uses merges or has churn that would make a rebase replay conflicts; otherwise a rebase is fine:
-   - **Standard git**: `git fetch origin` then `git merge origin/<base>` (or `git rebase origin/<base>`).
-   - **GitButler workspace**: integrate the base into the matching virtual branch via GitButler (see the `gitbutler` skill); don't run raw `git rebase` against the workspace.
+   `git fetch origin` then `git merge origin/<base>` (or `git rebase origin/<base>`).
 3. **Resolve any conflicts yourself**, keeping **both sides' intent** — never blindly take one side. After resolving, run the affected package's tests/typecheck, then commit the merge/resolution.
 4. A rebase rewrites history and needs a force-push in Step 8. Only force-push when safe (your branch, no one building on it); when unsure, prefer a merge.
 5. In **batch mode**, only do base-integration/conflict work if the caller asked for it.
@@ -150,8 +136,7 @@ When the feedback queue is empty:
 
 If this pass produced new commits (from feedback fixes or `review-loop`), or there are unpushed commits, push:
 
-- **Standard git**: `git push`
-- **GitButler workspace**: `but push <branch-name>`
+`git push`
 
 If there was nothing new to push and the head commit is already pushed, skip and proceed to Step 9b.
 

@@ -8,6 +8,35 @@
 
 SNOOZE_STATE_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/pr-feedback-snooze/state.json"
 
+# ── Portable date helpers ─────────────────────
+# BSD date (macOS) has no -d. Using GNU syntax at the call sites silently wrote
+# empty timestamps and read back 0, which made every snoozed thread look
+# already-expired — i.e. snoozing did nothing at all. (friction 2026-07-15)
+
+# Seconds since epoch -> "YYYY-MM-DDTHH:MM:SSZ"
+epoch_to_iso() {
+  date -u -d "@$1" "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null \
+    || date -u -r "$1" "+%Y-%m-%dT%H:%M:%SZ"
+}
+
+# "YYYY-MM-DDTHH:MM:SSZ" -> seconds since epoch. Empty on failure, never 0:
+# callers must distinguish "unparseable" from "expired in 1970".
+iso_to_epoch() {
+  date -u -d "$1" "+%s" 2>/dev/null \
+    || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$1" "+%s" 2>/dev/null \
+    || echo ""
+}
+
+# "YYYY-MM-DDTHH:MM:SSZ" -> short local display string; echoes input if unparseable.
+iso_to_display() {
+  local e
+  e=$(iso_to_epoch "$1")
+  [[ -z "$e" ]] && { echo "$1"; return; }
+  date -d "@$e" "+%b %d %H:%M" 2>/dev/null \
+    || date -r "$e" "+%b %d %H:%M" 2>/dev/null \
+    || echo "$1"
+}
+
 # Parse a duration string (e.g. 1h, 4h, 1d, 3d, 1w) into seconds.
 parse_snooze_duration() {
   local dur="$1"
@@ -44,8 +73,8 @@ snooze_thread() {
   now_epoch=$(date +%s)
   local until_epoch=$((now_epoch + seconds))
   local until_iso snoozed_at_iso
-  until_iso=$(date -u -d "@$until_epoch" "+%Y-%m-%dT%H:%M:%SZ")
-  snoozed_at_iso=$(date -u -d "@$now_epoch" "+%Y-%m-%dT%H:%M:%SZ")
+  until_iso=$(epoch_to_iso "$until_epoch")
+  snoozed_at_iso=$(epoch_to_iso "$now_epoch")
 
   mkdir -p "$(dirname "$SNOOZE_STATE_FILE")"
   local existing updated
@@ -58,7 +87,7 @@ snooze_thread() {
   echo "$updated" > "$SNOOZE_STATE_FILE"
 
   local until_fmt
-  until_fmt=$(date -d "$until_iso" "+%b %d %H:%M" 2>/dev/null || echo "$until_iso")
+  until_fmt=$(iso_to_display "$until_iso")
   echo "💤 Snoozed feedback thread until $until_fmt"
 }
 
@@ -92,7 +121,11 @@ check_thread_snoozed() {
 
   local now_epoch until_epoch
   now_epoch=$(date +%s)
-  until_epoch=$(date -d "$snooze_until" +%s 2>/dev/null || echo 0)
+  until_epoch=$(iso_to_epoch "$snooze_until")
+  if [[ -z "$until_epoch" ]]; then
+    echo "Warning: unreadable snooze timestamp '$snooze_until'; treating as still snoozed." >&2
+    until_epoch=$((now_epoch + 3600))
+  fi
 
   if [[ "$until_epoch" -le "$now_epoch" ]]; then
     unsnooze_thread "$thread_id"
@@ -130,7 +163,11 @@ check_comment_snoozed() {
 
   local now_epoch until_epoch
   now_epoch=$(date +%s)
-  until_epoch=$(date -d "$snooze_until" +%s 2>/dev/null || echo 0)
+  until_epoch=$(iso_to_epoch "$snooze_until")
+  if [[ -z "$until_epoch" ]]; then
+    echo "Warning: unreadable snooze timestamp '$snooze_until'; treating as still snoozed." >&2
+    until_epoch=$((now_epoch + 3600))
+  fi
 
   if [[ "$until_epoch" -le "$now_epoch" ]]; then
     unsnooze_thread "$comment_id"

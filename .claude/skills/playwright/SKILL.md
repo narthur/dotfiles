@@ -19,33 +19,47 @@ Always use **named sessions** (`-s=name`) so the user can observe the browser wi
 
 Always open the session first, then navigate. `goto` will fail if the session isn't open yet.
 
+⚠️ **`open` fails if no browser is installed** — this machine has no Chrome, so the default
+`open` errors with `Chromium distribution 'chrome' not found at /Applications/Google Chrome.app`.
+Four separate sessions have died here. Use Firefox, or install a browser once:
+
 ```bash
-playwright-cli open -s=main
+playwright-cli open -s=main --browser firefox        # works today, no install needed
+# one-time alternative: npx playwright install chrome
 playwright-cli goto https://example.com -s=main
 ```
+
+⚠️ **Run from a scratch directory, not the vault.** Snapshots and console logs are written to
+`.playwright-cli/` in the current working directory; running from an Obsidian folder pollutes it.
+`cd` to the scratchpad first, or clean up after.
 
 ### Step 2: Interact with the page
 
 After each command, playwright-cli returns a **snapshot** of the page. Read the snapshot to understand the current state before issuing the next command.
 
+⚠️ **Pass the ref bare — `ref=e12` errors `Unknown engine "ref"`.** The snapshot prints refs as
+`e12`; hand that straight to the command.
+
 ```bash
-# Click an element (use ref from snapshot, e.g. ref=e12)
-playwright-cli click ref=e12 -s=main
+# Click an element (bare ref from the snapshot — NOT ref=e12)
+playwright-cli click e12 -s=main
 
 # Type text into focused element
 playwright-cli type "hello world" -s=main
 
 # Fill a form field by ref
-playwright-cli fill ref=e5 "my@email.com" -s=main
+playwright-cli fill e5 "my@email.com" -s=main
 
 # Select a dropdown option
-playwright-cli select ref=e8 "Option Label" -s=main
+playwright-cli select e8 "Option Label" -s=main
 
 # Press a key
 playwright-cli press Enter -s=main
 
-# Scroll the page
+# Scroll the page. `scroll down` silently no-ops on some pages (e.g. USPS postcalc);
+# if the snapshot is unchanged, drive the scroll directly instead:
 playwright-cli scroll down -s=main
+playwright-cli eval "window.scrollTo(0, document.body.scrollHeight)" -s=main
 ```
 
 ### Step 3: Capture page state
@@ -162,7 +176,7 @@ Before automating a site, check `references/` for saved notes on that site's scr
 
 ## Tips
 
-- Element refs (e.g. `ref=e12`) come from the snapshot output after each command — always read the snapshot before acting
+- Element refs (e.g. `e12`) come from the snapshot output after each command — always read the snapshot before acting. Pass them **bare**; `ref=e12` errors `Unknown engine "ref"`.
 - Always ask the user to confirm they've finished logging in before continuing after `--headed` open
 - For scraping, prefer `snapshot` over `screenshot` — it gives structured text the model can parse
 - Use `playwright-cli --help` to see all available commands

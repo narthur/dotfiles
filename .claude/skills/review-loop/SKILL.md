@@ -21,7 +21,6 @@ Run the context gatherer once at the start:
 
 It emits a single JSON blob and performs Steps 1–3 and the Step 3b *sizing* deterministically — workspace detection, base-branch resolution (with `git fetch`), learnings load, and test/lint/diff-size detection. Read its fields instead of re-running those steps by hand:
 
-- `workspace` — `standard` or `gitbutler` (drives which git commands to use — mapping in `references/context-fallback.md`)
 - `base_branch` — the resolved base; `null` means all three fallbacks failed → ask the user (Step 1)
 - `test_cmd`, `lint_cmd`, `lint_fix` — detected commands (Step 3); `null` test_cmd → warn once per Step 3
 - `learnings` — contents of the learnings file, or `null` (Step 2)
@@ -299,16 +298,9 @@ Run the detected test command. Stream output. If exit code is non-zero:
 
 Stage all files changed this cycle (lint --fix changes + auto-fixes + user-approved fixes) and commit with a conventional commit message summarizing the cycle:
 
-**Standard git:**
 ```bash
 git add <changed-files>
 git commit -m "fix(review): cycle <N> — <short summary of categories addressed>"
-```
-
-**GitButler workspace:**
-```bash
-but rub <file> <branch>
-but commit <branch> -m "fix(review): cycle <N> — <short summary>"
 ```
 
 Summary should mention the agent categories whose findings drove the cycle (e.g. "security + bug scan + CLAUDE.md").
@@ -391,7 +383,7 @@ timing, the record-reviewed honesty rule, and the full "when NOT to auto-push" s
      --branch <current> --default-branch <default>
    ```
 
-   Push only on `push: true` (`git push`, or `but push <branch>` in a GitButler workspace). On
+   Push only on `push: true` (`git push`). On
    `false`, surface `reason` and end the report with `Next step: <reason>; push when ready.` If the
    push itself fails, surface the error verbatim and continue — don't retry, don't force.
 
@@ -399,12 +391,12 @@ timing, the record-reviewed honesty rule, and the full "when NOT to auto-push" s
 
 ## Quick Reference
 
-| Operation | Standard Git | GitButler |
-| --- | --- | --- |
-| Status | `git status` | `but status` |
-| Stage | `git add <file>` | `but rub <file> <branch>` |
-| Commit | `git commit -m "..."` | `but commit <branch> -m "..."` |
-| Push (user-initiated) | `git push` | `but push <branch>` |
+| Operation | Command |
+| --- | --- |
+| Status | `git status` |
+| Stage | `git add <file>` |
+| Commit | `git commit -m "..."` |
+| Push (user-initiated) | `git push` |
 
 | Bucket | Score | Risk profile (Step 8a) | Action |
 | --- | --- | --- | --- |

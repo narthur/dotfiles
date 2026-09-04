@@ -4,7 +4,7 @@
 # Usage: snooze-feedback.sh <thread-id> <duration>
 #   duration: e.g. 1h, 4h, 1d, 3d, 1w
 #
-# The thread will be hidden from pr-feedback.sh / but-feedback.sh output until:
+# The thread will be hidden from pr-feedback.sh output until:
 #   - The duration expires, OR
 #   - A new comment (not authored by you) is added to the thread
 

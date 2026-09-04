@@ -47,17 +47,6 @@ When polling:
 
 ## CRITICAL: Workspace Detection
 
-At the start, always check workspace type:
-
-```bash
-git branch --show-current
-```
-
-- If branch is `gitbutler/workspace` → **GitButler mode**: use `but` CLI for staging/committing/pushing
-- Otherwise → **Standard git mode**: use `git add`, `git commit`, `git push`
-
----
-
 ## Workflow
 
 ### Step 1: Verify Git Context
@@ -189,20 +178,10 @@ npx tsc --noEmit
 
 #### 3f: Commit and Push
 
-**Standard git mode:**
-
 ```bash
 git add <changed-files>
 git commit -m "fix(<scope>): <description of what was fixed>"
 git push
-```
-
-**GitButler mode:**
-
-```bash
-but status --json
-but commit <branch-name> -m "fix(<scope>): <description>" --changes <id>,<id>
-but push <branch-name>
 ```
 
 Use conventional commit format. The scope should reflect the area fixed (e.g., `types`, `tests`, `lint`, `build`).
@@ -269,9 +248,6 @@ Recommendation: <next steps or what to investigate>
 | `gh api repos/{owner}/{repo}/commits/<sha>/check-runs` | Individual check run statuses (poll this to detect first failure) |
 | `gh repo view --json nameWithOwner` | Get owner/repo slug |
 | `git branch --show-current` | Get current branch |
-| `but status --json` | GitButler: see workspace state and file IDs |
-| `but commit <branch> -m "..." --changes <ids>` | GitButler: commit specific files |
-| `but push <branch>` | GitButler: push branch |
 
 ## Tips
 

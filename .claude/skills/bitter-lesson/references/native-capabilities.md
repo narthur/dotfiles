@@ -75,6 +75,46 @@ _First full audit run 2026-06-19 on v2.1.183 (same version as baseline). Changel
 - **Startup warning for `Write(path)` / `NotebookEdit(path)` / `Glob(path)` permission rules**
   (v2.1.210) — prefer `Edit(path)` / `Read(path)`. Settings-hygiene now self-reporting.
 
+### New since 2.1.219 → 2.1.258 (noted 2026-09-02)
+
+- **`/review` is now just an alias of `/code-review`** (v2.1.223). `/code-review [level] [pr#|branch|path]`
+  reviews the current diff *or* a PR, remembers the last effort level, takes **`--comment`** (posts inline
+  findings to a GitHub PR — and, since v2.1.257, GitLab MRs via `glab mr note`) and **`--fix`** (applies
+  findings to the working tree). **`/code-review ultra`** runs a deep multi-agent review in the cloud, with
+  `--post` to publish the result to the PR. Claude may now start `/code-review` on its own (v2.1.246).
+  → This is the biggest supersession pressure on the PR/review skill cluster. `review-loop` stays protected,
+  but anything that merely walks a diff and reports findings is now duplicating a native command.
+- **`/claude-api prompt-audit`** (v2.1.221) — audits prompts and tool descriptions for patterns written for
+  older models. Overlaps the description-hygiene dimension of `refine-skill` / `create-skill`.
+- **`/claude-api upgrade`** (v2.1.239) and **`/claude-api cost-optimize`** (v2.1.247).
+- **Built-in "Concise" output style** (v2.1.237) — leads with results, skips preamble/narration. Partial
+  overlap with `caveman` — which Nathan chose to DELETE on 2026-09-02 on that basis.
+- **`SendFeedback` tool** (v2.1.247) — Claude drafts a feedback report for `/feedback`. Adjacent to, but not
+  a replacement for, the private `~/.claude/friction.md` log (that one feeds *this* audit, not Anthropic).
+- **Cross-session messaging** (v2.1.224): `SendMessage` / `ListAgents` between sessions on the same machine,
+  plus `notify_when_idle` (v2.1.236, one-shot idle notice, no polling). → obsoletes bespoke session-coordination
+  and polling scaffolding.
+- **`--restricted` / `CLAUDE_CODE_RESTRICTED=1`** (v2.1.248) — strips command-running tools and WebFetch.
+- **Auto-mode Containment Escape rule** (v2.1.257) — cloud metadata-credential fetches, egress evasion, and
+  cross-tenant reach are no longer auto-approved. Plus `permissions.blockReadsOutsideWorkingDirectories`
+  (v2.1.257). → *Complements* `egress-guard.sh`; does not replace it (that hook is a local deterministic
+  control and stays protected), but the overlap is now real enough to re-check the hook's scope.
+- **Auto mode tab in `/permissions`** (v2.1.246) for viewing/editing classifier rules.
+- **`/usage` Loops breakdown** (v2.1.243) — per-loop run count/tokens/last-run; **per-session prompt-cache line
+  in `/cost`** (v2.1.251). → native observability for `/loop` sprawl.
+- **`PreModelSwitch` / `PostModelSwitch` hooks** (v2.1.251); **`DirectoryAdded` hook** (v2.1.219).
+- **`promptCacheTtl` / `subagentPromptCacheTtl`** settings (v2.1.243); `experimental.cacheTtl` per agent (v2.1.248).
+- **Workflow tool prompt footprint cut** 5.7k → ~1k tokens, script reference moved into the bundled
+  `workflow-authoring` skill (v2.1.248).
+- **Bundled first-party skills now include**: `design` (multi-artboard visual canvas — UI mockups, wireframes,
+  landing pages, posters), `artifact-design`, `artifact-diagramming`, `artifact-capabilities`, `dataviz`,
+  `claude-in-chrome`, `security-review`, `simplify`, `code-review`, `run`, `init`, `update-config`,
+  `keybindings-help`, `fewer-permission-prompts`, `claude-api`, `workflow-authoring`, `loop`, `schedule`.
+  → Check personal skills against this list before keeping any of them.
+- **`/doctor` gained**: stale sandbox-mask warning (v2.1.257), server-managed-settings load diagnostics
+  (v2.1.248), wildcard-Bash-allow-rule startup warning (v2.1.246).
+- **Write tool** no longer requires a prior Read for newer models (v2.1.228).
+
 ## Model capabilities (Claude, current generation)
 
 - Strong unprompted ability at: reading stack traces, writing idiomatic code/commits,
@@ -97,4 +137,8 @@ _First full audit run 2026-06-19 on v2.1.183 (same version as baseline). Changel
 
 _Append as the audit confirms them, so we don't re-litigate. Date each entry._
 
+- **`caveman`** — DELETED 2026-09-02 (Nathan's explicit call). The built-in "Concise" output style
+  (v2.1.237) covers the intent; zero invocations by either route in the preceding six weeks. Don't
+  re-propose creating it. The `ponytail` plugin still references pairing with it — that's a vendor
+  bundle, left alone.
 - **`coderabbit-review-loop`** — DELETED 2026-06-19. Self-documented fallback to `review-loop` (the default Claude-driven local review); the CodeRabbit-CLI iterative loop was dead weight. One-shot CodeRabbit needs are met by a manual `@coderabbitai review` or native `/code-review`. Don't re-propose creating it.

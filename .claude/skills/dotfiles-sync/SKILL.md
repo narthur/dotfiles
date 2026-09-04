@@ -30,18 +30,18 @@ Aliases are defined in `~/.zshrc` (macOS) or `~/.bashrc` (Linux), but may not be
 
 ```bash
 # dotfiles <cmd>  →
-git -C ~ --git-dir=~/.dotfiles --work-tree=~ <cmd>
+git -C ~ --git-dir="$HOME/.dotfiles" --work-tree="$HOME" <cmd>
 
 # dotprivate <cmd>  →
-git -C ~ --git-dir=~/.dotfiles-private --work-tree=~ <cmd>
+git -C ~ --git-dir="$HOME/.dotfiles-private" --work-tree="$HOME" <cmd>
 ```
 
 ## Known Quirks
 
-- **`ls-tree` + `--work-tree`**: Do NOT pass `--work-tree` when running `ls-tree` — it causes the output to be empty. Use `git --git-dir=~/.dotfiles ls-tree ...` with no `--work-tree`.
+- **`ls-tree` + `--work-tree`**: Do NOT pass `--work-tree` when running `ls-tree` — it causes the output to be empty. Use `git --git-dir="$HOME/.dotfiles" ls-tree ...` with no `--work-tree`.
 - **Path resolution**: Always use `-C ~` for `status`, `add`, `diff` commands. Without it, git resolves paths relative to the current working directory instead of the work tree.
 - **`status -u` does not work**: both repos set `status.showUntrackedFiles=no`, so the untracked section is silently empty. Use `git ... ls-files -o --exclude-standard` instead, which ignores that setting.
-- **`--work-tree=~` does not expand**: the tilde stays literal after `=` and git fails with "must be run in a work tree". Write `--work-tree="$HOME"`.
+- **A bare `~` does not expand after `=`** — in *either* flag. `--work-tree=~` fails with "must be run in a work tree", and `--git-dir=~/.dotfiles` fails with "not a git repository: '~/.dotfiles'". Write `--git-dir="$HOME/.dotfiles" --work-tree="$HOME"`. (Verified 2026-09-02; the earlier note blamed `--work-tree` alone, so every documented command here was still broken through `--git-dir`.)
 - **Cross-repo noise**: each repo reports the other's tracked files as untracked. Intersect the two `ls-files -o` lists — a file absent from both is genuinely untracked. `get_untracked_both` in `lib/routing.sh` does this and bounds the scan to managed top-level paths (unbounded it walks ~786k files in `$HOME`).
 
 ## What Goes Where
@@ -114,8 +114,8 @@ Any merged `settings.json` will appear as a modified tracked file in Step 1 and 
 #### 1a: Check all modified tracked files
 
 ```bash
-git -C ~ --git-dir=~/.dotfiles --work-tree=~ status
-git -C ~ --git-dir=~/.dotfiles-private --work-tree=~ status
+git -C ~ --git-dir="$HOME/.dotfiles" --work-tree="$HOME" status
+git -C ~ --git-dir="$HOME/.dotfiles-private" --work-tree="$HOME" status
 ```
 
 This shows all tracked files with uncommitted changes, across the entire repo — not just skills.
@@ -270,7 +270,7 @@ Before offering to commit, do a fresh scan of **everything staged in `dotfiles` 
 
 1. Get all staged files:
    ```bash
-   git -C ~ --git-dir=~/.dotfiles --work-tree=~ diff --cached --name-only
+   git -C ~ --git-dir="$HOME/.dotfiles" --work-tree="$HOME" diff --cached --name-only
    ```
 2. **Read every staged file** using the Read tool.
 3. Scan for personal data and cross-platform issues (same categories as step 5b).
@@ -304,11 +304,11 @@ Commit and push staged changes? (yes / no)
 If yes, commit and push each repo that has staged changes. Use conventional commits.
 
 ```bash
-git -C ~ --git-dir=~/.dotfiles --work-tree=~ commit -m "..."
-git -C ~ --git-dir=~/.dotfiles --work-tree=~ push
+git -C ~ --git-dir="$HOME/.dotfiles" --work-tree="$HOME" commit -m "..."
+git -C ~ --git-dir="$HOME/.dotfiles" --work-tree="$HOME" push
 
-git -C ~ --git-dir=~/.dotfiles-private --work-tree=~ commit -m "..."
-git -C ~ --git-dir=~/.dotfiles-private --work-tree=~ push
+git -C ~ --git-dir="$HOME/.dotfiles-private" --work-tree="$HOME" commit -m "..."
+git -C ~ --git-dir="$HOME/.dotfiles-private" --work-tree="$HOME" push
 ```
 
 ## Tips
@@ -316,4 +316,4 @@ git -C ~ --git-dir=~/.dotfiles-private --work-tree=~ push
 - `status` without `-u` shows tracked files with changes — that part works fine.
 - For untracked files, run `check-routing`; don't hand-roll it. See Known Quirks for why `status -u` lies here.
 - When in doubt about public vs. private, prefer `dotprivate` — easier to move public than to scrub history.
-- `add` commands can be batched: `git -C ~ --git-dir=~/.dotfiles-private --work-tree=~ add ~/.claude/skills/foo/ ~/.claude/skills/bar/`
+- `add` commands can be batched: `git -C ~ --git-dir="$HOME/.dotfiles-private" --work-tree="$HOME" add ~/.claude/skills/foo/ ~/.claude/skills/bar/`

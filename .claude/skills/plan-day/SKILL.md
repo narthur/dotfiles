@@ -97,10 +97,10 @@ Present the draft and ask:
 
 Once the user approves, append the plan to their Obsidian daily note.
 
-- **Vault path**: `~/vaults/Main/`
-- **Daily notes folder**: `~/vaults/Main/Daily Notes/`
+- **Vault path**: `$OBSIDIAN_VAULT/`
+- **Daily notes folder**: `$OBSIDIAN_VAULT/Daily Notes/`
 - **File name format**: `YYYY-MM-DD.md` (e.g., `2026-02-22.md`)
-- **Today's note**: `~/vaults/Main/Daily Notes/{today's date}.md`
+- **Today's note**: `$OBSIDIAN_VAULT/Daily Notes/{today's date}.md`
 
 **Append behavior:**
 - If the daily note already exists, append the plan to the end (with a blank line separator)

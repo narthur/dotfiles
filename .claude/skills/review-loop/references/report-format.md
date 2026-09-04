@@ -13,7 +13,7 @@ On a clean loop exit, if a PR exists, make the PR description **accurate and com
 Then:
 - Compare the current description against the final diff. Update it to state the purpose, the actual behavior (including notable edge cases and any decisions the review surfaced or resolved), and — if the repo's PRs use one — the test plan.
 - **Preserve author intent and structure**: fill gaps and correct drift, don't rewrite wholesale, and never delete a human's rationale.
-- Edit in place with `gh pr edit <n> --body …` (GitButler: the equivalent PR update) — a low-risk update to your own PR.
+- Edit in place with `gh pr edit <n> --body …` — a low-risk update to your own PR.
 - Do this even when the auto-push is being skipped (e.g. branch is `main`): an accurate description is still worth leaving behind.
 
 ### Post the summary comment to the PR
@@ -29,7 +29,7 @@ EOF
 
 **No PR yet — defer, don't skip.** A fresh branch is pushed *after* the loop runs (the gate forces that order), so "no PR" is the normal first-branch case, not a reason to drop the summary. Write the report block — plus any evidence captured in Step 13 — to `.git/info/review-loop-pending-report.md` instead. Two things flush it, both running Step 0c's procedure (post the report, run the evidence gate, reconcile the description): (a) if you go on to create the PR **later in this same session**, flush it immediately (you still have this report in context); (b) otherwise Step 0c flushes automatically the next time the loop runs after the PR exists. Either way the summary and evidence reach the PR without the author having to notice they're missing.
 
-GitButler: use the equivalent PR comment for the workspace's PR. If the comment post fails, note it in the report and continue — don't retry.
+If the comment post fails, note it in the report and continue — don't retry.
 
 ### Report format
 

@@ -89,7 +89,7 @@ The agent prompt MUST include all of the following:
    - Commit the change
    - Push the branch
    - Create a PR using `gh pr create --base {DEFAULT_BRANCH}` that closes the issue
-   - Use the `but` command instead of raw git for write operations (commit, push, branch). For read-only git operations (status, diff, log), regular git is fine. If `but` doesn't work (e.g., not a gitbutler workspace), fall back to regular git.
+   - Use regular git for all operations (commit, push, branch).
 5. **PR format:**
    ```
    gh pr create --base {DEFAULT_BRANCH} --title "..." --body "$(cat <<'EOF'

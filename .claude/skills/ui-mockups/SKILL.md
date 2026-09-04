@@ -62,7 +62,7 @@ Use the `surge-image-upload` skill — no login dance, content-addressed, stable
 url=$(~/.claude/skills/surge-image-upload/upload.sh /tmp/<name>/mockup.png 2>/dev/null)
 ```
 
-(Alternative: `github-image-upload` skill gives permanent access-controlled `user-attachments` URLs but needs a logged-in Playwright browser.)
+(Hosting: use the `surge-image-upload` skill — browser-free, and surge URLs render inline on public repos via GitHub's image proxy.)
 
 ## 5. Embed in the issue/PR
 

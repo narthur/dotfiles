@@ -1,13 +1,10 @@
 #!/usr/bin/env bash
 # review-loop context gatherer. Emits one JSON blob with everything the
-# orchestrator needs to start a run — workspace type, base branch (fetched),
+# orchestrator needs to start a run — base branch (fetched),
 # learnings, test/lint commands, diff size, fast-path eligibility.
 # Replaces the per-step bash round-trips of SKILL Steps 1-3 + 3b-sizing.
 # ponytail: one deterministic call instead of six reasoned steps.
 set -uo pipefail
-
-workspace=standard
-[ "$(git branch --show-current 2>/dev/null)" = "gitbutler/workspace" ] && workspace=gitbutler
 
 # base branch: PR base -> repo default -> origin/HEAD symbolic ref
 base_branch=$(gh pr view --json baseRefName -q .baseRefName 2>/dev/null || true)
@@ -36,7 +33,7 @@ if [ -n "$base_branch" ]; then
     | awk '{a+=$1; d+=$2} END {print a+d+0}' || echo 0)
 fi
 
-BASE_BRANCH="$base_branch" WORKSPACE="$workspace" LEARNINGS="$learnings" \
+BASE_BRANCH="$base_branch" LEARNINGS="$learnings" \
 DIFFSTAT="$diffstat" CHANGED_LINES="$changed_lines" TODAY="$today" \
 LEARN_ENTRIES="$learnings_entries" python3 - <<'PY'
 import json, os, re, pathlib
@@ -81,7 +78,6 @@ changed = int(os.environ.get("CHANGED_LINES") or 0)
 learn_entries = int(os.environ.get("LEARN_ENTRIES") or 0)
 LEARN_COMPACTION_THRESHOLD = 40  # sweep before the ~50-entry cap so it self-heals early
 print(json.dumps({
-    "workspace": os.environ["WORKSPACE"],
     "base_branch": os.environ["BASE_BRANCH"] or None,
     "test_cmd": test_cmd,
     "lint_cmd": lint_cmd,

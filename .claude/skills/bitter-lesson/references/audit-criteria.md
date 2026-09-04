@@ -55,8 +55,11 @@ current capability baseline in `native-capabilities.md`:
 
 - **Credentials / connection details** the model can't know (DB DSNs, API endpoints, account
   IDs, org-specific config).
-- **Idiosyncratic preference** — your conventions, not the model's defaults (e.g. caveman
-  mode, your CRM format, your Fieldnotes conventions).
+- **Idiosyncratic preference** — your conventions, not the model's defaults (e.g. your CRM
+  format, your Fieldnotes conventions, `voice`'s dated corrections). Note this protection is
+  strong but not absolute: `caveman` held it for two audits and Nathan still chose deletion in
+  2026-09 once the native "Concise" output style covered it and the log showed no use. Surface
+  the overlap and let him decide rather than assuming either way.
 - **Hard-won correctness** — guardrails that exist because something broke. These are the
   *opposite* of bitter-lesson rot: they're institutional memory. Examples in this setup:
   `review-loop`, the egress-guard hook, the CodeRabbit one-review-per-PR learning. **Never
