@@ -29,7 +29,23 @@ get_untracked_both() {
     [[ -z "$paths" ]] && return 0
     comm -12 \
       <(git -C ~ --git-dir="$dotfiles_dir"   --work-tree="$HOME" ls-files -o --exclude-standard -- $paths | sort) \
-      <(git -C ~ --git-dir="$dotprivate_dir" --work-tree="$HOME" ls-files -o --exclude-standard -- $paths | sort)
+      <(git -C ~ --git-dir="$dotprivate_dir" --work-tree="$HOME" ls-files -o --exclude-standard -- $paths | sort) \
+    | drop_symlinks
+}
+
+# Drop paths that are symlinks. A symlinked entry is homed in another repo
+# (e.g. ~/.claude/skills/* linked from ~/code/skills), so it is not untracked in
+# the sense this check cares about — that sense is "has no home at all", and a
+# symlink is proof of one. git reports the link itself rather than descending
+# into it, so testing the path is enough; no knowledge of the target is needed.
+#
+# ponytail: no third --git-dir to configure, and this generalises to any repo
+# linked in later.
+drop_symlinks() {
+    local f
+    while IFS= read -r f; do
+        [[ -L "$HOME/$f" ]] || printf '%s\n' "$f"
+    done
 }
 
 # Check if a file is tracked in a repo
