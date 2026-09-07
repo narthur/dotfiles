@@ -12,7 +12,7 @@ CLIENT_NAME="${2:?Usage: narthbugz-entries <user_id> <client_name> <days>}"
 DAYS="${3:-7}"
 
 PERIOD_END=$(date +%Y-%m-%d)
-PERIOD_START=$(date -d "${DAYS} days ago" +%Y-%m-%d)
+PERIOD_START=$(python3 -c "from datetime import date, timedelta; print(date.today() - timedelta(days=${DAYS}))")
 
 source ~/.env 2>/dev/null || true
 
@@ -23,10 +23,30 @@ fi
 
 AUTH_HEADER="Basic $(echo -n "${NARTHBUGZ_EMAIL}:${NARTHBUGZ_TOKEN}" | base64 -w 0)"
 
-curl -s --max-time 60 --compressed \
-  -H "Authorization: ${AUTH_HEADER}" \
-  "https://api.narthbugz.com/users/${USER_ID}/entries?sort=-start&size=200" \
-  | jq "[.data[]?
-      | select(.startTime[:10] >= \"${PERIOD_START}\" and .startTime[:10] <= \"${PERIOD_END}\")
-      | select(.clientName == \"${CLIENT_NAME}\")
-      | {taskName, projectName, clientName, hours, notes, date: .startTime[:10]}]"
+# The API caps page size at 100 no matter what `size` asks for, and sorts newest
+# first. Walk pages until we pass PERIOD_START, or entries older than the window
+# are silently dropped — which undercounts billing on longer lookbacks.
+page=1
+all_entries="[]"
+while :; do
+  resp=$(curl -s --max-time 60 --compressed \
+    -H "Authorization: ${AUTH_HEADER}" \
+    "https://api.narthbugz.com/users/${USER_ID}/entries?sort=-start&size=100&page=${page}")
+
+  batch=$(printf '%s' "$resp" | jq -c '.data // []')
+  [[ "$(printf '%s' "$batch" | jq 'length')" -eq 0 ]] && break
+
+  all_entries=$(jq -c -n --argjson a "$all_entries" --argjson b "$batch" '$a + $b')
+
+  oldest=$(printf '%s' "$batch" | jq -r 'last | .startTime[:10]')
+  [[ "$oldest" < "$PERIOD_START" ]] && break
+  [[ "$(printf '%s' "$resp" | jq -r '.meta.hasNextPage // false')" != "true" ]] && break
+
+  page=$((page + 1))
+  [[ $page -gt 20 ]] && break   # safety stop
+done
+
+printf '%s' "$all_entries" | jq "[.[]
+    | select(.startTime[:10] >= \"${PERIOD_START}\" and .startTime[:10] <= \"${PERIOD_END}\")
+    | select(.clientName == \"${CLIENT_NAME}\")
+    | {taskName, projectName, clientName, hours, notes, startTime, endTime, billable, date: .startTime[:10]}]"

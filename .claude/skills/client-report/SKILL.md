@@ -48,10 +48,19 @@ The user may specify:
    - `CLIENT_NAME` — human-readable name (e.g. "Acme Corp")
    - `GITHUB_ORG` — GitHub org slug (e.g. "acme-corp")
    - `TEAM_MEMBERS` — array of objects, each with `github` (GitHub username) and optional `narthbugz_id`. May also be an array of plain strings (treat each string as a GitHub username with no narthbugz_id).
-   - `NARTHBUGZ_CLIENT_NAME` — Narthbugz `clientName` to filter time entries (may be absent; skip time tracking if so)
-   - `OUTPUT_DIR` — local directory path for saving reports
-   - `SURGE_DOMAIN` — Surge.sh domain for publishing
 
+   **Look up real names — never infer them from usernames.** A username is not a name, and a plausible-looking guess derived from a handle is an invented person. Fetch each member's display name in one batch:
+
+   ```bash
+   for u in <github1> <github2>; do gh api users/$u --jq '"\(.login)\t\(.name // "")"'; done
+   ```
+
+   Use the returned name as the person's heading, with the username beside it. If `name` comes back empty, use the username alone as the heading — do not guess.
+   - `NARTHBUGZ_CLIENT_NAME` — Narthbugz `clientName` to filter time entries (may be absent; skip time tracking if so)
+   - `NARTHBUGZ_CLIENT_ID` — Narthbugz numeric client id, required for `tracked+agent` billing (maps to a GitHub org via `/github/orgs`)
+   - `BILLING_BASIS` — `"tracked"` (default, explicit entries only) or `"tracked+agent"` (union of tracked entries and agent working time). Absent means `"tracked"`.
+   - `OUTPUT_DIR` — local directory path for saving reports
+   
 ### Step 1: Determine Lookback Period
 
 Determine the proposed date range using the following logic, then confirm with the user before proceeding.
@@ -144,21 +153,30 @@ gh pr view <NUM> --repo <GITHUB_ORG>/<REPO> --json number,title,body,state,merge
 ````
 
 **Step 2: Determine stage**
-Use this logic:
+
+First resolve the repo's actual default branch — never assume `main`. It may be `master`, `main`, `trunk`, or anything else, and it varies from repo to repo within one org:
+
+```bash
+DEFAULT=$(gh repo view <GITHUB_ORG>/<REPO> --json defaultBranchRef --jq .defaultBranchRef.name)
+```
+
+Then:
 
 - If state is OPEN → stage is "Open"
 - If state is CLOSED (not merged, mergedAt is null) → stage is "Closed (not merged)"
 - If state is MERGED:
   - Note the baseRefName (the branch it merged into)
-  - If baseRefName is "main" → stage is "In main"
-  - Otherwise (e.g. "development", "dev") → check if the merge commit reached main:
+  - If baseRefName equals `$DEFAULT` → stage is "In $DEFAULT"
+  - Otherwise (e.g. "development", "dev") → check if the merge commit reached the default branch:
 
     ```bash
-    gh api repos/<GITHUB_ORG>/<REPO>/compare/main...<mergeCommit.oid> --jq '{status:.status,ahead:.ahead_by}'
+    gh api repos/<GITHUB_ORG>/<REPO>/compare/$DEFAULT...<mergeCommit.oid> --jq '{status:.status,ahead:.ahead_by}'
     ```
 
-    - If `ahead == 0` → stage is "In main (via <baseRefName>)"
-    - If `ahead > 0` → stage is "In <baseRefName> only (not yet in main)"
+    - If `ahead == 0` → stage is "In $DEFAULT (via <baseRefName>)"
+    - If `ahead > 0` → stage is "In <baseRefName> only (not yet in $DEFAULT)"
+
+Report the branch name you resolved, so the summarizer never has to guess it.
 
 **Step 3: Check for reverts**
 
@@ -249,30 +267,54 @@ If a clear match is found (result title substantially overlaps with note text), 
 
 Run all searches in parallel where there are multiple vague entries.
 
-#### 4c: Write the per-person summary
+#### 4c: Organize the report by outcome, not by person
 
-For each person, include these sections:
+The report is **organized by what the reader does with each part**, not by who did the work. One person's name appearing five times is not structure; "this needs your decision" versus "this shipped" is. Contributors are named once in the masthead.
 
-**What they've been working on:**
-Synthesize their **merged** PRs and completed work (from events) into a functional narrative. Group related work into themes. For each theme, use the PR summaries from the sub-agents to describe *what changed and why* at a product/engineering level. Include the PR stage where relevant. Aim for 3–5 bullet points per person.
+Sections, in this order:
 
-**Important:** PRs that were **closed without merging** are NOT completed work. Do NOT include them here. Instead, briefly note them in a separate **Closed without merging** subsection (explain why if the PR body provides context). Omit if none.
+1. **Waiting on a decision** — the asks that survived 4d. The only visually loud part of the page. Omit the section entirely when nothing survives.
+2. **Shipped** — merged PRs, grouped into themes rather than listed one per PR. One line of prose per theme; anything longer goes in a `<details class="more">` disclosure.
+3. **In flight** — open PRs, each with a status chip (`Your call` / `Ready for review` / `Draft · blocked`) and one line saying what it is waiting on.
+4. **Worth a look** — observations that are not asks. Things the user owes, conventions awaiting someone else, anything odd. Say plainly when an item is the user's own to do.
+5. **Time** — see the billing-basis rules above.
 
-**What they still have to do:**
-List their open PRs and assigned issues, grouped by theme where possible. For each open PR, include the sub-agent's summary and note whether it's draft, awaiting review, or blocked. Read as a to-do list.
+**Closed without merging** is not a section. Fold those into Worth a look with one line each, or omit them; abandoned work rarely earns a heading.
 
-**Reviewing:**
-If the person has `PullRequestReviewEvent` or `PullRequestReviewCommentEvent` events on PRs they didn't author, include a brief note about what they reviewed.
+**Every visible line is one sentence.** If a theme needs three sentences, the first goes on the page and the rest go in a disclosure. The old per-person format failed because it put every sentence on the page at once.
 
-**Time tracking context (if available):**
-- Calculate total hours tracked for this client in the period and note in the section header (e.g. "12.5h tracked").
-- Annotate themes with hours where the match is clear.
-- List unmatched sub-activities (and whole entries with no match) briefly as "Other tracked work." Every tracked sub-activity must appear somewhere in the report — never drop one silently.
-- If time data was unavailable, note it (e.g. "Time tracking unavailable").
+**Contributors line.** Name people once, in the masthead: who was active, then, in muted text, who had no activity. Someone with nothing to report gets a name in a list, never a section or a card of their own.
 
-**Important — do not infer stack completeness:**
+#### 4d: Grill the user on every ask before it goes in the report
 
-Never claim a PR is the "last" or "only remaining" part of a stack unless the sub-agent's "Stack context" section confirms the full list. Report stacks as-is (e.g. "part 4 of a 9-PR stack").
+The report's decision section (`{{DECISIONS_SECTION}}`) is the only part that demands something of the client. It is worth nothing if it cries wolf — a list that reads as urgent every month trains the client to skip it. So no candidate ask goes into the report until the user has defended it.
+
+**First, filter without asking.** Kill or demote these yourself; do not spend a question on them.
+
+- **Not actually blocked on the client.** If the user can move it without them, it is his to-do, not an ask. This is the most common false positive: "needs review" is usually a scheduling fact, not a decision.
+- **Answerable from GitHub.** If the PR body, issue thread, review state, or CI already says what is blocked and on whom, go read it. Never ask the user what the data can tell you.
+- **Already answered.** Check the previous report in `<OUTPUT_DIR>` (`ls -1 <OUTPUT_DIR>/*.md | sort | tail -1`) and grep its ask section. If the same ask appeared and has since moved, drop it.
+- **Better asked in person.** A permission grant, an access request, a favour, anything whose natural home is a message or a conversation — put it in Taskwarrior for the user to raise directly, not in the report. A report ask has to survive being read cold with no one to answer a follow-up question, which is exactly what makes small interpersonal asks read as vague. Load the `taskwarrior` skill and add the task rather than printing the ask.
+- **Nothing changes if they don't decide.** An ask needs a cost to waiting. No cost, no ask — move it to "worth a look".
+
+**Then grill what survives, one ask at a time**, using `AskUserQuestion`. Never batch them; the point is that the user considers each ask on its own.
+
+For each, state in the question: the ask as it would be printed, precisely what is blocked behind it, and what it costs to keep waiting. Then offer:
+
+- **Keep** — goes in as written.
+- **Reword** — the ask is real but the framing overstates it; collect the user's wording.
+- **Demote** — real but not blocking; moves to "worth a look".
+- **Drop** — not an ask.
+
+Give a recommendation with each question, as the first option and marked `(Recommended)`.
+
+**Push back where the data does.** This is a grilling, not a survey. If the user keeps an ask the evidence does not support — a PR nobody is actually waiting on, a decision he could make himself, a "blocker" whose cost he cannot name — say so once, plainly, with the evidence, then take his answer and move on. He has context the GitHub data does not.
+
+**Enforce scarcity.** More than three surviving asks is itself the wolf-crying signal. If more than three survive, ask which single one matters most this period and demote the rest; a client who reads one ask and acts is worth more than one who reads six and does nothing.
+
+**Flag repeats explicitly.** If an ask also appeared in the previous report, say so in the question ("this is the 3rd report carrying this ask"). A repeat means either the client is not reading the section or the ask is not really important — both are worth naming in the report itself rather than silently restating it.
+
+**If the user is not present** (the skill is running unattended), do not invent approval. Write the ask section with only the asks that pass the filter above, and note at the top of the section that it has not been reviewed.
 
 ### Step 5: Generate HTML Report
 
@@ -290,143 +332,40 @@ Never claim a PR is the "last" or "only remaining" part of a stack unless the su
 3. Read the HTML template at `~/.claude/skills/client-report/report-template.html`.
 
 4. Populate the template placeholders with the report data gathered in Steps 2–4:
-   - Replace `{{REPORT_TITLE}}` with "<CLIENT_NAME> Team Activity Report"
+   - Replace `{{REPORT_TITLE}}` with "<CLIENT_NAME> Activity, <Mon>&ndash;<Mon YYYY>" (e.g. "Acme Activity, Aug&ndash;Sep 2026") so each report is identifiable in the artifact gallery
    - Replace `{{PERIOD_START}}` and `{{PERIOD_END}}` with the date range boundaries
    - Replace `{{DAYS}}` with the lookback period in days
-   - Replace `{{GENERATED_AT}}` and `{{FOOTER_TIMESTAMP}}` with a human-readable timestamp
-   - Replace `{{PERSON_SECTIONS}}` with HTML blocks for each person, using this structure:
-
-     ```html
-     <div class="person-card">
-       <h2>Person Name</h2>
-       <div class="stat-bar">
-         <span class="stat stat-merged">14 merged</span>
-         <span class="stat stat-open">1 open</span>
-         <span class="stat stat-closed">3 closed</span>
-         <span class="stat stat-issues">8 issues</span>
-         <span class="stat stat-time">32.5h tracked</span>
-       </div>
-
-       <h3>What they've been working on</h3>
-       <div class="theme-item">
-         <div class="theme-header">
-           <span class="theme-name">Calendar/State Management Refactoring</span>
-           <span class="badge badge-in-main">In main</span>
-         </div>
-         <p class="theme-summary">
-           Completed parts 3-8 of a GitButler stack overhauling frontend
-           calendar state — testability, null safety, and edge case fixes.
-         </p>
-         <div class="theme-prs">
-           <a
-             href="https://github.com/<GITHUB_ORG>/REPO/pull/2124"
-             data-tooltip="Refactored calendar state into a testable store, removing tight coupling to UI components."
-             >#2124</a
-           >
-           <a
-             href="https://github.com/<GITHUB_ORG>/REPO/pull/2126"
-             data-tooltip="Added null-safety guards to calendar date ranges to fix edge-case crashes."
-             >#2126</a
-           >
-         </div>
-       </div>
-       <!-- Repeat .theme-item for each theme -->
-
-       <h3>Closed without merging</h3>
-       <div class="closed-item">
-         <a
-           href="https://github.com/<GITHUB_ORG>/REPO/pull/2023"
-           data-tooltip="Migrated component styles from global CSS to CSS Modules for better encapsulation."
-           >#2023</a
-         >
-         — CSS Modules migration. Likely superseded or deferred.
-       </div>
-
-       <h3>What they still have to do</h3>
-       <div class="todo-item">
-         <div class="todo-header">
-           <span class="badge badge-open">Open PR</span>
-           <a
-             href="https://github.com/<GITHUB_ORG>/REPO/pull/2131"
-             data-tooltip="Extracts CalendarToggleTracker into a standalone helper for reuse across views."
-             >#2131</a
-           >
-           — Extract CalendarToggleTracker into helper
-         </div>
-         <p class="todo-detail">Awaiting review.</p>
-       </div>
-       <!-- Repeat .todo-item for each open PR -->
-       <h4>Open Issues</h4>
-       <div class="issue-list">
-         <a href="https://github.com/<GITHUB_ORG>/REPO/issues/2241">#2241</a>
-         Display user email &middot;
-         <a href="https://github.com/<GITHUB_ORG>/REPO/issues/2216">#2216</a>
-         Flaky Test Tracker
-       </div>
-
-       <h3>Reviewing</h3>
-       <div class="review-note">
-         Reviewed bob's dark mode feature PR (<a
-           href="https://github.com/<GITHUB_ORG>/REPO/pull/2198"
-           data-tooltip="Adds dark mode support across all dashboard views."
-           >#2198</a
-         >) and carol's CSV import (<a
-           href="https://github.com/<GITHUB_ORG>/REPO/pull/2240"
-           data-tooltip="Updated CSV import to handle bulk uploads."
-           >#2240</a
-         >).
-       </div>
-     </div>
-     ```
-
-     Omit subsections that have no content.
-     The **stat-bar** counts should reflect the person's actual totals: merged PRs, open PRs, closed-without-merging PRs, open issues, and hours tracked (omit the time chip if time data is unavailable).
-     Each **theme-item** groups related work with the theme name and badge on one line, a narrative summary below, and PR links as clickable chips.
-     **closed-item** blocks are visually muted to de-emphasize abandoned work.
-     **todo-item** blocks show badge + PR ref on one line with description below, reading as a checklist.
-     **issue-list** displays issue references compactly inline, separated by middots.
-     **review-note** wraps the reviewing summary in a styled box.
-
-   - For PR references, use `<a href="https://github.com/<GITHUB_ORG>/REPO/pull/NUM" data-tooltip="SUMMARY">#NUM</a>` links, where SUMMARY is the sub-agent's 1–2 sentence summary. HTML-entity-encode quotes (`&quot;`), ampersands (`&amp;`), and angle brackets (`&lt;` `&gt;`) inside the attribute value.
-   - For issue references, use `<a href="https://github.com/<GITHUB_ORG>/REPO/issues/NUM">#NUM</a>` links. Do **not** add `data-tooltip` to issue links.
-   - For stage badges, use `<span class="badge badge-open">Open</span>`, `<span class="badge badge-merged">Merged</span>`, `<span class="badge badge-in-main">In main</span>`, `<span class="badge badge-closed">Closed</span>`, or `<span class="badge badge-dev-only">In dev only</span>` as appropriate.
-   - Replace `{{ATTENTION_SECTION}}` with items needing attention inside the `.attention-section` div, or remove it if there are none.
+   - Replace `{{FOOTER_TIMESTAMP}}` with a human-readable date, and `{{CLIENT_NAME}}` with the client's display name
+   - `{{SCOREBOARD}}` — one `<div class="score">` per figure: shipped, in flight, decisions (add `is-decision` to the div so the number takes the accent), and the hours figure. Use the billing basis's headline number: billable for `tracked+agent`, tracked for `tracked`.
+   - `{{CONTRIBUTORS}}` — a `<span>` naming who was active, then `<span class="quiet">` spans for who was not, and any single-line counts worth keeping (e.g. assigned-issue totals).
+   - `{{DECISIONS_SECTION}}` — a `<section>` of `<div class="decision">` blocks, each with `.ask` (the decision as a question or imperative), a `.ref` link, and `.why` giving what is blocked and what waiting costs. Omit the whole section when 4d leaves nothing.
+   - `{{SHIPPED_SECTION}}` / `{{INFLIGHT_SECTION}}` — `<section>` wrapping `.rows` of `.row` blocks: `.repo` on the left, then `.line` (chip + `.what` + `.ref` links) and one `.sub` sentence. Extra depth goes in `<details class="more">`.
+   - `{{WATCH_SECTION}}` — a `<ul class="watch">`; add `class="hot"` to at most one item.
+   - `{{TIME_SECTION}}` — the `.split` equation, the tracked entries, and a disclosure deriving the figure.
+   - Section note slots take a count only — see the rule above.
+   - For PR references use `<a class="ref" href="...">#NUM</a>`. Chips: `chip-ship`, `chip-review`, `chip-decision`, `chip-stalled`.
 
 5. Write the populated HTML to `<OUTPUT_DIR>/<timestamp>.html`.
 
-6. Write a Markdown version of the report to `<OUTPUT_DIR>/<timestamp>.md` (same timestamp as the HTML file). The Markdown report should contain the same content as the HTML report but in plain Markdown format:
-   - Use `#` for the report title, `##` for person names, `###` for subsection headings
-   - Use `- ` bullet lists for the narrative sections
-   - Use `[#NUM](https://github.com/<GITHUB_ORG>/REPO/pull/NUM)` for PR links
-   - Use markdown tables for the "Items Needing Attention" section
-   - Include the date range, lookback period, and generation timestamp at the top
+6. Write a Markdown version to `<OUTPUT_DIR>/<timestamp>.md` (same timestamp), carrying the same content and the same section order:
+   - `#` title, then period / generated lines, the one-line stat row, and the contributors line
+   - `##` per section: Waiting on a decision, Shipped, In flight, Worth a look, Time
+   - Bold lead-in per item, then its sentence; disclosure content becomes a trailing italic sentence or a nested bullet
+   - `[#NUM](https://github.com/<GITHUB_ORG>/REPO/pull/NUM)` for PR links
+   - No tables — the sections are lists, and a table of asks reads as a bug tracker
 
-7. **Ask the user whether to publish, then publish if approved.**
+7. **Publish the HTML report as an Artifact.**
 
-   Before publishing, use `AskUserQuestion` to get explicit consent. This both respects the user's choice and supplies the auto-mode classifier with an in-conversation authorization, since its denial reason for surge uploads is that "the user never requested it."
+   Call the `Artifact` tool with `file_path` set to the HTML report written in step 5. Artifacts are private to the user by default, so no consent prompt is needed.
 
-   Question: `"Publish report to <SURGE_DOMAIN>?"`
-   Header: `"Publish"`
-   Options:
-   - **Publish** — Upload reports directory to Surge (public, obscured-by-domain URL).
-   - **Skip** — Don't publish; reports stay local only.
+   - Do **not** pass `url`. Each report gets its own artifact and its own link, mirroring the old per-timestamp URLs. The files under `<OUTPUT_DIR>` remain the archive; the artifact is the shareable view.
+   - Leave `title` off — the template's `<title>` already carries the client and period.
+   - `description`: one sentence naming the client and the period covered.
+   - `favicon`: one emoji, chosen per client and reused for that client's later reports so they are recognizable in the gallery.
 
-   If the user picks **Publish**, run the bundled script:
+   To let someone outside share the link, the user shares it from the artifact page's own share menu.
 
-   ```bash
-   ~/.claude/skills/client-report/publish.sh <OUTPUT_DIR> <SURGE_DOMAIN> <timestamp>
-   ```
-
-   The script handles working directory, escapes paths with spaces, validates the output dir is non-empty, and prints the final public URL on success.
-
-   **If publishing still gets blocked** by the auto-mode classifier even after the user's explicit "yes", do not silently retry. Tell the user it was blocked and offer the exact command for them to run via `!` (no `cd`, no `&&` — those break when run via `!` because the prompt wrapper HTML-escapes `&`).
-
-   If the user picks **Skip**, omit the public URL from the final message and report only the local file paths.
-
-8. Tell the user the full file paths of both generated reports, and provide the public URL to the HTML report:
-   ```
-   https://<SURGE_DOMAIN>/<timestamp>.html
-   ```
+8. Tell the user the artifact URL and the full paths of both generated report files.
 
 ## Client Config Format
 
@@ -442,8 +381,9 @@ Each client config JSON file supports these fields:
     { "github": "bob" }
   ],
   "narthbugz_client_name": "Acme Corp",
+  "billing_basis": "tracked",
+  "narthbugz_client_id": 42,
   "output_dir": "/path/to/reports",
-  "surge_domain": "acme-report.surge.sh",
   "default": false
 }
 ```
