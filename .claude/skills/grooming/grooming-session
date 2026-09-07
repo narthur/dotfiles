@@ -61,7 +61,7 @@ require_project_access() {
     return 0
   fi
   cat >&2 <<'EOF'
-grooming-session: ERROR — this repo has a grooming overlay (repos/<owner>-<repo>.md)
+grooming-session: ERROR — this repo has a grooming overlay (~/.config/grooming/repos/<owner>-<repo>.md)
 whose checks depend on GitHub Projects, but the gh token has neither the 'project'
 nor 'read:project' scope.
 
@@ -294,7 +294,7 @@ cmd_next() {
   # An overlay implies project-dependent checks, so verify project scope before
   # the issue body / project data is fetched and hard-fail if it's missing —
   # never emit misleading blank-project output.
-  local overlay="${HOME}/.claude/skills/grooming/repos/${repo//\//-}.md"
+  local overlay="${XDG_CONFIG_HOME:-$HOME/.config}/grooming/repos/${repo//\//-}.md"
   if [[ -f "$overlay" ]]; then
     require_project_access
     echo "Repo overlay: $overlay (load once per session — appends repo-specific checks)"

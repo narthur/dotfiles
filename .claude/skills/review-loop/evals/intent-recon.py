@@ -194,15 +194,24 @@ def selftest():
 def main(argv):
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo")
-    here = os.path.dirname(__file__)
-    ap.add_argument("--fixtures", default=os.path.join(here, "fixtures.jsonl"))
-    ap.add_argument("--intents", default=os.path.join(here, "intents.jsonl"))
+    data = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config"), "review-loop", "evals")
+    ap.add_argument("--fixtures", default=os.path.join(data, "fixtures.jsonl"))
+    ap.add_argument("--intents", default=os.path.join(data, "intents.jsonl"))
     ap.add_argument("--only")
     ap.add_argument("--repeat", type=int, default=1)
     ap.add_argument("--model", default="opus")
     ap.add_argument("--judge-model", default="sonnet")
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args(argv)
+
+    # PRIVATE_HINT: fixtures live outside this skill (see evals/README.md) because
+    # they quote private code. Fail loudly rather than silently scoring nothing.
+    if not os.path.exists(args.fixtures):
+        raise SystemExit(
+            f"eval fixtures not found: {args.fixtures}\n"
+            "They are private and are not published with this skill.\n"
+            "Point --fixtures at your own file, or restore ~/.config/review-loop/evals/ from dotprivate."
+        )
     if args.selftest:
         selftest()
         return 0

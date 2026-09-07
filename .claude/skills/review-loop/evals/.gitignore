@@ -2,8 +2,6 @@
 last-run.jsonl
 last-intent-run.jsonl
 
-# tracked in dotprivate — reference private taskratchet code, must never
-# land in the public dotfiles repo (already-tracked files are unaffected)
-fixtures.jsonl
-intents.jsonl
-taskratchet-baseline.md
+# fixtures, intents and the baseline live in ~/.config/review-loop/evals/
+# (tracked in dotprivate) — they reference private taskratchet code and must
+# never sit inside this directory, which is published.

@@ -77,10 +77,10 @@ If no issues remain, inform the user the grooming session is complete.
 Some repos have extra, repo-specific grooming checks beyond the standard list. Before running checks on the first issue of a session, look for an overlay file at:
 
 ```
-~/.claude/skills/grooming/repos/<owner>-<repo>.md
+${XDG_CONFIG_HOME:-~/.config}/grooming/repos/<owner>-<repo>.md
 ```
 
-(same `owner/repo` → hyphen convention — e.g. `repos/acme-webapp.md`). If it exists, **read it once** and treat its checks as **appended to the standard checklist** for every issue this session: include them in the Step 2 summary and walk their fixes in Step 3 alongside the built-in ones. If no overlay exists, just run the standard checks. `grooming-session next` prints a one-line pointer when an overlay is present so you don't forget to load it.
+(same `owner/repo` → hyphen convention — e.g. `acme-webapp.md`). Overlays live outside the skill because they name private repos; the skill directory is public. If it exists, **read it once** and treat its checks as **appended to the standard checklist** for every issue this session: include them in the Step 2 summary and walk their fixes in Step 3 alongside the built-in ones. If no overlay exists, just run the standard checks. `grooming-session next` prints a one-line pointer when an overlay is present so you don't forget to load it.
 
 ### Live issue view (optional second terminal)
 
