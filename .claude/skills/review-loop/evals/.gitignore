@@ -1,7 +1,0 @@
-# run artifacts — quote source under review, regenerated each run
-last-run.jsonl
-last-intent-run.jsonl
-
-# fixtures, intents and the baseline live in ~/.config/review-loop/evals/
-# (tracked in dotprivate) — they reference private taskratchet code and must
-# never sit inside this directory, which is published.
