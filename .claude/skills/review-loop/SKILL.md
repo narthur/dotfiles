@@ -150,7 +150,7 @@ It detects the repo's languages/configs and runs the curated analyzer set (ESLin
 - **Quality / style residue** — anything the autofixers couldn't fix: don't run it through the agents or Haiku (deterministic, mostly low-value). Carry the per-tool counts into the final report (Step 14).
 - **Skipped tools** — if the run skipped analyzers (not installed, no ephemeral runner) and you can prompt the user (main interactive agent, not a headless subagent), offer once to install them (use each entry's `install_hint`) and re-run. In a subagent run, just note the skips in the report; never block.
 
-## Step 4b: Establish PR Intent (for Agent #9)
+## Step 4b: Establish PR Intent (for Agent #9) and capture the spec artifact (for Agent #11)
 
 Agent #9 (intent reconciliation, Step 5) reviews the change against what it is *supposed* to do, so it needs an accurate statement of intent — and it must be **intent, not a description of the code**. Establish this once, before the loop.
 
@@ -158,17 +158,18 @@ Agent #9 (intent reconciliation, Step 5) reviews the change against what it is *
 2. **Gate — decide whether Agent #9 runs at all.** Skip it (and the rest of this step) when the change has no reviewable intent to model against: dependency bumps, pure refactors/renames, formatting, config-only changes, or any diff whose purpose can't be stated as intended *behavior*. It earns its cost only on feature / behavior-changing work with a derivable goal.
 3. **Build the intent statement — do NOT edit the PR description here.** Distil the sources into an internal statement of the change's purpose and intended behavior for Agent #9. Keep it to GOALS ("users can reconnect a third-party account"), never claims about what the code does or that an edge case is handled — an intent derived by reading the implementation just mirrors the code and blinds Agent #9 to the omissions it exists to catch. If the sources are too thin to state a goal: derive one from the issue/commits, or (interactive runs only) ask the author; if none can be established, gate Agent #9 off (step 2). The description itself is made accurate and complete *later* — **Step 14 reconciles it against the final reviewed change**, when doing so is safe (the code is final, so describing it can't launder a bug into intent) and useful (the PR ends merge-ready).
 4. The resulting intent statement is what Agent #9's stage 1 consumes. Treat it as *desired behavior to be verified against the code*, not as ground truth about what the code does.
-5. **While intent is in hand, draft the measurement hypothesis** for Step 13.5 — one line: the user-visible effect this change is supposed to produce, stated directionally ("fewer users drop at the mapping step"). It costs nothing here and it's the honest version: written from the goal, before you've seen which numbers happen to be available. Carry it to Step 13.5, which turns it into a plan and verifies the instrumentation. Skip if that step's gate obviously won't fire (no user-facing behavior changes).
+5. **Capture the written spec artifact, if one exists — this is separate from the intent statement.** Intent is *distilled goals*; the artifact is *the text someone wrote down and is accountable to*: an agent brief comment on the issue, a linked issue body with acceptance criteria, or a spec file under `docs/`/`specs/`/`.scratch/`. Fetch it **verbatim** (`gh issue view <n> --comments`) and keep it as-is — Agent #11 quotes its lines, so paraphrase destroys the point. If several exist, prefer the most specific and most recent: an agent brief beats the issue body it was posted on. If none exists, record that and gate #11 off. This is a fetch, not a judgement call — do not synthesise an artifact from the code or the commits; a spec derived from the diff can only ever agree with it.
+6. **While intent is in hand, draft the measurement hypothesis** for Step 13.5 — one line: the user-visible effect this change is supposed to produce, stated directionally ("fewer users drop at the mapping step"). It costs nothing here and it's the honest version: written from the goal, before you've seen which numbers happen to be available. Carry it to Step 13.5, which turns it into a plan and verifies the instrumentation. Skip if that step's gate obviously won't fire (no user-facing behavior changes).
 
 ## Step 5: Parallel Review Agents
 
-Spawn the review subagents in parallel (single message, multiple Agent tool calls). Agents #1–#4 and #6 always run; the **security review** (which replaces the old Agent #5) runs alongside them on every cycle — see below. Agents #7 (structural simplification) and #8 (observability coverage) run **only on substantial diffs**; Agent #9 (intent reconciliation) runs **only in cycle 1 and only when Step 4b established a reviewable intent**; Agent #10 (prior review feedback) runs **only in cycle 1 and only when `gh` can reach the repo** — see each agent's gating rule.
+Spawn the review subagents in parallel (single message, multiple Agent tool calls). Agents #1–#4 and #6 always run; the **security review** (which replaces the old Agent #5) runs alongside them on every cycle — see below. Agents #7 (structural simplification) and #8 (observability coverage) run **only on substantial diffs**; Agent #9 (intent reconciliation) runs **only in cycle 1 and only when Step 4b established a reviewable intent**; Agent #10 (prior review feedback) runs **only in cycle 1 and only when `gh` can reach the repo**; Agent #11 (spec conformance) runs **only in cycle 1 and only when Step 4b captured a written spec artifact** — see each agent's gating rule.
 
 **This cycle's review scope** (Step 4 loop, step b): `git diff origin/<base_branch>...HEAD` on cycle 1, or `git diff <prev-cycle-sha>...HEAD` on cycles 2+. Below, "the diff" means this scope; "the whole changed files" means those files' full contents at HEAD.
 
 **Two agent classes — they get different context:**
 
-- **File-scoped** — **#1 CLAUDE.md, #2 bugs, #4 comments**. These reason *within* a file, so give them the **whole changed files**, not just the diff. Omission bugs — state that should reset/invalidate but doesn't, a contract left unenforced, an error path that logs instead of throwing, a flag set before the action it gates — are invisible in a diff-of-additions and only surface against the full file. (Measured on this skill's eval: whole-file flipped a modified-file omission miss from 1/3 → 3/3; diff-only stayed blind. See `evals/`.)
+- **File-scoped** — **#1 standards, #2 bugs, #4 comments**. These reason *within* a file, so give them the **whole changed files**, not just the diff. Omission bugs — state that should reset/invalidate but doesn't, a contract left unenforced, an error path that logs instead of throwing, a flag set before the action it gates — are invisible in a diff-of-additions and only surface against the full file. (Measured on this skill's eval: whole-file flipped a modified-file omission miss from 1/3 → 3/3; diff-only stayed blind. See `evals/`.)
 - **Diff-scoped** — **#3 history, #6 tests, #7 structural, #8 observability, #10 prior review feedback**. These reason *across* files and relationships, so give them the whole cycle diff (they may still read *beyond* it per their rules — the scope only bounds what counts as "under review"). One agent each.
 
 **Batching the file-scoped agents (context budget).** Don't hand one agent every changed file (attention dilutes — measured: whole-PR context tanked recall to 0) nor spawn one agent per file (needless fan-out and cost). Instead run:
@@ -187,13 +188,13 @@ Each agent must also receive:
 
 **Model tier (pass to the Agent tool's `model` param):** pin **every** review agent to `sonnet`. Rationale and the decision record: `references/model-choice.md` (short version — Sonnet 5 lands near Opus 4.8 on review-defect-finding, so the top tier no longer buys enough to justify its cost, and a single review fan-out was burning a whole Opus session).
 
-- **All review agents — pin to `sonnet`**: **#1 CLAUDE.md**, **#2 bugs**, **#3 git history**, **#4 comments**, **#6 test coverage**, **#7 structural**, **#8 observability**, **#9 intent-recon**, **#10 prior review feedback**, and both stages of the **security review**.
+- **All review agents — pin to `sonnet`**: **#1 standards**, **#2 bugs**, **#3 git history**, **#4 comments**, **#6 test coverage**, **#7 structural**, **#8 observability**, **#9 intent-recon**, **#10 prior review feedback**, and both stages of the **security review**.
 
 **Read `references/agent-roster.md` before spawning.** It carries the style-default paragraph every agent receives verbatim, plus the focus brief for each of #1–#6:
 
 | # | Agent | Scope |
 | --- | --- | --- |
-| 1 | CLAUDE.md compliance | file-scoped, whole-file, batched |
+| 1 | Standards compliance (CLAUDE.md + smell baseline) | file-scoped, whole-file, batched |
 | 2 | Bug scan — commission *and* omission | file-scoped, whole-file, batched |
 | 3 | Git history | changed regions, via `git log -p -L` / `git blame` |
 | 4 | Code comments compliance | file-scoped, whole-file, batched |
@@ -213,18 +214,21 @@ Two stages, and the fan-out is on *verification*, not discovery:
 
 **Do not "improve" the exclusion list from first principles.** Amend it only through the threat model's per-repo override (`## Not an issue here` / `## Watch this spot`), which is evidence-backed by construction.
 
-### Agents #7, #8, #9, #10 — conditional (focus detail in `references/conditional-agents.md`)
+### Agents #7, #8, #9, #10, #11 — conditional (focus detail in `references/conditional-agents.md`)
 
 Evaluate each gate every run; the gate is here, the focus/scoring/routing is in the reference. When a gate fires, **Read `references/conditional-agents.md`** for that agent's full instructions before spawning it.
 
 - **#7 Structural simplification** `[sonnet]` — spawn on **substantial diffs**; skip when ALL hold: diff < ~150 changed lines, no file past ~800 lines, and pure bugfix/config/dependency bump. Reads beyond the diff. Scored on value-vs-risk, **always ask-routed** (never auto-applied).
 - **#8 Observability coverage** `[sonnet]` — spawn when the diff is substantial/risky (#7's threshold) **AND** the repo already has an observability convention (logger/metrics/error reporter). Skip if the project logs nothing. Normal Step 6 rubric; fixes usually additive/auto-applied.
 - **#9 Intent reconciliation** `[sonnet]` — spawn **only in cycle 1** when Step 4b established a reviewable intent. Two stages in separate contexts (spec from intent only → reconcile against code). **Always ask-routed**; highest false-positive rate — lean on the Dismissed list.
+- **#11 Spec conformance** `[sonnet]` — spawn **only in cycle 1**, and only when Step 4b captured a **written spec artifact**. Checks the diff against that text on three axes: requirements missing/partial, behaviour present that the spec never asked for (scope creep), and requirements implemented but implemented wrong. Every finding quotes the spec line. **Bypasses Step 6 scoring entirely and is always ask-routed**; reported in its own section so a spec miss can never be outranked by a style nit. Distinct from #9 — #9 *derives* expected behaviour and hunts omissions; #11 *checks against text someone wrote*.
 - **#10 Prior review feedback** `[sonnet]` — spawn **only in cycle 1**, and only when `gh` is authenticated and the repo has a GitHub remote. Mines review comments on past merged PRs that touched the same files and checks whether any apply again here. Skip on a repo with no PR history for the changed files. Normal Step 6 rubric; findings carry a citation to the prior comment.
 
 ## Step 6: Haiku Scoring
 
-**Security findings do not come here.** The security review's Stage-2 filter *is* their scorer (confidence 1-10 → score ×10); do not also run a Haiku scorer over them. Their floor is higher than the loop's general band — see `references/security-review.md`.
+**Security findings and Agent #11 spec-conformance findings do not come here.** Spec findings carry their own severity in their three-way classification and are always ask-routed; scoring them would re-merge the axis this separation exists to keep apart.
+
+**Security findings:** The security review's Stage-2 filter *is* their scorer (confidence 1-10 → score ×10); do not also run a Haiku scorer over them. Their floor is higher than the loop's general band — see `references/security-review.md`.
 
 **Score per review agent, not per finding.** Spawn **one Haiku scorer subagent per review agent that returned findings** (so the scorers run in parallel, one alongside each finder). Each scorer receives that agent's *entire* finding-list and scores every finding in a single pass. Do NOT spawn one scorer per finding — that re-ships the diff once per finding and is the loop's biggest token sink. If a single agent returned an unusually large batch (>~12 findings), split it across two scorer calls to keep each pass careful, but never go back to one-per-finding.
 
@@ -401,6 +405,7 @@ timing, the record-reviewed honesty rule, and the full "when NOT to auto-push" s
 | Bucket | Score | Risk profile (Step 8a) | Action |
 | --- | --- | --- | --- |
 | Ask user | (any) | structural finding from Agent #7 | Surface as proposal; never auto-apply |
+| Ask user | (any) | baseline smell from Agent #1 (name / duplication) | Heuristic — surface as proposal; never auto-apply |
 | Auto-fix | ≥80 | (any) | Apply silently |
 | Auto-fix | 50-79 | all three dimensions low-risk | Apply silently; note in commit message |
 | Ask user | 50-79 | any dimension high-risk OR fix unclear OR `always ask` rule applies | Batch via AskUserQuestion |
@@ -408,3 +413,4 @@ timing, the record-reviewed honesty rule, and the full "when NOT to auto-push" s
 | Ask user | (any) | authorization finding (`5-security-authz`) | Never auto-apply — a wrong authz fix locks out real users |
 | Auto-fix / Ask | ≥80 | security, non-authz | Stage-2 filter confidence ×10; normal risk profile |
 | Skip | <80 | security (any) | **Listed line-by-line** in the report — no 50-79 band for security |
+| Ask user | (unscored) | spec-conformance finding from Agent #11 | Bypasses Step 6; never auto-apply; own report section, each with its spec quote |

@@ -83,3 +83,29 @@ What to flag, and what not to:
 Findings use the **normal Step 6 rubric** and **normal Step 8a routing** — a reviewer having already said the thing is real evidence, so these behave like ordinary defects rather than the proposals #7 and #9 produce. The scorer should treat a well-cited finding as more confident than an uncited one.
 
 **Relationship to the learnings file.** `.git/info/review-loop-learnings.md` accumulates what *this loop* learned per repo; Agent #10 mines what *humans* learned on GitHub. They converge: Step 11 records **every surviving #10 finding** to Accepted patterns — including ones auto-fixed at Step 7, which is a deliberate exception to Step 11's normal "record Step 8b outcomes" rule, because this agent runs once per branch and its findings cost API calls to rediscover. Over time a repo's most-repeated review feedback migrates from GitHub into the learnings file, where the always-on agents get it for free. That migration is the point: #10 should get *quieter* on a repo you work in often.
+
+## Agent #11 — Spec conformance (conditional, cycle 1 only) `[model: sonnet]`
+
+**Gating — spawn only when Step 4b captured a written spec artifact** (an agent brief comment, a linked issue body with acceptance criteria, or a spec file). Skip otherwise and say so in one line. Runs **cycle 1 only**: it checks the original change against the spec, and the loop's own fix deltas don't re-litigate it.
+
+**This is not Agent #9.** #9 *derives* expected behaviour from distilled intent, deliberately blind to the code, and hunts omissions — high yield, highest false-positive rate in the roster. #11 does the opposite and much cheaper thing: it holds a document someone actually wrote and asks whether the diff matches it. Both can run on the same change; they fail differently and neither subsumes the other. Where #9 speculates, #11 quotes.
+
+Give the subagent the spec artifact **verbatim**, the cycle diff, and the commit list. Its brief:
+
+> Report three classes of finding, each quoting the spec line it rests on:
+> - **MISSING** — a requirement the spec asks for that the diff doesn't implement, or implements only partially.
+> - **UNASKED** — behaviour in the diff the spec never asked for (scope creep). Excludes what the change plainly needs to function: tests, types, imports, error handling on paths the spec does require.
+> - **WRONG** — a requirement that looks implemented but the implementation doesn't satisfy what the spec says.
+>
+> Every finding must carry the quoted spec text. **A finding you cannot anchor to a quote is out of scope for you** — that is #2's or #9's job, not yours. Say nothing about style, naming, or structure. Under 400 words.
+
+**Routing and scoring are special.** These findings **bypass Step 6 entirely** — no Haiku scorer — and are **always ask-routed**, never auto-fixed. Two reasons:
+
+1. **Severity is already carried by the class.** MISSING and WRONG are conformance failures against a quoted artifact, not confidence judgements; a 0-100 plausibility score adds nothing a quote hasn't already settled.
+2. **Scoring re-merges the axis.** The entire reason this agent exists is that a spec failure must not compete on one scale with a naming nit. Feeding it through the same scorer as #1/#2/#4 undoes that in one step.
+
+UNASKED findings deserve particular care on the ask: scope creep is sometimes the author knowing something the spec doesn't. The question is "the spec doesn't ask for this — intended?", never "delete this".
+
+**The Dismissed list still applies** — pass the learnings file and instruct the agent to drop matches, same as every other agent. A spec that repeatedly provokes the same false MISSING is usually a spec problem worth fixing upstream, so when that happens, say so in the report rather than only dismissing it.
+
+**Why this agent is the one that matters for AFK work.** When an agent implements a brief unattended, CI proves the code does what the code says; only this agent proves the code does what the *brief* said. It reduces the human's review to the one judgement a machine can't make: was the brief right in the first place?

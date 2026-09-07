@@ -8,11 +8,18 @@ in `conditional-agents.md`.
 
 > The user prefers an immutable style as the default: `const` over `let`-reassignment, expression forms (`??`/`||` short-circuit chains, ternaries, `map`/`filter`/`reduce`) over accumulate-and-mutate flows. Flag diff-introduced mutable patterns ONLY when they collapse cleanly into an immutable form with identical behavior. Do NOT flag mutability that is clearly more readable (deep nesting to avoid it, unwieldy expression) or measurably faster (hot loops, large-array copies) — those are the legitimate exceptions, not violations.
 
-### Agent #1 — CLAUDE.md compliance `[model: sonnet]` · file-scoped, whole-file, batched
+### Agent #1 — Standards compliance `[model: sonnet]` · file-scoped, whole-file, batched
 - You receive the whole changed file(s) in your batch plus the diff of what changed.
 - List all relevant `CLAUDE.md` files (root + every directory touched by the batch)
 - Read them
 - Flag changes that violate stated guidance. Skip guidance that's clearly only for code-writing, not code review.
+
+**Baseline (applies even when the repo documents nothing).** Documented guidance always wins: where a `CLAUDE.md` endorses something the baseline would flag, suppress it. Both of these are labelled heuristics — report them as "possible Duplicated Code", never as violations — and the Dismissed list overrides them like anything else. Skip whatever tooling already enforces. **Baseline findings are always routed to ask-user and never auto-applied**, whatever they score — a rename or an extraction driven by a heuristic is a proposal, the same call Agent #7 gets. Documented-guidance findings are unaffected and score normally.
+
+- **Mysterious Name** — a function, variable, or type introduced by the diff whose name doesn't reveal what it does or holds. → propose a rename; if no honest name exists, say so, because that usually means the design is murky rather than the name.
+- **Duplicated Code** — the same logic *shape* appears more than once within this batch. → propose extracting it and calling from both sites. Require a real shape match: two functions that merely rhyme are not duplication, and premature extraction is its own smell. Do not flag test setup, fixtures, or table-driven cases, where repetition is usually the point.
+
+Only these two. The wider Fowler catalogue is deliberately out of scope here: the structural smells (Speculative Generality, Repeated Switches, Shotgun Surgery, Divergent Change, Middle Man) belong to Agent #7, and the object-shaped ones (Feature Envy, Data Clumps, Message Chains, Refused Bequest) assume method-heavy classes and inheritance that this setup's style default steers away from.
 
 ### Agent #2 — Bug scan `[model: sonnet]` · file-scoped, whole-file, batched
 - You receive the **whole changed file(s)** in your batch plus the diff of what changed. Review the changed behavior, using the full file for context — do not limit yourself to the added lines.

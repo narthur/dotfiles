@@ -52,6 +52,12 @@ Intent questions (Agent #9 — reconciled against PR intent, not applied, your c
 - <each as a question: "intent says X; the code does Y / doesn't do Z — intended?" — ordered by plausibility × impact>
 (Omit entirely if Agent #9 didn't run — skipped when the change had no reviewable intent (Step 4b) — or found nothing.)
 
+Spec conformance (Agent #11 — checked against the written spec, not applied, your call):
+- MISSING: <requirement — "quoted spec line">
+- UNASKED: <behaviour in the diff the spec never asked for — "quoted spec line it exceeds">
+- WRONG: <requirement implemented but not satisfied — "quoted spec line">
+(Omit entirely if Agent #11 didn't run — skipped when Step 4b found no written spec artifact — or found nothing. Never collapse to a count: each finding carries a quote, and the quote is the evidence.)
+
 Auto-applied low-risk 50-79 (no ask):
 - <list with one-line summary each — visible to the user since they didn't see the ask>
 
@@ -61,6 +67,7 @@ Security findings below the action floor (confidence < 8/10 — considered, not 
 surface for a non-expert reader, so it is not collapsible the way the <50 bucket below is. Omit the
 section entirely only when there were none.)
 
+Spec artifact (Step 4b): <agent brief on #N | issue #N body | path | none — #11 skipped>.
 Threat model (Step 2b): <bootstrapped — N claims | updated — R re-verified, A added, D dropped | unchanged>.
 Upstream security prompt (Step 2a): <in sync at claude-code X.Y.Z | DRIFT — vendored X.Y.Z, installed A.B.C; run `upstream-check.py --extract` to diff>.
 
