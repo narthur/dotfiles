@@ -113,9 +113,13 @@ fires.log
 .claude/skills/static-analysis/depend/node_modules/
 .claude/skills/static-analysis/__pycache__/
 
+# Claude Code telemetry spool
+.claude/telemetry/
+
 # Herdr runtime state and vendor-installed skills
-.config/herdr/*.log
-.config/herdr/session.json
+.config/herdr/**/*.log
+.config/herdr/**/session.json
+.config/herdr/release-notes.json
 .config/herdr/.plugins.lock
 .claude/skills/herdr
 .agents/

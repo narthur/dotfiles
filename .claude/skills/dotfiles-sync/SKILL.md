@@ -1,6 +1,6 @@
 ---
 name: dotfiles-sync
-description: "Audit and sync all pending changes across the dotfiles and dotprivate bare repos. Use when asked to check for uncommitted changes, sync dotfiles, or commit and push dotfile updates."
+description: "Audit and sync all pending changes across the dotfiles and dotprivate bare repos and the narthur/skills repo. Use when asked to check for uncommitted changes, sync dotfiles or skills, or commit and push dotfile updates."
 ---
 
 # Dotfiles Sync
@@ -19,12 +19,16 @@ You are a dotfiles audit assistant. Your role is to surface all uncommitted chan
 - Commit or push changes without explicit permission
 - Modify any files — this is an audit-and-stage tool only
 
-## Dotfiles Repos
+## Repos
 
-There are two bare git repos, both with `~` as the work tree:
+Two bare git repos, both with `~` as the work tree:
 
 - **`dotfiles`** — `~/.dotfiles` → `github.com/narthur/dotfiles` (**public**)
 - **`dotprivate`** — `~/.dotfiles-private` → `github.com/narthur/dotprivate` (**private**)
+
+Plus one ordinary repo:
+
+- **`skills`** — `~/code/skills` → `github.com/narthur/skills` (**public**) — self-authored, generally-useful skills, symlinked into `~/.claude/skills/`. Ordinary working tree, so plain `git -C ~/code/skills <cmd>` works and none of the bare-repo quirks below apply.
 
 Aliases are defined in `~/.zshrc` (macOS) or `~/.bashrc` (Linux), but may not be active in the current shell. Always use full git commands:
 
@@ -42,6 +46,7 @@ git -C ~ --git-dir="$HOME/.dotfiles-private" --work-tree="$HOME" <cmd>
 - **Path resolution**: Always use `-C ~` for `status`, `add`, `diff` commands. Without it, git resolves paths relative to the current working directory instead of the work tree.
 - **`status -u` does not work**: both repos set `status.showUntrackedFiles=no`, so the untracked section is silently empty. Use `git ... ls-files -o --exclude-standard` instead, which ignores that setting.
 - **A bare `~` does not expand after `=`** — in *either* flag. `--work-tree=~` fails with "must be run in a work tree", and `--git-dir=~/.dotfiles` fails with "not a git repository: '~/.dotfiles'". Write `--git-dir="$HOME/.dotfiles" --work-tree="$HOME"`. (Verified 2026-09-02; the earlier note blamed `--work-tree` alone, so every documented command here was still broken through `--git-dir`.)
+- **Symlinked skills are not untracked**: a `~/.claude/skills/<name>` that is a symlink is homed in `~/code/skills` (or another repo). `drop_symlinks` in `lib/routing.sh` filters these out, so they never appear as untracked — audit them through the `skills` repo's own `git status`, not the routing checks.
 - **Cross-repo noise**: each repo reports the other's tracked files as untracked. Intersect the two `ls-files -o` lists — a file absent from both is genuinely untracked. `get_untracked_both` in `lib/routing.sh` does this and bounds the scan to managed top-level paths (unbounded it walks ~786k files in `$HOME`).
 
 ## What Goes Where
@@ -54,6 +59,15 @@ Use this guide when deciding where to stage a file.
 - General config (`.gitconfig`, `.gitignore_global`, shell hooks)
 - Tool configs not tied to specific clients, orgs, or internal systems
 - Scripts and skills that work for any user on any machine
+
+### skills (public, `~/code/skills`)
+
+- Skills already homed there — every `~/.claude/skills/*` entry that is a symlink
+- New skills **written here**, that are generally useful to anyone, not just this machine: no client or org names, no personal paths, no account-specific data
+
+**Original work only.** A skill obtained from someone else — installed from another collection, copied from a blog post or gist, vendored from a plugin — does not go in this repo even when it is generic and public-safe, and even when it has been heavily edited. Third-party skills live in `dotfiles`. When authorship is unclear, ask before staging; the repo is published under the user's name, and re-publishing someone else's skill there misattributes it.
+
+Same public bar as `dotfiles`; the split is by shape, not sensitivity — a shareable *skill* belongs here, everything else public belongs in `dotfiles`. A skill that would fail the public bar goes to `dotprivate` instead and stays a real directory under `~/.claude/skills/`, not a symlink.
 
 ### dotprivate (private)
 
@@ -116,9 +130,10 @@ Any merged `settings.json` will appear as a modified tracked file in Step 1 and 
 ```bash
 git -C ~ --git-dir="$HOME/.dotfiles" --work-tree="$HOME" status
 git -C ~ --git-dir="$HOME/.dotfiles-private" --work-tree="$HOME" status
+git -C ~/code/skills status
 ```
 
-This shows all tracked files with uncommitted changes, across the entire repo — not just skills.
+This shows all tracked files with uncommitted changes, across the entire repo — not just skills. The `skills` repo also reports its own untracked files normally (it does not set `status.showUntrackedFiles=no`), so a new skill directory there shows up here rather than in `check-routing`.
 
 #### 1b: Check for routing inconsistencies
 
@@ -266,17 +281,18 @@ If cross-platform issues were found, recommend fixing them before staging.
 
 ### Step 6: Final Review of Staged Public Changes
 
-Before offering to commit, do a fresh scan of **everything staged in `dotfiles` (public repo)**.
+Before offering to commit, do a fresh scan of **everything staged in the public repos — `dotfiles` and `skills`**.
 
 1. Get all staged files:
    ```bash
    git -C ~ --git-dir="$HOME/.dotfiles" --work-tree="$HOME" diff --cached --name-only
+   git -C ~/code/skills diff --cached --name-only
    ```
 2. **Read every staged file** using the Read tool.
 3. Scan for personal data and cross-platform issues (same categories as step 5b).
 4. If issues are found:
    ```
-   ⚠ Issues found in staged dotfiles (public repo).
+   ⚠ Issues found in staged files (public repo).
 
    1. Continue — commit anyway
    2. Move to dotprivate — unstage from dotfiles, re-stage in dotprivate
@@ -292,6 +308,7 @@ Show a final summary:
 === Session Summary ===
 Staged in dotfiles:   .gitconfig, .claude/skills/fix-ci/
 Staged in dotprivate: .claude/skills/crm/
+Staged in skills:     skills/media/ui-mockups/SKILL.md
 Skipped: daily-standup/
 ```
 
@@ -309,11 +326,23 @@ git -C ~ --git-dir="$HOME/.dotfiles" --work-tree="$HOME" push
 
 git -C ~ --git-dir="$HOME/.dotfiles-private" --work-tree="$HOME" commit -m "..."
 git -C ~ --git-dir="$HOME/.dotfiles-private" --work-tree="$HOME" push
+
+git -C ~/code/skills commit -m "..."
+git -C ~/code/skills push
 ```
+
+**The `skills` push is gated by review-loop.** A push whose tip isn't in the reviewed set is rejected with instructions. For a docs-only change (markdown skill instructions, README), record the skip honestly and push again:
+
+```bash
+~/.claude/skills/review-loop/record-skipped.sh "<why this is beneath the loop>"
+```
+
+If the commit touches executable code (`*.sh`, `*.py`, the scripts beside a SKILL.md), run `review-loop` instead. Never hand-call `record-reviewed.sh`, and use `REVIEW_GATE_BYPASS=1` only if the user asks for it.
 
 ## Tips
 
 - `status` without `-u` shows tracked files with changes — that part works fine.
 - For untracked files, run `check-routing`; don't hand-roll it. See Known Quirks for why `status -u` lies here.
 - When in doubt about public vs. private, prefer `dotprivate` — easier to move public than to scrub history.
+- The `skills` repo commits and pushes on its own — nothing there is staged through `check-routing`/`fix-routing`, which only route files that have no home yet.
 - `add` commands can be batched: `git -C ~ --git-dir="$HOME/.dotfiles-private" --work-tree="$HOME" add ~/.claude/skills/foo/ ~/.claude/skills/bar/`

@@ -54,6 +54,12 @@ for git_dir in "$HOME/.dotfiles" "$HOME/.dotfiles-private"; do
   fi
 done
 
+# Pull the skills repo (ordinary working tree, so plain pull works)
+if [[ -d "$HOME/code/skills/.git" ]]; then
+  echo "Pulling skills..."
+  git -C "$HOME/code/skills" pull --rebase --autostash
+fi
+
 # Merge AW settings if snapshot was taken and settings.json changed
 if [[ -n "$AW_SNAPSHOT" ]] && [[ -f "$AW_SNAPSHOT" ]]; then
   if git -C "$HOME" --git-dir="$HOME/.dotfiles" --work-tree="$HOME" diff HEAD -- .config/activitywatch/settings.json | grep -q .; then
