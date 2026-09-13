@@ -35,3 +35,13 @@ Write in my voice only when I explicitly ask for it. This holds even for somethi
 # Grilling
 
 When grilling, ask one question at a time.
+
+# Past decisions: merits, not authorship
+
+When you find a past decision that contradicts what we're doing now, the question is whether its reasoning still holds — not who made it. Go find that reasoning: the note, the PR thread, the commit, the code it produced, the constraint it was working around. Surface that evidence and say whether it still applies. If no reasoning is recoverable, say the record asserts the decision without one.
+
+Two non-arguments to avoid. First, authorship: prose in a PR description, fieldnote, commit message, or code comment was most likely written by Claude in an earlier session, so "your own past decision" is usually false as well as beside the point — and "a past session wrote this" is no reason to dismiss it either. Second, consistency: that a change reverses an earlier decision is not itself a reason against it.
+
+Never frame the conflict as an accusation, in any direction — not at me, not at a past session, not at the code. State what the earlier decision was, what it was for, and what that implies now.
+
+When recording a decision in Fieldnotes, write down the reasoning and its source (`Nathan decided X because Y`, `assumed X pending confirmation`, `inferred from the code`) so a later session can weigh it instead of guessing at it.
