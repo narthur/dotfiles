@@ -166,8 +166,11 @@ def day_cutoff_hour(col):
     return col.get_config("rollover", 4)
 
 
-def review_minutes(col, days=7):
-    """Minutes reviewed per Anki day, for the last `days` days."""
+def review_hours(col, days=7):
+    """Hours reviewed per Anki day, for the last `days` days.
+
+    Hours, not minutes: Beeminder renders time-shaped goals better in hours.
+    """
     rollover = day_cutoff_hour(col)
     out = {}
     for offset in range(days):
@@ -177,22 +180,25 @@ def review_minutes(col, days=7):
         ms = col.db.scalar(
             "select coalesce(sum(time), 0) from revlog where id >= ? and id < ?",
             int(start.timestamp() * 1000), int(end.timestamp() * 1000)) or 0
-        out[day] = round(ms / 60000, 2)
+        out[day] = round(ms / 3600000, 4)
     return out
 
 
-def post_beeminder(minutes):
-    for day in sorted(minutes):
-        value = minutes[day]
+def post_beeminder(hours):
+    for day in sorted(hours):
+        value = hours[day]
         rid = day.isoformat()
         stamp = day.strftime("%Y%m%d")
         r = subprocess.run(
             ["buzz", "add", "--requestid", rid, "--daystamp", stamp, GOAL,
-             str(value), f"Anki review minutes for {rid}"],
+             str(value), f"Anki review hours for {rid}"],
             capture_output=True, text=True)
-        if r.returncode != 0:
-            log(f"beeminder {rid} failed: {(r.stderr or r.stdout).strip()[:120]}")
-    log("beeminder: " + ", ".join(f"{d}={m}" for d, m in sorted(minutes.items())))
+        err = (r.stderr or r.stdout).strip()
+        # "Duplicate request" means this requestid already holds this value:
+        # the posting is idempotent, so that is a no-op, not a failure.
+        if r.returncode != 0 and "Duplicate request" not in err:
+            log(f"beeminder {rid} failed: {err[:120]}")
+    log("beeminder: " + ", ".join(f"{d}={h}h" for d, h in sorted(hours.items())))
 
 
 def write_weak(col):
@@ -212,9 +218,11 @@ def write_weak(col):
     weak = sorted(((c, l, r) for c, (l, r) in by_concept.items() if l and r),
                   key=lambda x: -(x[1] / x[2]))[:10]
 
+    # Newest first: a concept met last week is likelier to matter to today's
+    # work than one from a transcript six weeks old.
     unseen_rows = col.db.all(
         "select n.tags from cards c join notes n on n.id = c.nid "
-        "where c.type = 0 and c.queue != -1")
+        "where c.type = 0 and c.queue != -1 order by n.id desc")
     unseen = []
     for (tags,) in unseen_rows:
         concept = next((t.split(":", 1)[1] for t in (tags or "").split()
@@ -284,13 +292,13 @@ def sync(col):
 
 def main():
     os.makedirs(STATE_DIR, exist_ok=True)
-    minutes = {}
+    hours = {}
     col = open_collection()
     try:
         upsert(col, parse_corpus())
         hold_new_limit(col)
         suspend_trivia(col)
-        minutes = review_minutes(col)
+        hours = review_hours(col)
         write_weak(col)
         try:
             sync(col)
@@ -306,7 +314,7 @@ def main():
             pass
     # Beeminder last, with the collection closed: `buzz` takes a second per
     # day posted, and holding the collection lock blocks Anki from opening.
-    post_beeminder(minutes)
+    post_beeminder(hours)
 
 
 if __name__ == "__main__":
