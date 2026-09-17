@@ -53,6 +53,7 @@ brew "withgraphite/tap/graphite"
 mas "Amphetamine", id: 937984704
 mas "Dashlane", id: 517914548
 cask "activitywatch"
+cask "anki"
 cask "raspberry-pi-imager"
 cask "transmission"
 cask "claude"

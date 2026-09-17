@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+"""List or condense Claude Code transcripts for the card generator.
+
+list      print paths of eligible, unprocessed transcripts (newest last)
+condense  write a transcript's human-readable conversation to stdout
+
+Eligible means: a main-thread session of Nathan's own (no worktree-agent dirs,
+no sidechains), with at least MIN_USER_MSGS real user turns. Tool results and
+tool inputs are dropped in condense: cards should come from what actually
+passed in front of him, and raw tool output is most of a transcript's bulk.
+"""
+import json
+import os
+import sys
+
+PROJECTS = os.path.expanduser("~/.claude/projects")
+STATE = os.path.expanduser("~/.local/state/cards/processed.txt")
+MIN_USER_MSGS = 3
+MAX_CHARS = 200_000
+
+
+def real_user_turns(path):
+    """Count user turns that are actually Nathan typing, not tool plumbing."""
+    n = 0
+    for event in events(path):
+        if event.get("type") != "user" or event.get("isSidechain"):
+            continue
+        content = (event.get("message") or {}).get("content")
+        if isinstance(content, str) and not content.startswith("<"):
+            n += 1
+        elif isinstance(content, list):
+            for block in content:
+                if block.get("type") == "text" and not block["text"].startswith("<"):
+                    n += 1
+    return n
+
+
+def events(path):
+    with open(path, errors="replace") as f:
+        for line in f:
+            try:
+                yield json.loads(line)
+            except ValueError:
+                continue
+
+
+def eligible(path):
+    if "worktrees-agent" in path:
+        return False
+    return real_user_turns(path) >= MIN_USER_MSGS
+
+
+def cmd_list():
+    processed = set()
+    if os.path.exists(STATE):
+        processed = {l.strip() for l in open(STATE) if l.strip()}
+    found = []
+    for project in sorted(os.listdir(PROJECTS)):
+        d = os.path.join(PROJECTS, project)
+        if not os.path.isdir(d):
+            continue
+        for name in os.listdir(d):
+            if not name.endswith(".jsonl"):
+                continue
+            path = os.path.join(d, name)
+            if name[:-6] in processed:
+                continue
+            if eligible(path):
+                found.append((os.path.getmtime(path), path))
+    for _, path in sorted(found):
+        print(path)
+
+
+def session_date(path):
+    for event in events(path):
+        ts = event.get("timestamp")
+        if ts:
+            return ts[:10]
+    return "unknown"
+
+
+def cmd_condense(path):
+    out = []
+    for event in events(path):
+        if event.get("isSidechain"):
+            continue
+        role = event.get("type")
+        if role not in ("user", "assistant"):
+            continue
+        content = (event.get("message") or {}).get("content")
+        texts = []
+        if isinstance(content, str):
+            texts = [content]
+        elif isinstance(content, list):
+            texts = [b["text"] for b in content if b.get("type") == "text"]
+        for text in texts:
+            text = text.strip()
+            # System reminders and hook output are noise, not conversation.
+            if not text or text.startswith("<"):
+                continue
+            out.append(f"\n## {role}\n{text}")
+    body = "".join(out)
+    if len(body) > MAX_CHARS:
+        # Keep both ends: the opening frames the work, the close holds conclusions.
+        half = MAX_CHARS // 2
+        body = body[:half] + "\n\n[...transcript truncated...]\n\n" + body[-half:]
+    print(f"# Session {os.path.basename(path)[:-6]}")
+    print(f"# Date: {session_date(path)}")
+    print(f"# Project: {os.path.basename(os.path.dirname(path))}")
+    print(body)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        sys.exit(__doc__)
+    if sys.argv[1] == "list":
+        cmd_list()
+    elif sys.argv[1] == "condense":
+        cmd_condense(sys.argv[2])
+    else:
+        sys.exit(__doc__)

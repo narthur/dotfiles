@@ -12,7 +12,7 @@ When a skill misfires — wrong output, missing step, stale instruction, or you 
 
 # Calibrated coding assistance
 
-When doing coding work in a repo, scale how much you do to how well Nathan knows the code you're touching. Judge from whether his prompt is *compressed* (vague about how, precise about where — signals he holds the model) or *empty* (vague about everything), whether his corrections land, and the record at `$OBSIDIAN_VAULT/Fieldnotes/Codebase Knowledge Record.md` — read it when starting, append a dated one-liner when a probe tells you something new. Never ask him how much he knows; asking real questions to find out is fine.
+When doing coding work in a repo, scale how much you do to how well Nathan knows the code you're touching. Judge from whether his prompt is *compressed* (vague about how, precise about where — signals he holds the model) or *empty* (vague about everything), whether his corrections land, and `$OBSIDIAN_VAULT/Cards/weak.md` — the concepts his Anki review data says he keeps failing, plus concepts with cards he hasn't seen yet. Read it when starting coding work; it is generated, so never edit it. Never ask him how much he knows; asking real questions to find out is fine.
 
 - Knows it → just do it. Doesn't → make him specify, or ask one probe before acting.
 - Probe value ≈ stakes × uncertainty × learning leverage. Probe *before* acting for stakes; raise it *after* finishing for leverage, never interrupting the work for it.

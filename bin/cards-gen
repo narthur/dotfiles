@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# Usage: cards-gen [--limit N] [transcript ...]
+#
+# Extracts spaced-repetition cards from Claude Code transcripts into the card
+# corpus in the Obsidian vault. One `claude -p` run per transcript, a few in
+# parallel; each transcript is marked processed only if its run succeeded, so a
+# failed or interrupted run is retried next time.
+#
+# Transcripts rotate out of ~/.claude/projects after about six weeks, so this
+# has to run at least weekly or the material is gone for good.
+set -uo pipefail
+
+CORPUS="${CARDS_CORPUS:-$HOME/Obsidian/Main/Cards}"
+STATE_DIR="$HOME/.local/state/cards"
+STATE="$STATE_DIR/processed.txt"
+REJECTED="$STATE_DIR/rejected.jsonl"
+PROMPT="$HOME/.config/cards/prompt.md"
+PARALLEL="${CARDS_PARALLEL:-3}"
+LIMIT=""
+
+mkdir -p "$CORPUS" "$STATE_DIR"
+touch "$STATE"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --limit) LIMIT="$2"; shift 2 ;;
+        *) break ;;
+    esac
+done
+
+if [ $# -gt 0 ]; then
+    transcripts=$(printf '%s\n' "$@")
+else
+    transcripts=$(cards-transcripts list)
+fi
+[ -n "$LIMIT" ] && transcripts=$(printf '%s\n' "$transcripts" | head -n "$LIMIT")
+
+count=$(printf '%s\n' "$transcripts" | grep -c . || true)
+if [ "$count" -eq 0 ]; then
+    echo "no unprocessed transcripts"
+    exit 0
+fi
+echo "processing $count transcript(s), $PARALLEL at a time"
+
+# Most recent rejections, as negative examples for the generator's filter.
+if [ -s "$REJECTED" ]; then
+    rejected=$(tail -n 30 "$REJECTED" | python3 -c '
+import json, sys
+for line in sys.stdin:
+    try:
+        r = json.loads(line)
+    except ValueError:
+        continue
+    print(f"- {r.get(\"front\", \"\")} [{r.get(\"reason\", \"deleted\")}]")
+')
+else
+    rejected="(none yet)"
+fi
+
+export CORPUS PROMPT STATE
+export REJECTED_TEXT="$rejected"
+
+run_one() {
+    path="$1"
+    id=$(basename "$path" .jsonl)
+    condensed=$(mktemp -t "cards-$id")
+    trap 'rm -f "$condensed"' RETURN
+    if ! cards-transcripts condense "$path" >"$condensed"; then
+        echo "FAIL condense $id"
+        return 1
+    fi
+
+    prompt=$(sed \
+        -e "s|TRANSCRIPT_PATH|$condensed|g" \
+        -e "s|CORPUS_DIR|$CORPUS|g" \
+        "$PROMPT")
+    prompt="$prompt
+
+## REJECTED_EXAMPLES
+
+$REJECTED_TEXT"
+
+    if out=$(cd "$CORPUS" && claude -p "$prompt" \
+        --model sonnet \
+        --permission-mode acceptEdits \
+        --allowed-tools "Read" "Write" "Edit" "Glob" "Grep" "Bash(ls:*)" 2>&1); then
+        printf '%s\n' "== $id" "$out"
+        echo "$id" >>"$STATE"
+    else
+        printf '%s\n' "FAIL $id" "$out"
+        return 1
+    fi
+}
+export -f run_one
+
+printf '%s\n' "$transcripts" | grep . | \
+    xargs -P "$PARALLEL" -I{} bash -c 'run_one "$@"' _ {}

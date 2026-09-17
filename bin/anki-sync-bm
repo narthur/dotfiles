@@ -1,0 +1,313 @@
+#!/usr/bin/env -S uv run --quiet --with anki --script
+# /// script
+# requires-python = ">=3.11"
+# ///
+"""Sync the card corpus into Anki, and Anki's review history back out.
+
+Run hourly. In order:
+
+1. Skip entirely if Anki desktop holds the collection (it retries next hour).
+2. Import/update notes from the markdown corpus, matched by immutable card ID.
+3. Hold the deck's new-card limit at CARDS_PER_DAY.
+4. Suspend cards that were never in doubt (trivia the filter should stop making).
+5. Post the last 7 days of review minutes to Beeminder, keyed by daystamp.
+6. Regenerate Cards/weak.md: what keeps lapsing, and what hasn't come up yet.
+7. Sync with AnkiWeb, if credentials are in the keychain.
+
+The markdown corpus in the vault is the source of truth; the collection is a
+derived artifact that can be rebuilt from it. Review history is the one thing
+that lives only in the collection, which is why card IDs never change.
+"""
+import json
+import os
+import re
+import statistics
+import subprocess
+import sys
+import time
+from datetime import date, datetime, timedelta
+
+CORPUS = os.environ.get("CARDS_CORPUS", os.path.expanduser("~/Obsidian/Main/Cards"))
+STATE_DIR = os.path.expanduser("~/.local/state/cards")
+# Anki desktop's default profile, so the GUI and this script share one
+# collection: the GUI for stats, the FSRS optimizer, and the first full upload
+# to AnkiWeb (the headless library can't perform that one).
+COL_PATH = os.environ.get(
+    "ANKI_COLLECTION",
+    os.path.expanduser("~/Library/Application Support/Anki2/User 1/collection.anki2"))
+REJECTED = os.path.join(STATE_DIR, "rejected.jsonl")
+DECK_NAME = "Cards"
+GOAL = "drill"
+CARDS_PER_DAY = int(os.environ.get("CARDS_PER_DAY", "3"))
+KEYCHAIN_SERVICE = "ankiweb"
+
+# A card with this many reps, no lapses and consistently fast answers was
+# already known before the card existed: trivia, not knowledge.
+TRIVIA_MIN_REPS = 4
+TRIVIA_MAX_SECONDS = 3.0
+
+CARD_RE = re.compile(r"^\s*-\s*(?P<front>.+?)\s*>>\s*(?P<back>.+?)\s*<!--\s*id:\s*(?P<id>[\w:.-]+)\s*-->\s*$")
+
+
+def log(msg):
+    print(msg, flush=True)
+
+
+def keychain(account):
+    try:
+        return subprocess.run(
+            ["security", "find-generic-password", "-s", KEYCHAIN_SERVICE,
+             "-a", account, "-w"],
+            capture_output=True, text=True, check=True).stdout.strip()
+    except subprocess.CalledProcessError:
+        return None
+
+
+def parse_corpus():
+    """Return [{id, front, back, tags, concept}] from the markdown corpus."""
+    cards = []
+    for name in sorted(os.listdir(CORPUS)):
+        if not name.endswith(".md") or name in ("weak.md", "README.md"):
+            continue
+        path = os.path.join(CORPUS, name)
+        text = open(path).read()
+        tags = ["concept"]
+        front_matter = re.match(r"^---\n(.*?)\n---\n", text, re.S)
+        if front_matter:
+            tag_line = re.search(r"^tags:\s*\[(.*?)\]", front_matter.group(1), re.M)
+            if tag_line:
+                tags = [t.strip() for t in tag_line.group(1).split(",") if t.strip()]
+        for line in text.splitlines():
+            m = CARD_RE.match(line)
+            if m:
+                cards.append(dict(
+                    id=m.group("id"), front=m.group("front").strip(),
+                    back=m.group("back").strip(), tags=tags, concept=name[:-3]))
+    return cards
+
+
+def open_collection():
+    os.makedirs(os.path.dirname(COL_PATH), exist_ok=True)
+    from anki.collection import Collection
+    try:
+        return Collection(COL_PATH)
+    except Exception as e:
+        # Anki desktop holds an exclusive lock; the next hourly run picks it up.
+        log(f"collection unavailable ({e}); skipping this run")
+        sys.exit(0)
+
+
+def upsert(col, cards):
+    """Add new cards and update edited ones, matching on GUID."""
+    model = col.models.by_name("Basic")
+    deck_id = col.decks.id(DECK_NAME)
+    existing = {
+        guid: nid for guid, nid in
+        col.db.all("select guid, id from notes")
+    }
+    added = updated = 0
+    for card in cards:
+        tags = list(dict.fromkeys(card["tags"] + [f"concept:{card['concept']}"]))
+        nid = existing.get(card["id"])
+        if nid is None:
+            note = col.new_note(model)
+            note.fields[0] = card["front"]
+            note.fields[1] = card["back"]
+            note.tags = tags
+            note.guid = card["id"]
+            col.add_note(note, deck_id)
+            added += 1
+        else:
+            note = col.get_note(nid)
+            if (note.fields[0], note.fields[1]) != (card["front"], card["back"]) \
+                    or set(note.tags) != set(tags):
+                note.fields[0] = card["front"]
+                note.fields[1] = card["back"]
+                note.tags = tags
+                col.update_note(note)
+                updated += 1
+    log(f"cards: {added} added, {updated} updated, {len(cards)} in corpus")
+    return added, updated
+
+
+def hold_new_limit(col):
+    deck_id = col.decks.id(DECK_NAME)
+    conf = col.decks.config_dict_for_deck_id(deck_id)
+    if conf["new"]["perDay"] != CARDS_PER_DAY:
+        conf["new"]["perDay"] = CARDS_PER_DAY
+        col.decks.update_config(conf)
+        log(f"new-card limit set to {CARDS_PER_DAY}")
+
+
+def suspend_trivia(col):
+    """Suspend cards that have never been in doubt, and log them as rejections."""
+    rows = col.db.all(
+        "select c.id, n.guid, n.flds, c.reps, c.lapses from cards c "
+        "join notes n on n.id = c.nid where c.reps >= ? and c.lapses = 0 "
+        "and c.queue != -1", TRIVIA_MIN_REPS)
+    suspend, logged = [], []
+    for cid, guid, flds, reps, _ in rows:
+        times = [t / 1000 for (t,) in col.db.all(
+            "select time from revlog where cid = ? and type = 1", cid)]
+        if times and statistics.median(times) < TRIVIA_MAX_SECONDS:
+            suspend.append(cid)
+            logged.append(dict(id=guid, front=flds.split("\x1f")[0],
+                               reason="auto-suspended: known cold",
+                               reps=reps, date=date.today().isoformat()))
+    if suspend:
+        col.sched.suspend_cards(suspend)
+        with open(REJECTED, "a") as f:
+            for entry in logged:
+                f.write(json.dumps(entry) + "\n")
+        log(f"suspended {len(suspend)} never-doubted card(s)")
+
+
+def day_cutoff_hour(col):
+    return col.get_config("rollover", 4)
+
+
+def review_minutes(col, days=7):
+    """Minutes reviewed per Anki day, for the last `days` days."""
+    rollover = day_cutoff_hour(col)
+    out = {}
+    for offset in range(days):
+        day = date.today() - timedelta(days=offset)
+        start = datetime(day.year, day.month, day.day, rollover)
+        end = start + timedelta(days=1)
+        ms = col.db.scalar(
+            "select coalesce(sum(time), 0) from revlog where id >= ? and id < ?",
+            int(start.timestamp() * 1000), int(end.timestamp() * 1000)) or 0
+        out[day] = round(ms / 60000, 2)
+    return out
+
+
+def post_beeminder(minutes):
+    for day in sorted(minutes):
+        value = minutes[day]
+        rid = day.isoformat()
+        stamp = day.strftime("%Y%m%d")
+        r = subprocess.run(
+            ["buzz", "add", "--requestid", rid, "--daystamp", stamp, GOAL,
+             str(value), f"Anki review minutes for {rid}"],
+            capture_output=True, text=True)
+        if r.returncode != 0:
+            log(f"beeminder {rid} failed: {(r.stderr or r.stdout).strip()[:120]}")
+    log("beeminder: " + ", ".join(f"{d}={m}" for d, m in sorted(minutes.items())))
+
+
+def write_weak(col):
+    """Cards/weak.md: concepts that keep lapsing, and concepts not yet seen."""
+    lapsing = col.db.all(
+        "select n.tags, sum(c.lapses), sum(c.reps) from cards c "
+        "join notes n on n.id = c.nid where c.queue != -1 group by n.id")
+    by_concept = {}
+    for tags, lapses, reps in lapsing:
+        concept = next((t.split(":", 1)[1] for t in (tags or "").split()
+                        if t.startswith("concept:")), None)
+        if not concept:
+            continue
+        agg = by_concept.setdefault(concept, [0, 0])
+        agg[0] += lapses or 0
+        agg[1] += reps or 0
+    weak = sorted(((c, l, r) for c, (l, r) in by_concept.items() if l and r),
+                  key=lambda x: -(x[1] / x[2]))[:10]
+
+    unseen_rows = col.db.all(
+        "select n.tags from cards c join notes n on n.id = c.nid "
+        "where c.type = 0 and c.queue != -1")
+    unseen = []
+    for (tags,) in unseen_rows:
+        concept = next((t.split(":", 1)[1] for t in (tags or "").split()
+                        if t.startswith("concept:")), None)
+        if concept and concept not in unseen:
+            unseen.append(concept)
+
+    lines = [
+        "# Weak concepts",
+        "",
+        "Generated by `anki-sync-bm`; do not edit. Read at the start of coding work:",
+        "treat these as areas Nathan has not demonstrated he knows.",
+        f"Updated {datetime.now().strftime('%Y-%m-%d %H:%M')}.",
+        "",
+        "## Lapsing (failed reviews)",
+        "",
+    ]
+    lines += [f"- {c} — {l}/{r} reviews failed" for c, l, r in weak] or ["- (none)"]
+    lines += ["", "## Not yet reviewed (cards exist, never seen)", ""]
+    lines += [f"- {c}" for c in unseen[:10]] or ["- (none)"]
+    if len(unseen) > 10:
+        lines.append(f"- …and {len(unseen) - 10} more")
+    open(os.path.join(CORPUS, "weak.md"), "w").write("\n".join(lines) + "\n")
+    log(f"weak.md: {len(weak)} lapsing, {len(unseen)} unseen")
+
+
+def sync(col):
+    """Sync with AnkiWeb. Returns True if the collection was closed for a full sync."""
+    username = keychain("username")
+    password = keychain("password")
+    if not (username and password):
+        log("ankiweb credentials not in keychain; skipping sync")
+        return False
+    import anki.sync_pb2 as sync_pb
+
+    required = sync_pb.SyncCollectionResponse.ChangesRequired
+    auth = col.sync_login(username, password, None)
+    out = col.sync_collection(auth, sync_media=False)
+
+    if out.required in (required.NO_CHANGES, required.NORMAL_SYNC):
+        log("sync: ok")
+        return False
+
+    has_history = bool(col.db.scalar("select count() from revlog"))
+    if out.required == required.FULL_UPLOAD or (
+            out.required == required.FULL_SYNC and not has_history):
+        # Our collection is derived from the vault, so uploading loses nothing
+        # — unless reviews have happened on the phone that we haven't pulled.
+        log("sync: full upload required; uploading "
+            "(if this fails, open Anki desktop and sync once — the GUI "
+            "handles the first upload, and later syncs are normal syncs)")
+        col.close_for_full_sync()
+        col.full_upload_or_download(auth=auth, server_usn=None, upload=True)
+        return True
+    if out.required == required.FULL_DOWNLOAD and not has_history:
+        log("sync: full download required; downloading")
+        col.close_for_full_sync()
+        col.full_upload_or_download(auth=auth, server_usn=None, upload=False)
+        return True
+
+    # Both sides hold review history that the other lacks. Choosing a direction
+    # here could silently destroy reviews done on the phone, so stop and say so.
+    log(f"sync: FULL SYNC NEEDED, direction ambiguous (required={out.required}, "
+        "local review history present). Resolve in Anki desktop.")
+    return False
+
+
+def main():
+    os.makedirs(STATE_DIR, exist_ok=True)
+    minutes = {}
+    col = open_collection()
+    try:
+        upsert(col, parse_corpus())
+        hold_new_limit(col)
+        suspend_trivia(col)
+        minutes = review_minutes(col)
+        write_weak(col)
+        try:
+            sync(col)
+        except Exception as e:
+            # A sync failure must not fail the run: the cards, the Beeminder
+            # datapoints and weak.md are already written, and a nonzero exit
+            # would mark the Healthchecks check down every hour.
+            log(f"sync failed: {e}")
+    finally:
+        try:
+            col.close()
+        except Exception:
+            pass
+    # Beeminder last, with the collection closed: `buzz` takes a second per
+    # day posted, and holding the collection lock blocks Anki from opening.
+    post_beeminder(minutes)
+
+
+if __name__ == "__main__":
+    main()
