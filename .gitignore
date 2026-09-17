@@ -8,11 +8,6 @@
 # Personal data tracked in dotprivate instead
 .config/backup-urls/urls.txt
 
-# Pilot skill runtime state (recreated lazily; skill defs live in dotprivate)
-.claude/skills/pilot/dismissed.json
-.claude/skills/pilot/architecture.json
-.claude/skills/pilot/.last-sweep
-
 # Finance: scripts under finance/ are tracked in dotprivate; the data is not.
 # Ledgers, budget targets and account mappings are backed up (encrypted) to B2
 # by finance/ledger-push, so git has no recovery role here and would only add
