@@ -162,21 +162,42 @@ def suspend_trivia(col):
         log(f"suspended {len(suspend)} never-doubted card(s)")
 
 
-def day_cutoff_hour(col):
-    return col.get_config("rollover", 4)
+def goal_day_end(default_hour=15):
+    """Hour at which a Beeminder day for GOAL ends, from the goal's deadline.
+
+    Beeminder's deadline is seconds relative to midnight (negative = before
+    it), so a -32400 deadline means the day ends at 15:00. Windowing on the
+    goal's own boundary rather than Anki's 4am rollover is what keeps an
+    evening review from being stamped onto a day whose deadline has passed.
+    """
+    r = subprocess.run(["buzz", "api", f"users/me/goals/{GOAL}.json"],
+                       capture_output=True, text=True)
+    try:
+        deadline = json.loads(r.stdout)["deadline"]
+    except Exception:
+        log(f"could not read {GOAL}'s deadline; assuming day ends at "
+            f"{default_hour}:00")
+        return default_hour
+    return ((86400 + deadline) // 3600) % 24
 
 
 def review_hours(col, days=7):
-    """Hours reviewed per Anki day, for the last `days` days.
+    """Hours reviewed per Beeminder day, for the last `days` days.
 
     Hours, not minutes: Beeminder renders time-shaped goals better in hours.
     """
-    rollover = day_cutoff_hour(col)
+    cutoff = goal_day_end()
+    # Past the cutoff hour, the Beeminder day in progress is tomorrow's date;
+    # reviews done now belong to it, so it has to be the newest day posted.
+    current = date.today()
+    if datetime.now().hour >= cutoff:
+        current += timedelta(days=1)
     out = {}
     for offset in range(days):
-        day = date.today() - timedelta(days=offset)
-        start = datetime(day.year, day.month, day.day, rollover)
-        end = start + timedelta(days=1)
+        day = current - timedelta(days=offset)
+        # Day D runs from the previous day's deadline to this one's.
+        end = datetime(day.year, day.month, day.day, cutoff)
+        start = end - timedelta(days=1)
         ms = col.db.scalar(
             "select coalesce(sum(time), 0) from revlog where id >= ? and id < ?",
             int(start.timestamp() * 1000), int(end.timestamp() * 1000)) or 0
