@@ -6,9 +6,6 @@
 # Re-run ~/.claude/skills/playwright/setup.sh if you upgrade the
 # @playwright/cli package or switch to a different node install.
 
-# $HOME is escaped so it stays literal in the generated wrapper -- the wrapper is
-# tracked in the public dotfiles repo, and an expanded path would bake in the
-# username. $NODE_VERSION is deliberately NOT escaped: the pin is the point.
 NODE=$HOME/.asdf/installs/nodejs/22.16.0/bin/node
 PLAYWRIGHT_CLI=$HOME/.asdf/installs/nodejs/22.16.0/lib/node_modules/@playwright/cli/playwright-cli.js
 
@@ -22,17 +19,6 @@ if [[ ! -f "$PLAYWRIGHT_CLI" ]]; then
   echo "ERROR: @playwright/cli not found at $PLAYWRIGHT_CLI" >&2
   echo "Run ~/.claude/skills/playwright/setup.sh to fix." >&2
   exit 1
-fi
-
-# open without --browser defaults to Google Chrome, which not every machine has.
-# Fall back to a browser Playwright itself installed, so a bare open just works.
-cmd=""; for a in "$@"; do [[ "$a" == -* ]] || { cmd=$a; break; }; done
-if [[ "$cmd" == open && " $* " != *" --browser"* && ! -d "/Applications/Google Chrome.app" ]]; then
-  for cache in "${PLAYWRIGHT_BROWSERS_PATH:-}" "$HOME/Library/Caches/ms-playwright" "$HOME/.cache/ms-playwright"; do
-    for b in firefox webkit; do
-      if [[ -n "$cache" ]] && compgen -G "$cache/$b-*" >/dev/null; then set -- "$@" --browser "$b"; break 2; fi
-    done
-  done
 fi
 
 exec "$NODE" "$PLAYWRIGHT_CLI" "$@"
