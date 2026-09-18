@@ -13,6 +13,9 @@ export PATH="$HOME/bin:$HOME/.local/bin:$PATH"
 # asdf shims
 export PATH="${ASDF_DATA_DIR:-$HOME/.asdf}/shims:$PATH"
 
+# playwright-cli defaults to Google Chrome; use Playwright's bundled Firefox where Chrome is absent.
+[[ -d "/Applications/Google Chrome.app" ]] || export PLAYWRIGHT_MCP_BROWSER=firefox
+
 # pnpm
 export PNPM_HOME="/Users/narthur/Library/pnpm"
 case ":$PATH:" in
