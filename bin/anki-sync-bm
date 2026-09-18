@@ -97,19 +97,58 @@ def open_collection():
         sys.exit(0)
 
 
+def load_rejected():
+    """IDs of cards Nathan deleted during review, or that were auto-suspended."""
+    ids = set()
+    if os.path.exists(REJECTED):
+        for line in open(REJECTED):
+            try:
+                ids.add(json.loads(line)["id"])
+            except (ValueError, KeyError):
+                continue
+    return ids
+
+
 def upsert(col, cards):
-    """Add new cards and update edited ones, matching on GUID."""
+    """Add new cards and update edited ones, matching on GUID.
+
+    A card that was imported before and is no longer in the collection was
+    deleted during review — that is the "not worth knowing" button. It gets
+    logged as a rejection and never re-added, which is also what stops this
+    function from quietly resurrecting it on the next run.
+    """
     model = col.models.by_name("Basic")
     deck_id = col.decks.id(DECK_NAME)
     existing = {
         guid: nid for guid, nid in
         col.db.all("select guid, id from notes")
     }
-    added = updated = 0
+    imported_path = os.path.join(STATE_DIR, "imported.json")
+    imported = {}
+    if os.path.exists(imported_path):
+        try:
+            imported = json.load(open(imported_path))
+        except ValueError:
+            pass
+    rejected = load_rejected()
+
+    added = updated = deleted = 0
     for card in cards:
+        if card["id"] in rejected:
+            continue
         tags = list(dict.fromkeys(card["tags"] + [f"concept:{card['concept']}"]))
         nid = existing.get(card["id"])
+        if nid is None and card["id"] in imported:
+            with open(REJECTED, "a") as f:
+                f.write(json.dumps(dict(
+                    id=card["id"], front=card["front"],
+                    reason="deleted during review",
+                    date=date.today().isoformat())) + "\n")
+            rejected.add(card["id"])
+            deleted += 1
+            continue
         if nid is None:
+            imported[card["id"]] = date.today().isoformat()
             note = col.new_note(model)
             note.fields[0] = card["front"]
             note.fields[1] = card["back"]
@@ -118,6 +157,9 @@ def upsert(col, cards):
             col.add_note(note, deck_id)
             added += 1
         else:
+            # Record cards already in the collection too, or a deletion of one
+            # imported before this bookkeeping existed would go unnoticed.
+            imported.setdefault(card["id"], date.today().isoformat())
             note = col.get_note(nid)
             if (note.fields[0], note.fields[1]) != (card["front"], card["back"]) \
                     or set(note.tags) != set(tags):
@@ -126,7 +168,9 @@ def upsert(col, cards):
                 note.tags = tags
                 col.update_note(note)
                 updated += 1
-    log(f"cards: {added} added, {updated} updated, {len(cards)} in corpus")
+    json.dump(imported, open(imported_path, "w"))
+    log(f"cards: {added} added, {updated} updated, {deleted} rejected by "
+        f"deletion, {len(cards)} in corpus ({len(rejected)} rejected to date)")
     return added, updated
 
 
