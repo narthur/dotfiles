@@ -12,6 +12,8 @@ i3
 i3blocks
 inkscape
 jq
+libdbusmenu-gtk3-dev
+libgtk-3-dev
 libsecret-1-dev
 mailutils
 moreutils
@@ -26,8 +28,10 @@ pipx
 podman-docker
 postfix
 postgresql-client-16
+proton-vpn-gnome-desktop
 python3-tinycss2
 python3-venv
+qbittorrent
 qt6ct
 rofi
 rsync
@@ -38,6 +42,7 @@ taskwarrior
 texlive-xetex
 thunar
 thunar-archive-plugin
+valac
 vlc
 warp-terminal
 xournalpp

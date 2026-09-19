@@ -67,6 +67,10 @@ exec --no-startup-id nm-applet
 # Blueman applet for Bluetooth management
 exec --no-startup-id blueman-applet
 
+# Proton VPN in the tray. Its icon is StatusNotifierItem-only, so snixembed
+# (built by bin/setup-linux) must be up first to proxy it into i3bar's tray.
+exec --no-startup-id sh -c '~/.local/bin/snixembed --fork && protonvpn-app --start-minimized'
+
 # Set desktop background (restores last wallpaper set via feh / Thunar action)
 exec_always --no-startup-id ~/.fehbg
 

@@ -42,9 +42,35 @@ run() {
     fi
 }
 
+log_section "Proton VPN Repo"
+# Source: https://protonvpn.com/support/linux-vpn-debian-ubuntu
+# Must precede the apt install: packages.txt lists proton-vpn-gnome-desktop.
+if ! dpkg -s protonvpn-stable-release &> /dev/null; then
+    log "proton repo not found, installing..."
+    deb=/tmp/protonvpn-stable-release_1.0.8_all.deb
+    run "download proton release package" wget -nv -O "$deb" https://repo.protonvpn.com/debian/dists/stable/main/binary-all/protonvpn-stable-release_1.0.8_all.deb
+    run "verify proton release package" bash -c "echo '0b14e71586b22e498eb20926c48c7b434b751149b1f2af9902ef1cfe6b03e180  $deb' | sha256sum --check -"
+    run "install proton release package" sudo dpkg -i "$deb"
+else
+    log_success "proton repo already installed"
+fi
+
 log_section "Apt Packages"
 run "apt update" sudo apt update
 run "apt install packages" sudo apt install -y $(grep -v '^#' ~/packages.txt | tr '\n' ' ')
+
+log_section "snixembed"
+# Proton VPN's tray icon is StatusNotifierItem-only; i3bar only hosts XEmbed icons.
+# snixembed bridges the two. Not packaged in Debian, so build it (deps in packages.txt).
+if [ ! -x "$HOME/.local/bin/snixembed" ]; then
+    log "snixembed not found, building..."
+    src=$(mktemp -d)
+    run "clone snixembed" git clone -q --depth 1 -b 0.3.3 https://git.sr.ht/~steef/snixembed "$src"
+    run "build snixembed" make -C "$src" install PREFIX="$HOME/.local"
+    rm -rf "$src"
+else
+    log_success "snixembed already installed"
+fi
 
 log_section "Brew Packages"
 run "brew bundle install" brew bundle install --global
