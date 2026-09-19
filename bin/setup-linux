@@ -217,5 +217,14 @@ else
     log "ynab not authenticated — run: ynab auth login  (token: https://app.ynab.com/settings/developer)"
 fi
 
+log_section "Private Setup"
+# Setup steps tracked in the dotprivate repo. Optional by design: a fresh clone
+# of the public dotfiles alone will not have it, and that is a valid machine.
+if [ -x "$HOME/bin/setup-linux-private" ]; then
+    run "private setup" "$HOME/bin/setup-linux-private"
+else
+    log_success "no private setup script (dotprivate not installed)"
+fi
+
 log_section "Complete"
 log_success "All packages installed successfully!"
