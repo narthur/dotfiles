@@ -31,7 +31,6 @@ postgresql-client-16
 proton-vpn-gnome-desktop
 python3-tinycss2
 python3-venv
-qbittorrent
 qt6ct
 rofi
 rsync
