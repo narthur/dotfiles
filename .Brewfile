@@ -55,7 +55,6 @@ mas "Dashlane", id: 517914548
 cask "activitywatch"
 cask "anki"
 cask "raspberry-pi-imager"
-cask "transmission"
 cask "claude"
 cask "codexbar"
 cask "xbar"

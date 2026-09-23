@@ -208,5 +208,14 @@ else
     log_success "xbar plugins symlink already exists"
 fi
 
+log_section "Private Setup"
+# Setup steps tracked in the dotprivate repo. Optional by design: a fresh clone
+# of the public dotfiles alone will not have it, and that is a valid machine.
+if [ -x "$HOME/bin/setup-mac-private" ]; then
+    run "private setup" "$HOME/bin/setup-mac-private"
+else
+    log_success "no private setup script (dotprivate not installed)"
+fi
+
 log_section "Complete"
 log_success "macOS setup complete!"
