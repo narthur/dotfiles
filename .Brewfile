@@ -31,6 +31,7 @@ brew "wget"
 brew "gcc"
 brew "hivemind"
 brew "herdr"
+brew "languagetool" # resume/letter grammar check; pulls openjdk
 brew "llm"
 brew "ollama"
 brew "podman"
