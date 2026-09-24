@@ -1,20 +1,5 @@
 # i3blocks config file
 
-[work-time]
-command=seconds=$(~/bin/get-work-time); seconds=${seconds:-0}; [ "$seconds" = "null" ] && seconds=0; hours=$((${seconds%.*} / 3600)); mins=$(((${seconds%.*} % 3600) / 60)); printf "💼 %02d:%02d\n" $hours $mins
-interval=60
-separator_block_width=30
-
-[gh-commits]
-command=echo "✅ $(~/bin/gh-commits-today)"
-interval=300
-separator_block_width=30
-
-[gh-prs]
-command=echo "🔀 $(~/bin/gh-prs-today)"
-interval=300
-separator_block_width=30
-
 [buzz]
 command=echo "🐝 $(buzz next)"
 interval=30
@@ -23,6 +8,11 @@ separator_block_width=30
 [bluetooth-battery]
 command=~/.config/i3blocks/blocklets/bluetooth-battery
 interval=30
+separator_block_width=30
+
+[vpn]
+command=n=$(nmcli -t -f GENERAL.CONNECTION device show proton0 2>/dev/null | cut -d: -f2); [ -n "$n" ] && echo "🔒 ${n#ProtonVPN }" || echo "🔓 VPN OFF"
+interval=10
 separator_block_width=30
 
 [volume]

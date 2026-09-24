@@ -34,8 +34,8 @@ Personal dotfiles and scripts for Linux and macOS.
   - i3blocks status bar
 
 - **`.config/i3blocks/config`** - i3blocks status bar configuration
-  - 💼 Work time (from ActivityWatch)
   - 🐝 Beeminder next goal (via buzz)
+  - 🔒 Proton VPN connection state (via nmcli)
   - 🔊 Volume level
   - 📅 Date and time
 
