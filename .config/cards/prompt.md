@@ -17,7 +17,7 @@ A **frozen fact about Nathan's own work that an interviewer would ask him to pro
 - Anything specific to one bug that is now fixed.
 - Facts about his tooling setup that a script or `--help` answers faster than memory.
 - Cards whose answer is "it depends" with no crisp content.
-- Anything in `REJECTED_EXAMPLES` — those are cards he deleted during review. Do not recreate them or their near-duplicates, and infer the pattern: they show what he considers not worth knowing. The exception is one whose reason starts with `leech:` — that card was forgotten repeatedly, which means its wording failed, not its topic; the topic is still fair game if you can compose it better.
+- Anything in `REJECTED_EXAMPLES` — those are cards he deleted during review. Do not recreate them or their near-duplicates, and infer the pattern: they show what he considers not worth knowing. The exception is one whose reason starts with `leech:` or `answer too long:` — that card was pulled for how it was written, not for what it was about, so the topic is still fair game if you can compose it better.
 
 Most of what a session touches earns nothing. A session with no durable concepts in it should produce no files, and that is a correct outcome — say so and stop.
 
@@ -26,7 +26,7 @@ Most of what a session touches earns nothing. A session with no durable concepts
 - Two to four cards per concept, not more.
 - Question and answer, one fact each. The question must stand alone: a card read in six months with no context still has to be answerable.
 - Prefer "why does X exist", "what breaks without X", "when would you choose X over Y", "what does X protect against" over "what is X".
-- Answers: one or two sentences, **280 characters at the hard limit**. No hedging, no lists of five things. Anything longer is carrying more than one fact — split it into two cards. The sync enforces this: an over-long answer is pulled from the deck and sent back to be rewritten.
+- Answers: one or two sentences, **280 characters at the hard limit**. No hedging, no lists of five things. Anything longer is carrying more than one fact — split it into two cards. The sync enforces this: an over-long answer is kept out of the deck, or pulled from it if it got in, and sent back to be rewritten.
 - Cloze only where the sentence itself carries the meaning. Never cloze a code snippet.
 - No cards that quiz the wording of Nathan's own notes.
 

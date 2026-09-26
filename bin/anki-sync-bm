@@ -7,14 +7,16 @@
 Run hourly. In order:
 
 1. Skip entirely if Anki desktop holds the collection (it retries next hour).
-2. Import/update notes from the markdown corpus, matched by immutable card ID.
-3. Hold the deck's new-card limit and leech threshold.
-4. Suspend cards that were never in doubt (trivia the filter should stop making).
-4b. Queue leeches (cards that keep lapsing) to be rewritten by the next cards-gen.
-4c. Queue cards whose answer runs past MAX_BACK characters, same way.
-5. Post the last 7 days of review minutes to Beeminder, keyed by daystamp.
-6. Regenerate Cards/weak.md: what keeps lapsing, and what hasn't come up yet.
-7. Sync with AnkiWeb, if credentials are in the keychain.
+2. Queue cards whose answer runs past MAX_BACK characters to be rewritten by the
+   next cards-gen — before step 3, so one that has never been imported never is.
+3. Import/update notes from the markdown corpus, matched by immutable card ID.
+4. Hold the deck's new-card limit and leech threshold.
+5. Suspend cards that were never in doubt (trivia the filter should stop making).
+6. Queue leeches (cards that keep lapsing) the same way as step 2.
+7. Regenerate Cards/weak.md: what keeps lapsing, and what hasn't come up yet.
+8. Sync with AnkiWeb, if credentials are in the keychain.
+9. Post the last 7 days of review minutes to Beeminder, keyed by daystamp, with
+   the collection closed so `buzz` never holds the lock against Anki.
 
 The markdown corpus in the vault is the source of truth; the collection is a
 derived artifact that can be rebuilt from it. Review history is the one thing
@@ -56,8 +58,9 @@ TRIVIA_MAX_SECONDS = 3.0
 LEECH_FAILS = int(os.environ.get("CARDS_LEECH_FAILS", "3"))
 
 # Longest answer the corpus allows. The prompt already asks for one or two
-# sentences; this is what makes that stick. 280 is the corpus's 95th percentile
-# as of 2026-09-25 — past it an answer is carrying more than one fact.
+# sentences; this is what makes that stick. 280 cuts the longest ~4% of the
+# corpus (941 cards on 2026-09-26, 95th percentile 272) — past it an answer is
+# carrying more than one fact.
 MAX_BACK = int(os.environ.get("CARDS_MAX_BACK", "280"))
 
 CARD_RE = re.compile(r"^\s*-\s*(?P<front>.+?)\s*>>\s*(?P<back>.+?)\s*<!--\s*id:\s*(?P<id>[\w:.-]+)\s*-->\s*$")
@@ -225,13 +228,17 @@ def queue_rework(col, entries, nids=()):
     """
     if not entries:
         return
+    # Remove first, then record. A crash between the two leaves the note gone
+    # and unrecorded, so upsert re-adds it from the corpus and it is queued
+    # again later; the reverse order would mark the id rejected forever while
+    # leaving the note in place, which no future run would ever revisit.
+    if nids:
+        col.remove_notes(list(nids))
     with open(LEECH_QUEUE, "a") as q, open(REJECTED, "a") as r:
         for e in entries:
             q.write(json.dumps(e) + "\n")
             r.write(json.dumps(dict(id=e["id"], front=e["front"],
                                     reason=e["reason"], date=e["date"])) + "\n")
-    if nids:
-        col.remove_notes(list(nids))
 
 
 def rework_leeches(col):
@@ -241,8 +248,8 @@ def rework_leeches(col):
     signal that the card is composed badly — two facts in one, a question that
     doesn't stand alone — not that the idea is hard. The next cards-gen run
     rewrites the idea into fresh cards in the same concept file, at fresh IDs:
-    reusing the ID would carry the failed card's lapse count onto its
-    replacement and re-leech it.
+    queue_rework puts the dead ID in rejected.jsonl for good, so upsert would
+    skip a replacement that reused it.
     """
     rejected = load_rejected()
     rows = col.db.all(
@@ -250,7 +257,10 @@ def rework_leeches(col):
         "join notes n on n.id = c.nid where n.tags like '%leech%'")
     entries, nids = [], []
     for nid, guid, flds, tags, lapses in rows:
-        if guid in rejected:
+        # The LIKE above is a substring match, so it also catches a concept tag
+        # that merely contains "leech". Removing a note destroys its review
+        # history, so require the whole tag before acting on the row.
+        if guid in rejected or "leech" not in (tags or "").split():
             continue
         fields = flds.split("\x1f") + ["", ""]
         concept = next((t.split(":", 1)[1] for t in (tags or "").split()

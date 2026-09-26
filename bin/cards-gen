@@ -40,9 +40,9 @@ else
 fi
 [ -n "$LIMIT" ] && transcripts=$(printf '%s\n' "$transcripts" | head -n "$LIMIT")
 
-# Leeches: cards Anki watched lapse repeatedly. anki-sync-bm removed them from
-# the collection and queued them here. A card that keeps lapsing is usually
-# composed badly rather than about a hard idea, so rewrite it rather than
+# The rework queue: cards anki-sync-bm pulled out of the collection either for
+# lapsing repeatedly or for an over-long answer, each with its reason. Both are
+# defects of composition rather than of the idea, so rewrite the card instead of
 # dropping the idea on the floor.
 rework_leeches() {
     [ -s "$LEECHES" ] || return 0

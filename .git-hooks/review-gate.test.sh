@@ -1,7 +1,9 @@
 #!/bin/bash
 # Self-check for review-gate.sh: block unreviewed, pass when recorded, honor bypass.
 set -euo pipefail
-gate="$(dirname "$0")/review-gate.sh"
+# Absolute: the tests cd into $tmp/repo, and a relative path would then miss the
+# gate entirely — every "expect a block" assertion would pass on exit 127.
+gate="$(cd "$(dirname "$0")" && pwd)/review-gate.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 export HOME="$tmp"
