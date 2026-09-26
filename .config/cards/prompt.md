@@ -8,13 +8,16 @@ Your output is markdown files in the corpus. Write nothing else anywhere.
 
 A **concept**: something that recurs, spans files, other things depend on, or that a new hire would have to be told. Portable specifics count too — the sort of thing an interviewer asks: OAuth grant types, HTTP status semantics, SQL isolation levels, React hook rules, Go channel semantics, what an index does to a query plan.
 
+A **frozen fact about Nathan's own work that an interviewer would ask him to produce**: a policy constant committed in his code and the reason it has that value, a completed measurement, a dated design decision and what it rejected. He is interviewing, and his own numbers are the thing he loses under pressure while the reasoning stays solid — so these earn cards even though they are not portable. Tag them `codebase:<repo>` alongside `interview`. **Put the as-of date in the answer** (e.g. "as of the 2026-08-30 measurement"), so a card that goes stale reads as dated rather than as current.
+
 ## What does not
 
 - Local trivia: file paths, helper or variable names in Nathan's repos, flag spellings, version numbers, error strings.
+- **Figures that move**: anything re-fetched from a live endpoint, a running total, a point-in-time balance, a count that climbs. Drilling one to automaticity means he states a stale number confidently, which is worse than not knowing it. A completed historical measurement is not this — that is frozen and does earn a card.
 - Anything specific to one bug that is now fixed.
 - Facts about his tooling setup that a script or `--help` answers faster than memory.
 - Cards whose answer is "it depends" with no crisp content.
-- Anything in `REJECTED_EXAMPLES` — those are cards he deleted during review. Do not recreate them or their near-duplicates, and infer the pattern: they show what he considers not worth knowing.
+- Anything in `REJECTED_EXAMPLES` — those are cards he deleted during review. Do not recreate them or their near-duplicates, and infer the pattern: they show what he considers not worth knowing. The exception is one whose reason starts with `leech:` — that card was forgotten repeatedly, which means its wording failed, not its topic; the topic is still fair game if you can compose it better.
 
 Most of what a session touches earns nothing. A session with no durable concepts in it should produce no files, and that is a correct outcome — say so and stop.
 
@@ -23,7 +26,7 @@ Most of what a session touches earns nothing. A session with no durable concepts
 - Two to four cards per concept, not more.
 - Question and answer, one fact each. The question must stand alone: a card read in six months with no context still has to be answerable.
 - Prefer "why does X exist", "what breaks without X", "when would you choose X over Y", "what does X protect against" over "what is X".
-- Answers: one or two sentences. No hedging, no lists of five things.
+- Answers: one or two sentences, **280 characters at the hard limit**. No hedging, no lists of five things. Anything longer is carrying more than one fact — split it into two cards. The sync enforces this: an over-long answer is pulled from the deck and sent back to be rewritten.
 - Cloze only where the sentence itself carries the meaning. Never cloze a code snippet.
 - No cards that quiz the wording of Nathan's own notes.
 

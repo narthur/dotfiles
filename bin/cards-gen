@@ -14,6 +14,11 @@ CORPUS="${CARDS_CORPUS:-$HOME/Obsidian/Main/Cards}"
 STATE_DIR="$HOME/.local/state/cards"
 STATE="$STATE_DIR/processed.txt"
 REJECTED="$STATE_DIR/rejected.jsonl"
+LEECHES="$STATE_DIR/leeches.jsonl"
+LEECHES_DONE="$STATE_DIR/leeches-done.txt"
+# Rewrites go in one claude call, so drain the queue a batch at a time rather
+# than stuffing a backlog into a single prompt.
+REWORK_BATCH="${CARDS_REWORK_BATCH:-10}"
 PROMPT="$HOME/.config/cards/prompt.md"
 PARALLEL="${CARDS_PARALLEL:-3}"
 LIMIT=""
@@ -34,6 +39,63 @@ else
     transcripts=$(cards-transcripts list)
 fi
 [ -n "$LIMIT" ] && transcripts=$(printf '%s\n' "$transcripts" | head -n "$LIMIT")
+
+# Leeches: cards Anki watched lapse repeatedly. anki-sync-bm removed them from
+# the collection and queued them here. A card that keeps lapsing is usually
+# composed badly rather than about a hard idea, so rewrite it rather than
+# dropping the idea on the floor.
+rework_leeches() {
+    [ -s "$LEECHES" ] || return 0
+    touch "$LEECHES_DONE"
+    pending=$(python3 - "$LEECHES" "$LEECHES_DONE" "$STATE_DIR/leeches-pending" "$REWORK_BATCH" <<'PYQ'
+import json, sys
+queue, done_path, ids_out, batch = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
+done = set(open(done_path).read().split())
+lines, ids = [], []
+for line in open(queue):
+    try:
+        e = json.loads(line)
+    except ValueError:
+        continue
+    if e["id"] in done or len(ids) >= batch:
+        continue
+    done.add(e["id"])
+    ids.append(e["id"])
+    lines.append(f"- {e.get('concept')}: {e['front']} >> {e['back']} "
+                 f"({e.get('reason', 'leech')}, dead id {e['id']})")
+open(ids_out, "w").write("\n".join(ids) + "\n" if ids else "")
+print("\n".join(lines))
+PYQ
+)
+    [ -n "$pending" ] || return 0
+
+    prompt=$(cat <<EOF
+# Card rework
+
+Each card below has been removed from the deck and its ID is dead. The reason is given with it. A card that kept lapsing (\`leech\`) is usually composed badly — two facts in one, a question that does not stand alone — rather than about an idea that is hard. An answer that ran too long is over the corpus limit of ${CARDS_MAX_BACK:-280} characters, which means it was carrying more than one fact.
+
+For each one below, open \`$CORPUS/<concept>.md\`, delete the dead card's bullet, and write one or two replacement cards at that file's next free IDs. Keep the idea, change the composition: one fact per card, a question answerable with no context, an answer of one or two sentences and **at most ${CARDS_MAX_BACK:-280} characters**. Splitting one over-long card into two short ones is the usual right answer. If the idea genuinely is not worth knowing, delete the bullet and write nothing in its place.
+
+Leave every other card untouched — their IDs carry review history. Print one line per file changed.
+
+## LEECHES
+
+$pending
+EOF
+)
+
+    if out=$(cd "$CORPUS" && claude -p "$prompt" \
+        --model sonnet \
+        --permission-mode acceptEdits \
+        --allowed-tools "Read" "Write" "Edit" "Glob" "Grep" "Bash(ls:*)" 2>&1); then
+        printf '%s\n' "== leech rework" "$out"
+        cat "$STATE_DIR/leeches-pending" >>"$LEECHES_DONE"
+    else
+        printf '%s\n' "FAIL leech rework" "$out"
+    fi
+}
+
+rework_leeches
 
 count=$(printf '%s\n' "$transcripts" | grep -c . || true)
 if [ "$count" -eq 0 ]; then

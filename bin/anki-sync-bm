@@ -8,8 +8,10 @@ Run hourly. In order:
 
 1. Skip entirely if Anki desktop holds the collection (it retries next hour).
 2. Import/update notes from the markdown corpus, matched by immutable card ID.
-3. Hold the deck's new-card limit at CARDS_PER_DAY.
+3. Hold the deck's new-card limit and leech threshold.
 4. Suspend cards that were never in doubt (trivia the filter should stop making).
+4b. Queue leeches (cards that keep lapsing) to be rewritten by the next cards-gen.
+4c. Queue cards whose answer runs past MAX_BACK characters, same way.
 5. Post the last 7 days of review minutes to Beeminder, keyed by daystamp.
 6. Regenerate Cards/weak.md: what keeps lapsing, and what hasn't come up yet.
 7. Sync with AnkiWeb, if credentials are in the keychain.
@@ -18,6 +20,7 @@ The markdown corpus in the vault is the source of truth; the collection is a
 derived artifact that can be rebuilt from it. Review history is the one thing
 that lives only in the collection, which is why card IDs never change.
 """
+import html
 import json
 import os
 import re
@@ -36,15 +39,26 @@ COL_PATH = os.environ.get(
     "ANKI_COLLECTION",
     os.path.expanduser("~/Library/Application Support/Anki2/User 1/collection.anki2"))
 REJECTED = os.path.join(STATE_DIR, "rejected.jsonl")
+LEECH_QUEUE = os.path.join(STATE_DIR, "leeches.jsonl")
 DECK_NAME = "Cards"
 GOAL = "drill"
 CARDS_PER_DAY = int(os.environ.get("CARDS_PER_DAY", "3"))
 KEYCHAIN_SERVICE = "ankiweb"
+BUZZ_TIMEOUT = int(os.environ.get("BUZZ_TIMEOUT", "60"))
 
 # A card with this many reps, no lapses and consistently fast answers was
 # already known before the card existed: trivia, not knowledge.
 TRIVIA_MIN_REPS = 4
 TRIVIA_MAX_SECONDS = 3.0
+
+# Lapses before Anki calls a card a leech. Its default is 8, which at three new
+# cards a day would take years to reach.
+LEECH_FAILS = int(os.environ.get("CARDS_LEECH_FAILS", "3"))
+
+# Longest answer the corpus allows. The prompt already asks for one or two
+# sentences; this is what makes that stick. 280 is the corpus's 95th percentile
+# as of 2026-09-25 — past it an answer is carrying more than one fact.
+MAX_BACK = int(os.environ.get("CARDS_MAX_BACK", "280"))
 
 CARD_RE = re.compile(r"^\s*-\s*(?P<front>.+?)\s*>>\s*(?P<back>.+?)\s*<!--\s*id:\s*(?P<id>[\w:.-]+)\s*-->\s*$")
 
@@ -117,6 +131,13 @@ def upsert(col, cards):
     logged as a rejection and never re-added, which is also what stops this
     function from quietly resurrecting it on the next run.
     """
+    # Anki renders note fields as HTML, so a card *about* HTML renders its own
+    # example instead of showing it: `<details>` became a real spoiler widget.
+    # Escaping means fields display as written. Markdown in a card (backticks,
+    # `**`) stays literal, which it already was.
+    def field(text):
+        return html.escape(text, quote=False)
+
     model = col.models.by_name("Basic")
     deck_id = col.decks.id(DECK_NAME)
     existing = {
@@ -150,8 +171,8 @@ def upsert(col, cards):
         if nid is None:
             imported[card["id"]] = date.today().isoformat()
             note = col.new_note(model)
-            note.fields[0] = card["front"]
-            note.fields[1] = card["back"]
+            note.fields[0] = field(card["front"])
+            note.fields[1] = field(card["back"])
             note.tags = tags
             note.guid = card["id"]
             col.add_note(note, deck_id)
@@ -161,10 +182,11 @@ def upsert(col, cards):
             # imported before this bookkeeping existed would go unnoticed.
             imported.setdefault(card["id"], date.today().isoformat())
             note = col.get_note(nid)
-            if (note.fields[0], note.fields[1]) != (card["front"], card["back"]) \
+            if (note.fields[0], note.fields[1]) \
+                    != (field(card["front"]), field(card["back"])) \
                     or set(note.tags) != set(tags):
-                note.fields[0] = card["front"]
-                note.fields[1] = card["back"]
+                note.fields[0] = field(card["front"])
+                note.fields[1] = field(card["back"])
                 note.tags = tags
                 col.update_note(note)
                 updated += 1
@@ -174,13 +196,99 @@ def upsert(col, cards):
     return added, updated
 
 
-def hold_new_limit(col):
+def hold_deck_config(col):
+    """Hold the new-card limit, and Anki's own leech detection, where we want them."""
     deck_id = col.decks.id(DECK_NAME)
     conf = col.decks.config_dict_for_deck_id(deck_id)
+    changed = []
     if conf["new"]["perDay"] != CARDS_PER_DAY:
         conf["new"]["perDay"] = CARDS_PER_DAY
+        changed.append(f"new-card limit {CARDS_PER_DAY}")
+    # leechAction 0 = suspend. A leech is usually a badly composed card rather
+    # than a hard idea, so taking it out of rotation costs nothing:
+    # rework_leeches queues a rewrite of the same idea.
+    if (conf["lapse"].get("leechFails"), conf["lapse"].get("leechAction")) \
+            != (LEECH_FAILS, 0):
+        conf["lapse"]["leechFails"] = LEECH_FAILS
+        conf["lapse"]["leechAction"] = 0
+        changed.append(f"leech threshold {LEECH_FAILS}")
+    if changed:
         col.decks.update_config(conf)
-        log(f"new-card limit set to {CARDS_PER_DAY}")
+        log("deck config: " + ", ".join(changed))
+
+
+def queue_rework(col, entries, nids=()):
+    """Log cards for rewriting and take them out of the collection.
+
+    The rejection entry is what stops upsert re-adding the card from the corpus
+    before its replacement lands; the queue entry is what cards-gen reads.
+    """
+    if not entries:
+        return
+    with open(LEECH_QUEUE, "a") as q, open(REJECTED, "a") as r:
+        for e in entries:
+            q.write(json.dumps(e) + "\n")
+            r.write(json.dumps(dict(id=e["id"], front=e["front"],
+                                    reason=e["reason"], date=e["date"])) + "\n")
+    if nids:
+        col.remove_notes(list(nids))
+
+
+def rework_leeches(col):
+    """Queue leech cards for rewriting.
+
+    Anki tags a card `leech` once it has lapsed LEECH_FAILS times. That is the
+    signal that the card is composed badly — two facts in one, a question that
+    doesn't stand alone — not that the idea is hard. The next cards-gen run
+    rewrites the idea into fresh cards in the same concept file, at fresh IDs:
+    reusing the ID would carry the failed card's lapse count onto its
+    replacement and re-leech it.
+    """
+    rejected = load_rejected()
+    rows = col.db.all(
+        "select c.nid, n.guid, n.flds, n.tags, c.lapses from cards c "
+        "join notes n on n.id = c.nid where n.tags like '%leech%'")
+    entries, nids = [], []
+    for nid, guid, flds, tags, lapses in rows:
+        if guid in rejected:
+            continue
+        fields = flds.split("\x1f") + ["", ""]
+        concept = next((t.split(":", 1)[1] for t in (tags or "").split()
+                        if t.startswith("concept:")), None)
+        entries.append(dict(id=guid, front=fields[0], back=fields[1],
+                            concept=concept, lapses=lapses,
+                            reason=f"leech: {lapses} lapses",
+                            date=date.today().isoformat()))
+        nids.append(nid)
+    queue_rework(col, entries, nids)
+    if entries:
+        log(f"queued {len(entries)} leech(es) for rework")
+
+
+def queue_overlong(col, cards):
+    """Queue cards whose answer runs past MAX_BACK characters.
+
+    Run before upsert, so an over-long card that has never been imported is
+    never added at all. One that has been keeps its concept but loses its
+    history — the length is the defect, and the rewrite is a different card.
+    """
+    rejected = load_rejected()
+    by_guid = dict(col.db.all("select guid, id from notes"))
+    entries, nids = [], []
+    for card in cards:
+        if card["id"] in rejected or len(card["back"]) <= MAX_BACK:
+            continue
+        entries.append(dict(id=card["id"], front=card["front"],
+                            back=card["back"], concept=card["concept"],
+                            lapses=0,
+                            reason=f"answer too long: {len(card['back'])} chars",
+                            date=date.today().isoformat()))
+        if card["id"] in by_guid:
+            nids.append(by_guid[card["id"]])
+    queue_rework(col, entries, nids)
+    if entries:
+        log(f"queued {len(entries)} over-long card(s) for rework "
+            f"(limit {MAX_BACK} chars)")
 
 
 def suspend_trivia(col):
@@ -214,8 +322,12 @@ def goal_day_end(default_hour=15):
     goal's own boundary rather than Anki's 4am rollover is what keeps an
     evening review from being stamped onto a day whose deadline has passed.
     """
-    r = subprocess.run(["buzz", "api", f"users/me/goals/{GOAL}.json"],
-                       capture_output=True, text=True)
+    try:
+        r = subprocess.run(["buzz", "api", f"users/me/goals/{GOAL}.json"],
+                           capture_output=True, text=True, timeout=BUZZ_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        log(f"{GOAL}'s deadline timed out; assuming day ends at {default_hour}:00")
+        return default_hour
     try:
         deadline = json.loads(r.stdout)["deadline"]
     except Exception:
@@ -254,10 +366,16 @@ def post_beeminder(hours):
         value = hours[day]
         rid = day.isoformat()
         stamp = day.strftime("%Y%m%d")
-        r = subprocess.run(
-            ["buzz", "add", "--requestid", rid, "--daystamp", stamp, GOAL,
-             str(value), f"Anki review hours for {rid}"],
-            capture_output=True, text=True)
+        try:
+            r = subprocess.run(
+                ["buzz", "add", "--requestid", rid, "--daystamp", stamp, GOAL,
+                 str(value), f"Anki review hours for {rid}"],
+                capture_output=True, text=True, timeout=BUZZ_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            # Without this the hourly job wedges forever on one stalled request,
+            # and the posting is idempotent, so the next hour re-posts this day.
+            log(f"beeminder {rid} timed out after {BUZZ_TIMEOUT}s; skipping")
+            continue
         err = (r.stderr or r.stdout).strip()
         # "Duplicate request" means this requestid already holds this value:
         # the posting is idempotent, so that is a no-op, not a failure.
@@ -360,9 +478,12 @@ def main():
     hours = {}
     col = open_collection()
     try:
-        upsert(col, parse_corpus())
-        hold_new_limit(col)
+        corpus = parse_corpus()
+        queue_overlong(col, corpus)
+        upsert(col, corpus)
+        hold_deck_config(col)
         suspend_trivia(col)
+        rework_leeches(col)
         hours = review_hours(col)
         write_weak(col)
         try:

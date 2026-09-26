@@ -65,4 +65,23 @@ if printf '%s\n' "$line3" | "$gate" 2>/dev/null; then
 	echo "FAIL: unset hooks.reviewGate should still gate"; exit 1
 fi
 
+# 6. Ignored paths: after a reviewed tip, commits touching only ignored paths pass;
+# anything else, or no ignore config, still gates.
+echo "$sha3" > "$HOME/.claude/review-loop/reviewed-shas"
+echo a > PROMPTS.md; git add PROMPTS.md; git commit -q -m prompts
+sha4=$(git rev-parse HEAD)
+line4="refs/heads/main $sha4 refs/heads/main $sha"
+if printf '%s\n' "$line4" | "$gate" 2>/dev/null; then
+	echo "FAIL: ignored-path change should gate without hooks.reviewGateIgnore"; exit 1
+fi
+git config --add hooks.reviewGateIgnore PROMPTS.md
+if ! printf '%s\n' "$line4" | "$gate" 2>/dev/null; then
+	echo "FAIL: change touching only an ignored path should pass"; exit 1
+fi
+echo b > code.txt; git add code.txt; git commit -q -m code
+line5="refs/heads/main $(git rev-parse HEAD) refs/heads/main $sha"
+if printf '%s\n' "$line5" | "$gate" 2>/dev/null; then
+	echo "FAIL: non-ignored change after review should still gate"; exit 1
+fi
+
 echo "ok"

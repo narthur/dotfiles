@@ -52,6 +52,18 @@ while read -r local_ref local_sha remote_ref remote_sha; do
 		continue
 	fi
 
+	# Everything since the nearest reviewed ancestor touches only ignored paths
+	# (git config --add hooks.reviewGateIgnore <path>, exact paths)? Pass, announced.
+	ignores=$(git config --get-all hooks.reviewGateIgnore 2>/dev/null)
+	if [ -n "$ignores" ]; then
+		# ponytail: scans the last 200 commits for a reviewed ancestor; widen if reviews go stale further back
+		anc=$(git rev-list --max-count=200 "$local_sha" | grep -xFf "$STORE" 2>/dev/null | head -1)
+		if [ -n "$anc" ] && ! git diff --name-only "$anc" "$local_sha" | grep -qvxF "$ignores"; then
+			echo -e "${YELLOW}review-gate: changes since reviewed ${anc:0:12} touch only ignored paths${NC}" >&2
+			continue
+		fi
+	fi
+
 	if [ "$REVIEW_GATE_BYPASS" = "1" ]; then
 		echo -e "${YELLOW}review-gate: bypassed (REVIEW_GATE_BYPASS=1)${NC}" >&2
 		continue
