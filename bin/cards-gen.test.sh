@@ -65,4 +65,14 @@ out=$(STUB_NOOP=1 "$cg" --limit 1 2>&1)
 grep -q "giving up on 2 card" <<<"$out" || { echo "FAIL: expected give-up after 3 tries, got: $out"; exit 1; }
 grep -qx "c-01" "$state/leeches-done.txt" || { echo "FAIL: given-up card should be marked done"; exit 1; }
 
+# 4. A reworked card is not reported unresolved just because a longer id shares
+#    its prefix (c-10 vs c-100) — the check must be anchored, not a substring.
+: >"$state/leeches-done.txt"; : >"$state/leeches-attempts.txt"
+printf 'a >> b <!-- id: c-10 -->\nx >> y <!-- id: c-100 -->\n' >"$tmp/corpus/c.md"
+printf '{"id":"c-10","front":"q","back":"a","concept":"c","reason":"leech: 3 lapses"}\n' \
+  >"$state/leeches.jsonl"
+out=$("$cg" --limit 1 2>&1)
+grep -q "1/1 reworked" <<<"$out" || { echo "FAIL: c-10 resolved should not be masked by c-100, got: $out"; exit 1; }
+grep -q "id: c-100" "$tmp/corpus/c.md" || { echo "FAIL: c-100 must be left alone"; exit 1; }
+
 echo ok

@@ -252,17 +252,20 @@ def queue_rework(col, entries, nids=()):
     """
     if not entries:
         return
-    # Remove first, then record. A crash between the two leaves the note gone
-    # and unrecorded, so upsert re-adds it from the corpus and it is queued
-    # again later; the reverse order would mark the id rejected forever while
-    # leaving the note in place, which no future run would ever revisit.
-    if nids:
-        col.remove_notes(list(nids))
+    # Record before removing, and in that order. A crash after the writes leaves
+    # the note orphaned in the collection but the idea safe: cards-gen sees the
+    # queue entry and rewrites it, and rework_leeches finishes the interrupted
+    # removal on a later run. Removing first would lose the idea instead — the
+    # collection query can no longer see the note, and upsert would find the
+    # corpus bullet with its id already in imported.json and file it as a
+    # deliberate "deleted during review" rejection.
     with open(LEECH_QUEUE, "a") as q, open(REJECTED, "a") as r:
         for e in entries:
             q.write(json.dumps(e) + "\n")
             r.write(json.dumps(dict(id=e["id"], front=e["front"],
                                     reason=e["reason"], date=e["date"])) + "\n")
+    if nids:
+        col.remove_notes(list(nids))
 
 
 def rework_leeches(col):
@@ -279,12 +282,16 @@ def rework_leeches(col):
     rows = col.db.all(
         "select c.nid, n.guid, n.flds, n.tags, c.lapses from cards c "
         "join notes n on n.id = c.nid where n.tags like '%leech%'")
-    entries, nids = [], []
+    entries, nids, orphans = [], [], []
     for nid, guid, flds, tags, lapses in rows:
         # The LIKE above is a substring match, so it also catches a concept tag
         # that merely contains "leech". Removing a note destroys its review
         # history, so require the whole tag before acting on the row.
-        if guid in rejected or "leech" not in (tags or "").split():
+        if "leech" not in (tags or "").split():
+            continue
+        if guid in rejected:
+            # Already queued and recorded; the removal is what didn't finish.
+            orphans.append(nid)
             continue
         fields = flds.split("\x1f") + ["", ""]
         entries.append(rework_entry(
@@ -292,6 +299,9 @@ def rework_leeches(col):
             f"leech: {lapses} lapses"))
         nids.append(nid)
     queue_rework(col, entries, nids)
+    if orphans:
+        col.remove_notes(orphans)
+        log(f"removed {len(orphans)} leech(es) recorded but never removed")
     if entries:
         log(f"queued {len(entries)} leech(es) for rework")
 

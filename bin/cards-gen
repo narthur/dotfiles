@@ -138,11 +138,14 @@ EOF
     # from the collection, so mark done only the IDs whose bullet really left
     # the corpus. The rest keep their attempt and are retried.
     resolved=$(python3 - "$CORPUS" "$ids" <<'PYQ'
-import glob, os, sys
+import glob, os, re, sys
 corpus = "".join(open(f, encoding="utf-8").read()
                  for f in glob.glob(os.path.join(sys.argv[1], "*.md")))
+# Anchored on the comment's closing marker, the way CARD_RE bounds the id.
+# A bare substring test would read `id: topic-10` as still present the day
+# `topic-100` exists, and report a reworked card as failed.
 for cid in open(sys.argv[2]).read().split():
-    if f"id: {cid}" not in corpus:
+    if not re.search(rf"id:\s*{re.escape(cid)}\s*-->", corpus):
         print(cid)
 PYQ
 )
