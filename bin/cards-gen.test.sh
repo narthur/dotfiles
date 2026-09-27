@@ -52,7 +52,7 @@ grep -q "giving up on 1 card" <<<"$out" || { echo "FAIL: expected a give-up line
 
 # 2. A no-op claude run marks nothing done, so the cards are retried.
 seed
-STUB_NOOP=1 out=$(STUB_NOOP=1 "$cg" --limit 1 2>&1)
+out=$(STUB_NOOP=1 "$cg" --limit 1 2>&1)
 grep -q "0/2 reworked" <<<"$out" || { echo "FAIL: no-op run should resolve nothing, got: $out"; exit 1; }
 grep -qx "c-01" "$state/leeches-done.txt" && { echo "FAIL: no-op run must not mark done"; exit 1; }
 [ "$(grep -c . "$state/leeches-attempts.txt")" = 2 ] || { echo "FAIL: attempt not recorded"; exit 1; }
