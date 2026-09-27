@@ -29,7 +29,6 @@ import re
 import statistics
 import subprocess
 import sys
-import time
 from datetime import date, datetime, timedelta
 
 CORPUS = os.environ.get("CARDS_CORPUS", os.path.expanduser("~/Obsidian/Main/Cards"))
@@ -55,19 +54,44 @@ TRIVIA_MAX_SECONDS = 3.0
 
 # Lapses before Anki calls a card a leech. Its default is 8, which at three new
 # cards a day would take years to reach.
-LEECH_FAILS = int(os.environ.get("CARDS_LEECH_FAILS", "3"))
+LEECH_FAILS = 3
 
 # Longest answer the corpus allows. The prompt already asks for one or two
 # sentences; this is what makes that stick. 280 cuts the longest ~4% of the
 # corpus (941 cards on 2026-09-26, 95th percentile 272) — past it an answer is
 # carrying more than one fact.
-MAX_BACK = int(os.environ.get("CARDS_MAX_BACK", "280"))
+MAX_BACK = 280
 
 CARD_RE = re.compile(r"^\s*-\s*(?P<front>.+?)\s*>>\s*(?P<back>.+?)\s*<!--\s*id:\s*(?P<id>[\w:.-]+)\s*-->\s*$")
 
 
 def log(msg):
     print(msg, flush=True)
+
+
+def concept_from_tags(tags):
+    """The `concept:<name>` tag's value, or None. Anki stores tags space-joined."""
+    return next((t.split(":", 1)[1] for t in (tags or "").split()
+                 if t.startswith("concept:")), None)
+
+
+def rework_entry(id, front, back, concept, lapses, reason):
+    """One queue entry for cards-gen. Shape is the contract between the two."""
+    return dict(id=id, front=front, back=back, concept=concept,
+                lapses=lapses, reason=reason, date=date.today().isoformat())
+
+
+def run_buzz(args, what):
+    """`buzz` with a timeout. None means it stalled; the caller decides what then.
+
+    Without the timeout the hourly job wedges forever on one stalled request.
+    """
+    try:
+        return subprocess.run(["buzz", *args], capture_output=True, text=True,
+                              timeout=BUZZ_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        log(f"{what} timed out after {BUZZ_TIMEOUT}s")
+        return None
 
 
 def keychain(account):
@@ -138,7 +162,7 @@ def upsert(col, cards):
     # example instead of showing it: `<details>` became a real spoiler widget.
     # Escaping means fields display as written. Markdown in a card (backticks,
     # `**`) stays literal, which it already was.
-    def field(text):
+    def escape_field(text):
         return html.escape(text, quote=False)
 
     model = col.models.by_name("Basic")
@@ -174,8 +198,8 @@ def upsert(col, cards):
         if nid is None:
             imported[card["id"]] = date.today().isoformat()
             note = col.new_note(model)
-            note.fields[0] = field(card["front"])
-            note.fields[1] = field(card["back"])
+            note.fields[0] = escape_field(card["front"])
+            note.fields[1] = escape_field(card["back"])
             note.tags = tags
             note.guid = card["id"]
             col.add_note(note, deck_id)
@@ -186,10 +210,10 @@ def upsert(col, cards):
             imported.setdefault(card["id"], date.today().isoformat())
             note = col.get_note(nid)
             if (note.fields[0], note.fields[1]) \
-                    != (field(card["front"]), field(card["back"])) \
+                    != (escape_field(card["front"]), escape_field(card["back"])) \
                     or set(note.tags) != set(tags):
-                note.fields[0] = field(card["front"])
-                note.fields[1] = field(card["back"])
+                note.fields[0] = escape_field(card["front"])
+                note.fields[1] = escape_field(card["back"])
                 note.tags = tags
                 col.update_note(note)
                 updated += 1
@@ -263,12 +287,9 @@ def rework_leeches(col):
         if guid in rejected or "leech" not in (tags or "").split():
             continue
         fields = flds.split("\x1f") + ["", ""]
-        concept = next((t.split(":", 1)[1] for t in (tags or "").split()
-                        if t.startswith("concept:")), None)
-        entries.append(dict(id=guid, front=fields[0], back=fields[1],
-                            concept=concept, lapses=lapses,
-                            reason=f"leech: {lapses} lapses",
-                            date=date.today().isoformat()))
+        entries.append(rework_entry(
+            guid, fields[0], fields[1], concept_from_tags(tags), lapses,
+            f"leech: {lapses} lapses"))
         nids.append(nid)
     queue_rework(col, entries, nids)
     if entries:
@@ -288,11 +309,9 @@ def queue_overlong(col, cards):
     for card in cards:
         if card["id"] in rejected or len(card["back"]) <= MAX_BACK:
             continue
-        entries.append(dict(id=card["id"], front=card["front"],
-                            back=card["back"], concept=card["concept"],
-                            lapses=0,
-                            reason=f"answer too long: {len(card['back'])} chars",
-                            date=date.today().isoformat()))
+        entries.append(rework_entry(
+            card["id"], card["front"], card["back"], card["concept"], 0,
+            f"answer too long: {len(card['back'])} chars"))
         if card["id"] in by_guid:
             nids.append(by_guid[card["id"]])
     queue_rework(col, entries, nids)
@@ -332,11 +351,9 @@ def goal_day_end(default_hour=15):
     goal's own boundary rather than Anki's 4am rollover is what keeps an
     evening review from being stamped onto a day whose deadline has passed.
     """
-    try:
-        r = subprocess.run(["buzz", "api", f"users/me/goals/{GOAL}.json"],
-                           capture_output=True, text=True, timeout=BUZZ_TIMEOUT)
-    except subprocess.TimeoutExpired:
-        log(f"{GOAL}'s deadline timed out; assuming day ends at {default_hour}:00")
+    r = run_buzz(["api", f"users/me/goals/{GOAL}.json"], f"{GOAL}'s deadline")
+    if r is None:
+        log(f"assuming day ends at {default_hour}:00")
         return default_hour
     try:
         deadline = json.loads(r.stdout)["deadline"]
@@ -376,15 +393,11 @@ def post_beeminder(hours):
         value = hours[day]
         rid = day.isoformat()
         stamp = day.strftime("%Y%m%d")
-        try:
-            r = subprocess.run(
-                ["buzz", "add", "--requestid", rid, "--daystamp", stamp, GOAL,
-                 str(value), f"Anki review hours for {rid}"],
-                capture_output=True, text=True, timeout=BUZZ_TIMEOUT)
-        except subprocess.TimeoutExpired:
-            # Without this the hourly job wedges forever on one stalled request,
-            # and the posting is idempotent, so the next hour re-posts this day.
-            log(f"beeminder {rid} timed out after {BUZZ_TIMEOUT}s; skipping")
+        # The posting is idempotent, so a stalled day is simply re-posted next hour.
+        r = run_buzz(["add", "--requestid", rid, "--daystamp", stamp, GOAL,
+                      str(value), f"Anki review hours for {rid}"],
+                     f"beeminder {rid}")
+        if r is None:
             continue
         err = (r.stderr or r.stdout).strip()
         # "Duplicate request" means this requestid already holds this value:
@@ -401,8 +414,7 @@ def write_weak(col):
         "join notes n on n.id = c.nid where c.queue != -1 group by n.id")
     by_concept = {}
     for tags, lapses, reps in lapsing:
-        concept = next((t.split(":", 1)[1] for t in (tags or "").split()
-                        if t.startswith("concept:")), None)
+        concept = concept_from_tags(tags)
         if not concept:
             continue
         agg = by_concept.setdefault(concept, [0, 0])
@@ -418,8 +430,7 @@ def write_weak(col):
         "where c.type = 0 and c.queue != -1 order by n.id desc")
     unseen = []
     for (tags,) in unseen_rows:
-        concept = next((t.split(":", 1)[1] for t in (tags or "").split()
-                        if t.startswith("concept:")), None)
+        concept = concept_from_tags(tags)
         if concept and concept not in unseen:
             unseen.append(concept)
 
