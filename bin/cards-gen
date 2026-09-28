@@ -155,6 +155,12 @@ PYQ
 
 rework_leeches
 
+# Judge yesterday's new questions for standalone-ness and reword the ones that
+# assume context. Runs before generation, not after, so it audits what last
+# night produced — a card written tonight is months from being due, and its own
+# ledger means nothing is ever judged twice.
+cards-audit
+
 count=$(printf '%s\n' "$transcripts" | grep -c . || true)
 if [ "$count" -eq 0 ]; then
     echo "no unprocessed transcripts"
@@ -162,17 +168,31 @@ if [ "$count" -eq 0 ]; then
 fi
 echo "processing $count transcript(s), $PARALLEL at a time"
 
-# Most recent rejections, as negative examples for the generator's filter.
+# Rejections, as negative examples for the generator's filter. Split by kind: a
+# deletion or a hand-suspend says the *idea* was not worth knowing, while
+# "answer too long", "leech" and "flagged" only say the card was written badly.
+# The value
+# signals are rare and the composition ones run to hundreds, so one tail over
+# the whole file would show nothing but the noise.
 if [ -s "$REJECTED" ]; then
-    rejected=$(tail -n 30 "$REJECTED" | python3 -c '
+    rejected=$(python3 - "$REJECTED" <<'REJ'
 import json, sys
-for line in sys.stdin:
+
+value, composition = [], []
+for line in open(sys.argv[1]):
     try:
         r = json.loads(line)
     except ValueError:
         continue
-    print(f"- {r.get(\"front\", \"\")} [{r.get(\"reason\", \"deleted\")}]")
-')
+    reason = r.get("reason", "deleted")
+    entry = f'- {r.get("front", "")} [{reason}]'
+    if reason.startswith(("leech", "answer too long", "flagged")):
+        composition.append(entry)
+    else:
+        value.append(entry)
+print("\n".join(value[-30:] + composition[-10:]) or "(none yet)")
+REJ
+)
 else
     rejected="(none yet)"
 fi

@@ -11,8 +11,10 @@ Run hourly. In order:
    next cards-gen — before step 3, so one that has never been imported never is.
 3. Import/update notes from the markdown corpus, matched by immutable card ID.
 4. Hold the deck's new-card limit and leech threshold.
-5. Suspend cards that were never in doubt (trivia the filter should stop making).
-6. Queue leeches (cards that keep lapsing) the same way as step 2.
+5. Record hand-suspended cards as rejections, then suspend cards that were
+   never in doubt (trivia the filter should stop making).
+6. Queue leeches (cards that keep lapsing) and red-flagged cards (ones whose
+   question doesn't stand alone) the same way as step 2.
 7. Regenerate Cards/weak.md: what keeps lapsing, and what hasn't come up yet.
 8. Sync with AnkiWeb, if credentials are in the keychain.
 9. Post the last 7 days of review minutes to Beeminder, keyed by daystamp, with
@@ -55,6 +57,12 @@ TRIVIA_MAX_SECONDS = 3.0
 # Lapses before Anki calls a card a leech. Its default is 8, which at three new
 # cards a day would take years to reach.
 LEECH_FAILS = 3
+
+# Anki flag that means "the idea is fine, this card is written badly — rewrite
+# it". Red is one tap in the mobile reviewer, which is where the defect is
+# noticed. Suspend already means the opposite ("not worth knowing"); without a
+# second gesture a badly worded card has no exit but to keep coming back.
+REWORK_FLAG = 1  # 1 = red
 
 # Longest answer the corpus allows. The prompt already asks for one or two
 # sentences; this is what makes that stick. 280 cuts the longest ~4% of the
@@ -330,6 +338,63 @@ def queue_overlong(col, cards):
             f"(limit {MAX_BACK} chars)")
 
 
+def rework_flagged(col):
+    """Queue cards Nathan flagged red for rewriting.
+
+    A question that does not stand alone is the common defect and no automatic
+    check finds it: it reads fine in the corpus file, next to its siblings and
+    the concept paragraph, and only fails in the reviewer where none of that is
+    present. He is the detector, so the flag is the report. Same machinery as a
+    leech — dead ID retired, idea sent back to cards-gen.
+    """
+    rejected = load_rejected()
+    rows = col.db.all(
+        "select c.nid, n.guid, n.flds, n.tags from cards c "
+        "join notes n on n.id = c.nid where (c.flags & 7) = ?", REWORK_FLAG)
+    entries, nids, orphans = [], [], []
+    for nid, guid, flds, tags in rows:
+        if guid in rejected:
+            orphans.append(nid)   # recorded already; the removal didn't finish
+            continue
+        fields = flds.split("\x1f") + ["", ""]
+        entries.append(rework_entry(
+            guid, fields[0], fields[1], concept_from_tags(tags), 0,
+            "flagged: question does not stand alone"))
+        nids.append(nid)
+    queue_rework(col, entries, nids)
+    if orphans:
+        col.remove_notes(orphans)
+    if entries:
+        log(f"queued {len(entries)} flagged card(s) for rework")
+
+
+def record_suspended(col):
+    """Log cards Nathan suspended by hand as rejections.
+
+    Suspend is the durable "not worth memorizing" button — bury is not, since
+    Anki unburies at the next rollover. The rejection entry is what stops
+    upsert from resurrecting the card and what cards-gen reads as a negative
+    example, so hand-suspending teaches the generator what to stop making.
+    A suspend done on the phone arrives with sync() at the end of the run, so
+    it is recorded on the next one.
+    """
+    rejected = load_rejected()
+    logged = [
+        dict(id=guid, front=flds.split("\x1f")[0],
+             reason="suspended by hand: not worth memorizing",
+             date=date.today().isoformat())
+        for guid, flds in col.db.all(
+            "select n.guid, n.flds from cards c join notes n on n.id = c.nid "
+            "where c.queue = -1")
+        if guid not in rejected
+    ]
+    if logged:
+        with open(REJECTED, "a") as f:
+            for entry in logged:
+                f.write(json.dumps(entry) + "\n")
+        log(f"recorded {len(logged)} hand-suspended card(s) as rejections")
+
+
 def suspend_trivia(col):
     """Suspend cards that have never been in doubt, and log them as rejections."""
     rows = col.db.all(
@@ -513,6 +578,8 @@ def main():
         queue_overlong(col, corpus)
         upsert(col, corpus)
         hold_deck_config(col)
+        record_suspended(col)
+        rework_flagged(col)
         suspend_trivia(col)
         rework_leeches(col)
         hours = review_hours(col)

@@ -17,14 +17,18 @@ A **frozen fact about Nathan's own work that an interviewer would ask him to pro
 - Anything specific to one bug that is now fixed.
 - Facts about his tooling setup that a script or `--help` answers faster than memory.
 - Cards whose answer is "it depends" with no crisp content.
-- Anything in `REJECTED_EXAMPLES` — those are cards he deleted during review. Do not recreate them or their near-duplicates, and infer the pattern: they show what he considers not worth knowing. The exception is one whose reason starts with `leech:` or `answer too long:` — that card was pulled for how it was written, not for what it was about, so the topic is still fair game if you can compose it better.
+- Anything in `REJECTED_EXAMPLES` — those are cards he deleted or suspended during review. Do not recreate them or their near-duplicates, and infer the pattern: they show what he considers not worth knowing. The exception is one whose reason starts with `leech:`, `answer too long:` or `flagged:` — that card was pulled for how it was written, not for what it was about, so the topic is still fair game if you can compose it better.
 
 Most of what a session touches earns nothing. A session with no durable concepts in it should produce no files, and that is a correct outcome — say so and stop.
 
 ## Card style
 
 - Two to four cards per concept, not more.
-- Question and answer, one fact each. The question must stand alone: a card read in six months with no context still has to be answerable.
+- Question and answer, one fact each. **The question must stand alone.** Cards are drilled in random order, months apart, with no concept file, no sibling cards and no session in front of him. Test each question by reading it cold, alone:
+  - Every noun must carry its own domain. "whether an address exists" — an address in *what*? Write "whether an email address is already subscribed to a mailing list".
+  - Never lean on a sibling card. "Beyond the response body, what else can leak…" only parses if the card about the response body was just reviewed, and it will not have been. Either restate the setup inside the question or drop the card.
+  - Never lean on the concept file. The paragraph at the top of the file is a note for him, not context the reviewer shows.
+  - A question that needs "in the context we were discussing" to make sense is not a card. Restate the context in it, or cut it.
 - Prefer "why does X exist", "what breaks without X", "when would you choose X over Y", "what does X protect against" over "what is X".
 - Answers: one or two sentences, **280 characters at the hard limit**. No hedging, no lists of five things. Anything longer is carrying more than one fact — split it into two cards. The sync enforces this: an over-long answer is kept out of the deck, or pulled from it if it got in, and sent back to be rewritten.
 - Cloze only where the sentence itself carries the meaning. Never cloze a code snippet.
