@@ -1,0 +1,242 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.11"
+# ///
+"""Audit corpus questions for standalone-ness, and rewrite the ones that fail.
+
+A card is drilled in random order, months later, with no concept file, no
+sibling cards and no session in front of Nathan. A question that only parses
+next to that context is unanswerable in the reviewer even though it reads fine
+in the file it was written in — "Beyond the response body, what else can leak
+whether an address exists?" (an address to *what*?). Nothing about that is
+findable by pattern: the openers that look suspicious ("Besides accuracy, what
+should an LLM-judge eval measure?") are mostly fine, and the broken ones look
+ordinary. It takes a reader, so this hands batches to `claude -p`.
+
+Only the question is rewritten, and only to add the context it was assuming.
+The answer, the ID and the concept file all stay put, so FSRS review history
+survives: the card asks for the same fact, it just no longer asks it in code.
+A card is audited once per wording — the ledger keys on the question's hash, so
+an edit by hand is re-checked and a clean card is never paid for twice. Its own
+rewrites are logged under the NEW wording: judging its own output would let a
+card be reworded every night forever, each pass "improving" the last.
+
+Usage: cards-audit [--limit N] [--dry-run]
+"""
+import concurrent.futures
+import datetime
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import tarfile
+
+CORPUS = os.environ.get("CARDS_CORPUS", os.path.expanduser("~/Obsidian/Main/Cards"))
+STATE_DIR = os.path.expanduser("~/.local/state/cards")
+AUDITED = os.path.join(STATE_DIR, "audited.txt")
+BATCH = int(os.environ.get("CARDS_AUDIT_BATCH", "40"))
+PARALLEL = int(os.environ.get("CARDS_AUDIT_PARALLEL", "4"))
+MODEL = os.environ.get("CARDS_AUDIT_MODEL", "sonnet")
+# The vault is not under version control, so a bad batch that gets past
+# accept_fix would be unrecoverable. One tarball per run that changes anything.
+BACKUPS = os.path.join(STATE_DIR, "audit-backups")
+KEEP_BACKUPS = 10
+
+CARD_RE = re.compile(
+    r"^(?P<lead>\s*-\s*)(?P<front>.+?)\s*>>\s*(?P<back>.+?)"
+    r"(?P<tail>\s*<!--\s*id:\s*(?P<id>[\w:.-]+)\s*-->\s*)$")
+
+PROMPT = """Each line below is one spaced-repetition question, as JSON.
+
+Nathan drills these one at a time, in random order, months after they were
+written. He sees ONLY the question — not the file it lives in, not the other
+cards about the same concept, not the work session it came from.
+
+For each, decide: read cold and alone, is the question answerable? It fails if
+it assumes context it does not state. The two failure modes:
+
+- A noun with no domain. "whether an address exists" — an address in what
+  system? "the response body" — of what request?
+- A reference to a sibling card or a prior discussion. "Beyond the response
+  body...", "In the same setup...", "What else does this protect against?"
+
+It does NOT fail merely for opening with "Besides X" or "Beyond X", as long as
+X and the rest of the question name their own subject. Most cards are fine; say
+so by omitting them.
+
+For each FAILING card, rewrite the question so it carries its own context.
+Rules for the rewrite:
+- It must ask for the SAME fact, answered by the same given answer. You are
+  adding the missing setup, not changing the question.
+- Take the context from the answer and from `concept`, which names the topic.
+- Do not restate the answer inside the question.
+- Keep it to one or two sentences.
+
+Output a JSON array, and nothing else. One object per FAILING card:
+[{"id": "<id>", "front": "<rewritten question>"}]
+An empty array is a valid and expected answer. Never include a passing card,
+and never invent an id.
+
+CARDS:
+"""
+
+
+def parse_corpus():
+    """Every card in the corpus: id, question, answer, concept, file, line."""
+    cards = []
+    for name in sorted(os.listdir(CORPUS)):
+        if not name.endswith(".md"):
+            continue
+        path = os.path.join(CORPUS, name)
+        for n, line in enumerate(open(path)):
+            m = CARD_RE.match(line.rstrip("\n"))
+            if m:
+                cards.append(dict(id=m["id"], front=m["front"], back=m["back"],
+                                  concept=name[:-3], path=path, line=n))
+    return cards
+
+
+def fingerprint(card):
+    """Ledger key: the card and the exact wording that was judged."""
+    return f"{card['id']}\t{hashlib.sha1(card['front'].encode()).hexdigest()[:12]}"
+
+
+def load_audited():
+    if not os.path.exists(AUDITED):
+        return set()
+    return set(l.rstrip("\n") for l in open(AUDITED))
+
+
+def accept_fix(item, batch):
+    """Vet one returned rewrite. `{id: front}` if usable, `{}` otherwise.
+
+    The model is rewriting Nathan's corpus unattended, so the blast radius is
+    whatever gets past here: a card we never asked about, a fragment, a bullet
+    smuggling a second `>>` field, or a no-op that would burn a rewrite on an
+    unchanged card.
+    """
+    if not isinstance(item, dict):
+        return {}
+    cid, front = item.get("id"), (item.get("front") or "").strip()
+    original = next((c["front"] for c in batch if c["id"] == cid), None)
+    if original is None or len(front) < 20 or ">>" in front or "\n" in front:
+        return {}
+    return {} if front == original else {cid: front}
+
+
+def judge(batch):
+    """Ask claude which questions fail, and how to word them. Returns {id: front}."""
+    payload = "\n".join(json.dumps(
+        dict(id=c["id"], concept=c["concept"], front=c["front"], back=c["back"]))
+        for c in batch)
+    try:
+        out = subprocess.run(
+            ["claude", "-p", PROMPT + payload, "--model", MODEL,
+             "--allowed-tools", ""],
+            capture_output=True, text=True, timeout=600)
+    except subprocess.TimeoutExpired:
+        print("batch timed out", file=sys.stderr)
+        return None
+    if out.returncode != 0:
+        print(f"batch failed: {out.stderr.strip()[:200]}", file=sys.stderr)
+        return None
+    text = out.stdout.strip()
+    # Tolerate a fenced block or a stray sentence around the array.
+    m = re.search(r"\[.*\]", text, re.S)
+    if not m:
+        print(f"batch returned no array: {text[:200]}", file=sys.stderr)
+        return None
+    try:
+        items = json.loads(m.group(0))
+    except ValueError as e:
+        print(f"batch returned bad JSON: {e}", file=sys.stderr)
+        return None
+
+    fixes = {}
+    for item in items if isinstance(items, list) else []:
+        accepted = accept_fix(item, batch)
+        if accepted:
+            fixes.update(accepted)
+    return fixes
+
+
+def apply_fixes(fixes, cards, dry_run=False):
+    """Swap the question text in place, leaving answer, id and layout alone."""
+    by_path = {}
+    for card in cards:
+        if card["id"] in fixes:
+            by_path.setdefault(card["path"], []).append(card)
+    changed = 0
+    for path, group in by_path.items():
+        lines = open(path).readlines()
+        for card in group:
+            m = CARD_RE.match(lines[card["line"]].rstrip("\n"))
+            if not m or m["id"] != card["id"]:
+                print(f"skipped {card['id']}: file moved under us", file=sys.stderr)
+                continue
+            print(f"  {card['id']}\n    - {m['front']}\n    + {fixes[card['id']]}")
+            lines[card["line"]] = (
+                f"{m['lead']}{fixes[card['id']]} >> {m['back']}{m['tail']}\n")
+            changed += 1
+        if not dry_run:
+            open(path, "w").writelines(lines)
+    return changed
+
+
+def snapshot():
+    """Tar the corpus before rewriting it, and keep the last KEEP_BACKUPS."""
+    os.makedirs(BACKUPS, exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%Y%m%dT%H%M%S")
+    path = os.path.join(BACKUPS, f"cards-{stamp}.tar.gz")
+    with tarfile.open(path, "w:gz") as tar:
+        tar.add(CORPUS, arcname="Cards")
+    old = sorted(f for f in os.listdir(BACKUPS) if f.endswith(".tar.gz"))
+    for name in old[:-KEEP_BACKUPS]:
+        os.remove(os.path.join(BACKUPS, name))
+    return path
+
+
+def main():
+    args = sys.argv[1:]
+    dry_run = "--dry-run" in args
+    limit = int(args[args.index("--limit") + 1]) if "--limit" in args else None
+
+    os.makedirs(STATE_DIR, exist_ok=True)
+    cards = parse_corpus()
+    audited = load_audited()
+    todo = [c for c in cards if fingerprint(c) not in audited]
+    if limit:
+        todo = todo[:limit]
+    if not todo:
+        print(f"nothing to audit ({len(cards)} cards, all checked)")
+        return
+
+    batches = [todo[i:i + BATCH] for i in range(0, len(todo), BATCH)]
+    print(f"auditing {len(todo)} of {len(cards)} card(s) in {len(batches)} batch(es)")
+
+    fixes, done = {}, []
+    with concurrent.futures.ThreadPoolExecutor(PARALLEL) as pool:
+        for batch, result in zip(batches, pool.map(judge, batches)):
+            if result is None:
+                continue          # batch failed; leave it unaudited for next run
+            fixes.update(result)
+            done.extend(batch)
+
+    if fixes and not dry_run:
+        print(f"snapshot: {snapshot()}")
+    changed = apply_fixes(fixes, cards, dry_run)
+    if not dry_run:
+        # Only after the edits land, so a crash re-audits rather than skipping.
+        with open(AUDITED, "a") as f:
+            for card in done:
+                if card["id"] in fixes:
+                    card = dict(card, front=fixes[card["id"]])
+                f.write(fingerprint(card) + "\n")
+    print(f"audit: {changed} question(s) rewritten, {len(done)} checked"
+          + (" (dry run, nothing written)" if dry_run else ""))
+
+
+if __name__ == "__main__":
+    main()
