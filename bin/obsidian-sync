@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # obsidian-sync — two-way sync of the Obsidian vault to Backblaze B2 via rclone
 # bisync. Replaces the Obsidian "remotely-save" plugin. Run on a 30-minute
-# schedule by com.narthur.obsidian-sync (launchd), logged via cron-run.
+# schedule (macOS: launchd com.narthur.obsidian-sync; Linux: crontab), logged
+# via cron-run.
 #
 # Usage:
 #   obsidian-sync            normal incremental two-way sync (used by launchd)
@@ -22,22 +23,35 @@ set -euo pipefail
 # not source it, so do it here; interactive shells already have it.
 [ -f "$HOME/.env" ] && . "$HOME/.env"
 
-# The B2 secret comes from the login Keychain, NOT ~/.env. ~/.env is sourced by
+# The B2 secret comes from the OS keyring (macOS login Keychain, or the Secret
+# Service -- GNOME Keyring -- on Linux), NOT ~/.env. ~/.env is sourced by
 # .zshrc, so anything in it sits in the environment of every process on this
 # machine. Here it is exported only into this process tree, for rclone.
 #
 # Fails loudly on purpose: an empty credential must never be mistaken for
-# "nothing to sync". Needs the login keychain unlocked, so this must stay a
-# LaunchAgent in a logged-in GUI session -- never a LaunchDaemon.
-if ! RCLONE_CONFIG_OBSIDIANB2_SECRET_ACCESS_KEY="$(security find-generic-password \
-        -a obsidianb2 -s rclone-obsidianb2-secret -w </dev/null 2>&1)"; then
-    echo "obsidian-sync: cannot read the B2 secret from the Keychain." >&2
+# "nothing to sync". Needs the login keyring unlocked, so this must run inside
+# a logged-in session: a LaunchAgent (never a LaunchDaemon) on macOS, the
+# user's crontab on Linux.
+#
+# One-time setup, per machine:
+#   macOS: security add-generic-password -a obsidianb2 -s rclone-obsidianb2-secret -w
+#   Linux: secret-tool store --label=rclone-obsidianb2-secret \
+#              service rclone-obsidianb2-secret account obsidianb2
+if [[ "$(uname)" == Darwin ]]; then
+    read_secret() { security find-generic-password -a obsidianb2 -s rclone-obsidianb2-secret -w; }
+else
+    # cron starts without a session bus, so secret-tool can't find the keyring.
+    export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$(id -u)/bus}"
+    read_secret() { secret-tool lookup service rclone-obsidianb2-secret account obsidianb2; }
+fi
+if ! RCLONE_CONFIG_OBSIDIANB2_SECRET_ACCESS_KEY="$(read_secret </dev/null 2>&1)"; then
+    echo "obsidian-sync: cannot read the B2 secret from the keyring." >&2
     echo "  ${RCLONE_CONFIG_OBSIDIANB2_SECRET_ACCESS_KEY}" >&2
-    echo "  Keychain locked, or item missing (svc rclone-obsidianb2-secret)." >&2
+    echo "  Keyring locked, or item missing (svc rclone-obsidianb2-secret)." >&2
     exit 1
 fi
 if [[ -z "$RCLONE_CONFIG_OBSIDIANB2_SECRET_ACCESS_KEY" ]]; then
-    echo "obsidian-sync: Keychain returned an empty secret -- refusing to sync." >&2
+    echo "obsidian-sync: keyring returned an empty secret -- refusing to sync." >&2
     exit 1
 fi
 export RCLONE_CONFIG_OBSIDIANB2_SECRET_ACCESS_KEY
