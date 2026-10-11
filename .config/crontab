@@ -15,8 +15,9 @@ PATH=$HOME/bin:$HOME/.local/bin:/opt/homebrew/bin:/home/linuxbrew/.linuxbrew/bin
 # and no launchd, so cron owns them there -- the guard is what keeps macOS from
 # running each job twice. Schedules match the plists.
 55 * * * * [ "$(uname -s)" = Linux ] && cron-run crm-sync-bm $HOME/bin/crm-sync-bm
-# obsidian-sync: on macOS launchd runs it (com.narthur.obsidian-sync); cron only on Linux.
-*/30 * * * * [ "$(uname)" = Linux ] && cron-run obsidian-sync $HOME/bin/obsidian-sync
 0 3 * * 0 [ "$(uname -s)" = Linux ] && cron-run backup-urls $HOME/bin/backup-urls
+# obsidian-sync: on macOS launchd runs it (com.narthur.obsidian-sync); cron only on Linux.
+# Every 2h like the plist: a run takes ~22 min, and a 30-min cadence wedged it on macOS.
+0 */2 * * * [ "$(uname -s)" = Linux ] && cron-run obsidian-sync $HOME/bin/obsidian-sync
 # bedtime-beemind: on macOS launchd runs it (com.narthur.bedtime-beemind); cron only on Linux.
 0,15,30,45 * * * * [ "$(uname -s)" = Linux ] && cron-run bedtime-beemind $HOME/.local/bin/bedtime-beemind

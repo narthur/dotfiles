@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # obsidian-sync — two-way sync of the Obsidian vault to Backblaze B2 via rclone
-# bisync. Replaces the Obsidian "remotely-save" plugin. Run on a 30-minute
-# schedule (macOS: launchd com.narthur.obsidian-sync; Linux: crontab), logged
-# via cron-run.
+# bisync. Replaces the Obsidian "remotely-save" plugin. Run every 2 hours
+# (macOS: launchd com.narthur.obsidian-sync; Linux: crontab), logged via
+# cron-run.
 #
 # Usage:
 #   obsidian-sync            normal incremental two-way sync (used by launchd)
@@ -16,7 +16,8 @@
 #   ~/.config/rclone/rclone.conf                 (remote "obsidianb2"; tracked in dotfiles-private)
 #   ~/.config/rclone/obsidian-bisync-filters.txt (excludes, in dotfiles)
 #   ~/.env                                       (OBSIDIAN_VAULT, OBSIDIAN_B2_REMOTE)
-#   login Keychain                               (B2 secret: svc rclone-obsidianb2-secret)
+#   OS keyring                                   (B2 secret: svc rclone-obsidianb2-secret;
+#                                                 macOS login Keychain / Linux Secret Service)
 set -euo pipefail
 
 # Non-secret config (OBSIDIAN_VAULT, ...) still comes from ~/.env. launchd does

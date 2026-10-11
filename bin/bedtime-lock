@@ -5,6 +5,7 @@
 # Minutes still get reported to Beeminder `abed` by bedtime-beemind either way.
 while true; do
     now=$(date +%H%M)
+    # ponytail: window hardcoded here and in bedtime-beemind; share a config if they need to move together
     if [ "$now" -ge 2100 ] || [ "$now" -lt 0500 ]; then
         if zenity --question --title=Bedtime --timeout=60 \
             --text="It's past 21:00. Time to stop." \
