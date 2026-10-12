@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Linux stand-in for macOS Screen Time Downtime (21:00-05:00, snoozable).
 # Started by i3 so it inherits DISPLAY. During downtime it asks every minute;
-# "Snooze 15m" buys 15 minutes, anything else (incl. ignoring it for 60s) locks.
+# "Snooze 15m" buys 15 minutes, anything else (incl. ignoring it for 60s) shuts down.
 # Minutes still get reported to Beeminder `abed` by bedtime-beemind either way.
 while true; do
     now=$(date +%H%M)
@@ -9,11 +9,11 @@ while true; do
     if [ "$now" -ge 2100 ] || [ "$now" -lt 0500 ]; then
         if zenity --question --title=Bedtime --timeout=60 \
             --text="It's past 21:00. Time to stop." \
-            --ok-label="Snooze 15m" --cancel-label="Lock now"; then
+            --ok-label="Snooze 15m" --cancel-label="Shut down"; then
             sleep 900
             continue
         fi
-        loginctl lock-session
+        systemctl poweroff
     fi
     sleep 60
 done
