@@ -128,6 +128,10 @@ run "add go plugin" asdf plugin add golang https://github.com/asdf-community/asd
 log_section "asdf"
 run "install global tools" bash -c 'cd ~ && asdf install'
 
+log_section "Go tools"
+# review-loop's push gate needs looper at exactly this path (a PATH lookup is deliberately not used).
+run "install looper" bash -c 'cd ~ && GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.4'
+
 log_section "Global pnpm packages"
 run "install neonctl" bash -c 'cd ~ && pnpm install -g neonctl'
 run "install surge" bash -c 'cd ~ && pnpm install -g surge'
