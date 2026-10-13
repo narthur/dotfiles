@@ -129,8 +129,13 @@ log_section "asdf"
 run "install global tools" bash -c 'cd ~ && asdf install'
 
 log_section "Go tools"
-# review-loop's push gate needs looper at exactly this path (a PATH lookup is deliberately not used).
-run "install looper" bash -c 'cd ~ && GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.4'
+# review-loop needs looper >= v0.2.4 at exactly this path (a PATH lookup is deliberately not used).
+# `record check -h` is its own version probe: older loopers have no `record` subcommand.
+if ! ~/.local/bin/looper record check -h &> /dev/null; then
+    run "install looper" bash -c 'cd ~ && GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.4'
+else
+    log_success "looper already installed"
+fi
 
 log_section "Global pnpm packages"
 run "install neonctl" bash -c 'cd ~ && pnpm install -g neonctl'
