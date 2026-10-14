@@ -1,0 +1,14 @@
+#!/bin/bash
+# post-rewrite: hand off to review-loop's carry-review, which moves a review
+# record onto a rewritten commit when `git patch-id --verbatim` shows the patch itself
+# unchanged, whitespace included.
+#
+# Only a patch-identical rewrite carries; anything the rebase changed still owes
+# a review. That discrimination is the point, and carry-review.sh's header is the
+# one place that measures how rarely the clean case comes up.
+#
+# Dispatcher only; the logic lives in the skill, where it is versioned and tested.
+# Git calls this as: post-rewrite <amend|rebase>, with "<old> <new>" lines on stdin.
+CARRY="$HOME/.claude/skills/review-loop/carry-review.sh"
+[ -x "$CARRY" ] || exit 0
+exec "$CARRY" "$@"

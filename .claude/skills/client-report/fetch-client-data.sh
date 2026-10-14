@@ -56,6 +56,7 @@ echo "=== META ==="
 echo "{\"period_start\":\"${PERIOD_START}\",\"period_end\":\"${PERIOD_END}\",\"days\":${DAYS}}"
 
 source ~/.env 2>/dev/null || true
+: "${NARTHBUGZ_TOKEN:=$(secret NARTHBUGZ_TOKEN 2>/dev/null || true)}"
 
 AUTH_HEADER=""
 if [[ -n "${NARTHBUGZ_EMAIL:-}" && -n "${NARTHBUGZ_TOKEN:-}" ]]; then

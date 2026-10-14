@@ -4,6 +4,7 @@ tap "heroku/brew"
 tap "integromat/tap"
 tap "modem-dev/tap"
 tap "supabase/tap"
+tap "taskratchet/tap"
 tap "withgraphite/tap"
 brew "act"
 # static-analysis skill: path-only tools with no npx/uvx ephemeral fallback
@@ -50,6 +51,7 @@ brew "heroku/brew/heroku"
 brew "integromat/tap/make-cli"
 brew "modem-dev/tap/hunk"
 brew "supabase/tap/supabase"
+brew "taskratchet/tap/taskratchet"
 brew "withgraphite/tap/graphite"
 mas "Amphetamine", id: 937984704
 mas "Dashlane", id: 517914548

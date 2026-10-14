@@ -42,9 +42,11 @@ image_model="${IMAGE_MODEL:-fal-ai/flux/dev}"
 # produced photos. This one insists on paint you can see.
 painterly_suffix="Rendered unmistakably as a hand-painted picture: thick visible brushstrokes, ridges of paint catching the light, palette-knife marks and canvas weave showing through. Never smooth, never photographic. This is physical paint on canvas, not a photo."
 
-# Fail fast if the image API key is missing (add `export FAL_KEY=...` to ~/.env)
-if [[ -z "$FAL_KEY" ]]; then
-    echo "Error: FAL_KEY is not set. Get one at https://fal.ai/dashboard/keys and add 'export FAL_KEY=...' to ~/.env" >&2
+# Fail fast if the image API key is missing. It lives in the login Keychain;
+# `secret` is the reader (see ~/.local/bin/secret).
+: "${FAL_KEY:=$(secret FAL_KEY 2>/dev/null || true)}"
+if [[ -z "${FAL_KEY:-}" ]]; then
+    echo "Error: FAL_KEY is not in the Keychain. Get a key at https://fal.ai/dashboard/keys, then: security add-generic-password -a env -s FAL_KEY -U -A -w '<key>'" >&2
     exit 1
 fi
 
