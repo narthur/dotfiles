@@ -44,6 +44,8 @@ obsidian-backup-*.tgz
 .claude/jobs/
 .claude/tasks/
 .claude/security/
+.claude/state/
+.claude/feedback/
 
 # gcloud credentials and state
 .config/gcloud/
@@ -105,6 +107,7 @@ fires.log
 .config/bin/config.json
 .config/hunk/state.json
 .config/varlock/config.json
+.config/freebuff-desktop/
 
 # Contains a live Make API key — belongs in ~/.env, never in git
 .config/make-cli/config.json
@@ -123,4 +126,10 @@ fires.log
 .config/herdr/release-notes.json
 .config/herdr/.plugins.lock
 .claude/skills/herdr
+.claude/skills/synced/
 .agents/
+
+# The bare repos' own git dirs. dotprivate tracks a file under its git dir
+# (info/review-loop-learnings.md), which otherwise makes check-routing walk every object.
+.dotfiles/
+.dotfiles-private/
