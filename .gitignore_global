@@ -39,5 +39,6 @@ __pycache__/
 
 # static-analysis skill output
 .static-analysis/
+.code-analysis/
 
 **/.claude/.cc-writes/
