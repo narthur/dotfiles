@@ -44,6 +44,10 @@ run() {
     fi
 }
 
+log_section "Repo Prerequisites"
+# The repo blocks below fetch keys with wget and dearmor them with gpg, before packages.txt is installed.
+run "install wget and gnupg" sudo apt install -y wget gnupg
+
 log_section "Proton VPN Repo"
 # Source: https://protonvpn.com/support/linux-vpn-debian-ubuntu
 # Must precede the apt install: packages.txt lists proton-vpn-gnome-desktop.
@@ -69,9 +73,10 @@ run "download gh keyring" wget -nv -O"$out" https://cli.github.com/packages/gith
 run "install gh keyring" sudo install -m 644 "$out" /etc/apt/keyrings/githubcli-archive-keyring.gpg
 run "add gh apt source" bash -c 'echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null'
 run "download hashicorp keyring" wget -nv -O"$out" https://apt.releases.hashicorp.com/gpg
-run "install hashicorp keyring" bash -c "gpg --dearmor < '$out' | sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg > /dev/null"
-run "add hashicorp apt source" bash -c 'echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(. /etc/os-release && echo $VERSION_CODENAME) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list > /dev/null'
-rm -f "$out"
+run "dearmor hashicorp keyring" gpg --yes --dearmor -o "$out.gpg" "$out"
+run "install hashicorp keyring" sudo install -m 644 "$out.gpg" /usr/share/keyrings/hashicorp-archive-keyring.gpg
+run "add hashicorp apt source" bash -c 'echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(. /etc/os-release && echo ${UBUNTU_CODENAME:-$VERSION_CODENAME}) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list > /dev/null'
+rm -f "$out" "$out.gpg"
 
 log_section "Apt Packages"
 run "apt update" sudo apt update
@@ -203,7 +208,7 @@ fi
 
 log_section "Vite+"
 # VP_NODE_MANAGER=no: node comes from asdf, so skip the installer's interactive prompt.
-if [ ! -x "$HOME/.vite-plus/bin/vp" ]; then
+if [ ! -x "$HOME/.vite-plus/bin/vp" ] && [ ! -x "$HOME/.local/share/vite-plus/bin/vp" ]; then
     log "vp not found, installing..."
     run "install vite-plus" bash -c 'curl -fsSL https://vite.plus | VP_NODE_MANAGER=no bash'
 else

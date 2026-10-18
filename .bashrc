@@ -164,4 +164,5 @@ alias cc='claude --enable-auto-mode'
 eval "$(zoxide init bash)"
 
 # Vite+ bin (https://viteplus.dev)
-[ -f "$HOME/.config/vite-plus/env" ] && . "$HOME/.config/vite-plus/env"
+# Vite+ env: ~/.vite-plus for installs that predate its XDG split layout
+for f in "$HOME/.config/vite-plus/env" "$HOME/.vite-plus/env"; do [ -f "$f" ] && { . "$f"; break; }; done

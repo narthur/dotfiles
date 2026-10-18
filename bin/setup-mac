@@ -156,7 +156,7 @@ export PATH="$HOME/.bun/bin:$PATH"
 
 log_section "Vite+"
 # VP_NODE_MANAGER=no: node comes from asdf, so skip the installer's interactive prompt.
-if [ ! -x "$HOME/.vite-plus/bin/vp" ]; then
+if [ ! -x "$HOME/.vite-plus/bin/vp" ] && [ ! -x "$HOME/.local/share/vite-plus/bin/vp" ]; then
     log "vp not found, installing..."
     run "install vite-plus" bash -c 'curl -fsSL https://vite.plus | VP_NODE_MANAGER=no bash'
 else

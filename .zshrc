@@ -39,7 +39,8 @@ export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
 
 # Vite+ bin (https://viteplus.dev)
-[ -f "$HOME/.vite-plus/env" ] && . "$HOME/.vite-plus/env"
+# Vite+ env: ~/.vite-plus for installs that predate its XDG split layout
+for f in "$HOME/.config/vite-plus/env" "$HOME/.vite-plus/env"; do [ -f "$f" ] && { . "$f"; break; }; done
 
 # Starship prompt - must be last
 eval "$(starship init zsh)"
