@@ -46,6 +46,7 @@ run() {
 
 log_section "Repo Prerequisites"
 # The repo blocks below fetch keys with wget and dearmor them with gpg, before packages.txt is installed.
+run "apt update for prerequisites" sudo apt update
 run "install wget and gnupg" sudo apt install -y wget gnupg
 
 log_section "Proton VPN Repo"
