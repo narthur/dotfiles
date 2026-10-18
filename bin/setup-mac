@@ -51,6 +51,9 @@ else
 fi
 
 log_section "Brew Packages"
+# Homebrew refuses formulae from untrusted taps. Trust exactly the tap formulae
+# the Brewfile lists (not whole taps), so the Brewfile stays the one list of what's trusted.
+run "trust Brewfile tap formulae" bash -c 'brew trust --formula $(sed -nE '\''s/^brew "([^"/]+\/[^"/]+\/[^"]+)".*/\1/p'\'' ~/.Brewfile)'
 run "brew bundle install" brew bundle --global
 
 log_section "PostgreSQL Client (libpq)"

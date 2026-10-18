@@ -6,6 +6,7 @@ feh
 ffmpeg
 firefox-esr
 flatpak
+gh
 glances
 gnome-screenshot
 i3
@@ -31,13 +32,16 @@ postgresql-client-16
 proton-vpn-gnome-desktop
 python3-tinycss2
 python3-venv
+qbittorrent
 qt6ct
 rofi
 rsync
 shfmt
 simplescreenrecorder
+smartmontools
 stripe
 taskwarrior
+terraform
 texlive-xetex
 thunar
 thunar-archive-plugin
@@ -45,4 +49,5 @@ valac
 vlc
 warp-terminal
 xournalpp
+xvfb
 zoxide

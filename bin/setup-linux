@@ -57,6 +57,22 @@ else
     log_success "proton repo already installed"
 fi
 
+log_section "Vendor Apt Repos"
+# Keyrings are refreshed every run, not just on first install: GitHub and HashiCorp
+# rotate their signing keys, and a stale keyring silently freezes the repo.
+# Must precede the apt install: packages.txt lists gh and terraform.
+# Sources: https://github.com/cli/cli/blob/trunk/docs/install_linux.md
+#          https://developer.hashicorp.com/terraform/install
+run "create keyrings directory" sudo mkdir -p -m 755 /etc/apt/keyrings
+out=$(mktemp)
+run "download gh keyring" wget -nv -O"$out" https://cli.github.com/packages/githubcli-archive-keyring.gpg
+run "install gh keyring" sudo install -m 644 "$out" /etc/apt/keyrings/githubcli-archive-keyring.gpg
+run "add gh apt source" bash -c 'echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null'
+run "download hashicorp keyring" wget -nv -O"$out" https://apt.releases.hashicorp.com/gpg
+run "install hashicorp keyring" bash -c "gpg --dearmor < '$out' | sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg > /dev/null"
+run "add hashicorp apt source" bash -c 'echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(. /etc/os-release && echo $VERSION_CODENAME) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list > /dev/null'
+rm -f "$out"
+
 log_section "Apt Packages"
 run "apt update" sudo apt update
 run "apt install packages" sudo apt install -y $(grep -v '^#' ~/packages.txt | tr '\n' ' ')
@@ -75,6 +91,9 @@ else
 fi
 
 log_section "Brew Packages"
+# Homebrew refuses formulae from untrusted taps. Trust exactly the tap formulae
+# the Brewfile lists (not whole taps), so the Brewfile stays the one list of what's trusted.
+run "trust Brewfile tap formulae" bash -c 'brew trust --formula $(sed -nE '\''s/^brew "([^"/]+\/[^"/]+\/[^"]+)".*/\1/p'\'' ~/.Brewfile)'
 run "brew bundle install" brew bundle install --global
 
 log_section "Pipx Packages"
@@ -95,26 +114,6 @@ fi
 run "update bin" bin update bin
 run "ensure buzz installed" bash -c 'bin ensure buzz || bin install github.com/pinepeakdigital/buzz'
 run "ensure sysmon installed" bash -c 'bin ensure sysmon || bin install github.com/PinePeakDigital/sysmon'
-
-log_section "GitHub CLI"
-# Source: https://github.com/cli/cli/blob/trunk/docs/install_linux.md
-if ! command -v gh &> /dev/null; then
-    log "gh not found, installing..."
-    run "ensure wget installed" bash -c 'type -p wget >/dev/null || (sudo apt update && sudo apt install wget -y)'
-    run "create keyrings directory" sudo mkdir -p -m 755 /etc/apt/keyrings
-    
-    out=$(mktemp)
-    run "download gh keyring" wget -nv -O"$out" https://cli.github.com/packages/githubcli-archive-keyring.gpg
-    run "install gh keyring" sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg < "$out" > /dev/null
-    run "set keyring permissions" sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
-    
-    run "create sources.list.d" sudo mkdir -p -m 755 /etc/apt/sources.list.d
-    run "add gh apt source" bash -c 'echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null'
-    run "apt update for gh" sudo apt update
-    run "apt install gh" sudo apt install gh -y
-else
-    log_success "gh already installed"
-fi
 
 log_section "GitHub CLI Extensions"
 gh extension list | grep -q poi || run "install gh-poi" gh extension install seachicken/gh-poi
@@ -154,21 +153,6 @@ if ! command -v aws &> /dev/null; then
     run "install aws" bash -c 'cd /tmp && curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" && unzip awscliv2.zip && sudo ./aws/install'
 else
     log_success "aws already installed"
-fi
-
-log_section "Terraform"
-if ! command -v terraform &> /dev/null; then
-    log "terraform not found, installing..."
-    run "create keyrings directory" sudo mkdir -p -m 755 /usr/share/keyrings
-    out=$(mktemp)
-    run "download hashicorp keyring" wget -nv -O"$out" https://apt.releases.hashicorp.com/gpg
-    run "install hashicorp keyring" bash -c "sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg < $out"
-    run "set keyring permissions" sudo chmod go+r /usr/share/keyrings/hashicorp-archive-keyring.gpg
-    run "add hashicorp apt source" bash -c 'echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(grep -oP '\''(?<=UBUNTU_CODENAME=).*'\'' /etc/os-release || lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list'
-    run "apt update for terraform" sudo apt update
-    run "apt install terraform" sudo apt install terraform -y
-else
-    log_success "terraform already installed"
 fi
 
 log_section "Ghostty"

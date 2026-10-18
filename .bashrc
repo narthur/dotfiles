@@ -164,4 +164,4 @@ alias cc='claude --enable-auto-mode'
 eval "$(zoxide init bash)"
 
 # Vite+ bin (https://viteplus.dev)
-. "$HOME/.vite-plus/env"
+[ -f "$HOME/.config/vite-plus/env" ] && . "$HOME/.config/vite-plus/env"
