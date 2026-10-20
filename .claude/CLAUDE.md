@@ -55,3 +55,7 @@ Two non-arguments to avoid. First, authorship: prose in a PR description, fieldn
 Never frame the conflict as an accusation, in any direction — not at me, not at a past session, not at the code. State what the earlier decision was, what it was for, and what that implies now.
 
 When recording a decision in Fieldnotes, write down the reasoning and its source (`Nathan decided X because Y`, `assumed X pending confirmation`, `inferred from the code`) so a later session can weigh it instead of guessing at it.
+
+# Reporting results
+
+When reporting results — to me, or as a subagent to a caller — lead with anything that weakens the conclusion: failed or skipped checks, negative results, workarounds, unverified assumptions, partial completion. A report that hides a problem is worse than a report of failure. Rationale: LLMs default to success-framed reports and omit narrative-changing flaws (arXiv:2609.36139: GPT-5.5 flagged a planted negative result in 2/200 reports, 190/200 with an explicit honesty instruction).

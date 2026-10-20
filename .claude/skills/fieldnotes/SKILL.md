@@ -5,7 +5,7 @@ description: "Load Fieldnotes context and conventions. Use when starting work on
 
 # Fieldnotes
 
-Fieldnotes is an Obsidian folder at `$OBSIDIAN_VAULT/Fieldnotes` (`$OBSIDIAN_VAULT` is an env var; falls back to `$OBSIDIAN_VAULT` if unset) that supplements the auto-memory system.
+Fieldnotes is an Obsidian folder at `$OBSIDIAN_VAULT/Fieldnotes` (`$OBSIDIAN_VAULT` is an env var pointing at the vault root) that supplements the auto-memory system.
 
 Fieldnotes is **shared** — read and edited by both the user and the agent. Treat it as a collaborative workspace. Contrast with `~/.claude/projects/.../memory/`, which is agent-only private notes.
 
@@ -25,7 +25,7 @@ Fieldnotes is **shared** — read and edited by both the user and the agent. Tre
 
 Do all of the following proactively, without waiting to be asked:
 
-- **Read first.** When starting work on a project or topic, check Fieldnotes for relevant notes before doing anything else.
+- **Read first.** When starting work on a project or topic, check Fieldnotes for relevant notes before doing anything else. Search the whole tree, subfolders included (`grep -ril <term> "$OBSIDIAN_VAULT/Fieldnotes"` or Glob `**/*.md`); a top-level `ls | grep` misses notes in `Projects/` and other subfolders.
 - **No prescribed structure.** Organize however the content suggests; let conventions emerge. Prefer extending existing notes over creating parallel ones.
 - **Create when missing.** If there is no Fieldnote for a project or topic you're working on, create one.
 - **Update as you learn.** When something changes — a constraint, a decision, a deadline, new context — update the relevant note rather than letting it go stale.
