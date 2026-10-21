@@ -20,6 +20,7 @@ brew "ocrmypdf"
 brew "poppler"
 brew "tesseract"
 brew "docker"
+brew "docker-compose" # also the provider `podman compose` uses
 brew "ggshield"
 brew "mas" if OS.mac? # Mac App Store CLI
 brew "asdf"

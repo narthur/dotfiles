@@ -191,6 +191,9 @@ if [ "$(podman machine inspect --format '{{.State}}' 2>/dev/null)" = running ]; 
 else
     run "start podman machine" podman machine start
 fi
+# Make `docker compose` find Homebrew's plugin. Symlink rather than
+# cliPluginsExtraDirs so ~/.docker/config.json (holds registry auth) stays untracked.
+run "link docker compose plugin" bash -c 'mkdir -p ~/.docker/cli-plugins && ln -sfn "$(brew --prefix)/opt/docker-compose/bin/docker-compose" ~/.docker/cli-plugins/docker-compose'
 
 log_section "Ollama"
 run "enable ollama service" brew services start ollama
