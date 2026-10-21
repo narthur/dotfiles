@@ -97,6 +97,12 @@ obsidian-backup-*.tgz
 .claude/skills/web-perf/
 .claude/skills/workers-best-practices/
 .claude/skills/wrangler/
+.claude/skills/basin/
+.claude/skills/cf-cli/
+.claude/skills/gateway-workers/
+.claude/skills/k2/
+.claude/skills/nextjs-on-cloudflare/
+.claude/skills/workers-profiling/
 .claude/hooks/logs/
 fires.log
 *.md5
@@ -133,3 +139,4 @@ fires.log
 # (info/review-loop-learnings.md), which otherwise makes check-routing walk every object.
 .dotfiles/
 .dotfiles-private/
+.config/codexbar/config.json.lock
