@@ -19,7 +19,6 @@ brew "imagemagick"
 brew "ocrmypdf"
 brew "poppler"
 brew "tesseract"
-brew "colima"
 brew "docker"
 brew "ggshield"
 brew "mas" if OS.mac? # Mac App Store CLI

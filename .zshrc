@@ -24,8 +24,9 @@ case ":$PATH:" in
 esac
 # pnpm end
 
-# Colima as Docker host
-export DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock"
+# Podman as Docker host. Fixed path rather than `podman machine inspect`, which is
+# slow on every shell start. getconf gives the real per-user temp dir even if $TMPDIR is overridden.
+export DOCKER_HOST="unix://$(getconf DARWIN_USER_TEMP_DIR)podman/podman-machine-default-api.sock"
 
 # zoxide - must be last
 autoload -Uz compinit && compinit
