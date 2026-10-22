@@ -91,4 +91,8 @@ if [ -f .git/hooks/pre-commit ]; then
     fi
 fi
 
-ggshield secret scan pre-commit "$@"
+# Secret scan of the staged changes. gitleaks runs offline (no API call, no token,
+# no system trust store), so it works inside the Claude Code sandbox, where
+# ggshield's TLS verification through trustd failed. GitGuardian's GitHub app still
+# scans pull requests server-side.
+exec gitleaks git --pre-commit --staged --redact --verbose --no-banner .

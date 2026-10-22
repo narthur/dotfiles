@@ -134,10 +134,10 @@ log_section "asdf"
 run "install global tools" bash -c 'cd ~ && asdf install'
 
 log_section "Go tools"
-# review-loop needs looper >= v0.2.4 at exactly this path (a PATH lookup is deliberately not used).
-# `record check -h` is its own version probe: older loopers have no `record` subcommand.
-if ! ~/.local/bin/looper record check -h &> /dev/null; then
-    run "install looper" bash -c 'cd ~ && GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.4'
+# review-loop needs looper >= v0.2.10 at exactly this path (a PATH lookup is deliberately not used).
+# `record pending --all -h` is the same version probe review-loop's Step 0 uses: v0.2.9 and older reject `-all`.
+if ! ~/.local/bin/looper record pending --all -h &> /dev/null; then
+    run "install looper" bash -c 'cd ~ && GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.10'
 else
     log_success "looper already installed"
 fi
