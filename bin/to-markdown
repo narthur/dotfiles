@@ -31,19 +31,22 @@ convert_file() {
         doc)
             local tmpdir
             tmpdir=$(mktemp -d)
-            libreoffice --headless --convert-to docx --outdir "$tmpdir" "$input" >/dev/null 2>&1
-            local docx_file="$tmpdir/$(basename "${input%.*}.docx")"
-            pandoc "$docx_file" -t markdown -o "$output"
+            local docx_file
+            docx_file="$tmpdir/$(basename "${input%.*}.docx")"
+            libreoffice --headless --convert-to docx --outdir "$tmpdir" "$input" >/dev/null 2>&1 \
+                && pandoc "$docx_file" -t markdown -o "$output"
+            local rc=$?
             rm -rf "$tmpdir"
+            [[ $rc -eq 0 ]] || { echo "ERROR: conversion failed: $input" >&2; rm -f "$output"; return 1; }
             ;;
         docx|odt|epub|rst|html|htm)
-            pandoc "$input" -t markdown -o "$output"
+            pandoc "$input" -t markdown -o "$output" || { echo "ERROR: conversion failed: $input" >&2; rm -f "$output"; return 1; }
             ;;
         pdf)
-            pdftotext "$input" - > "$output"
+            pdftotext "$input" - > "$output" || { echo "ERROR: conversion failed: $input" >&2; rm -f "$output"; return 1; }
             ;;
         txt)
-            cp "$input" "$output"
+            cp "$input" "$output" || { echo "ERROR: conversion failed: $input" >&2; rm -f "$output"; return 1; }
             ;;
         md|markdown)
             echo "SKIP: $input is already a Markdown file" >&2

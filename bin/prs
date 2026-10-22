@@ -36,7 +36,10 @@ unresolved_map=$(gh api graphql -f query='
   --jq '[.data.repository.pullRequests.nodes[] | {
     key: (.number | tostring),
     value: [.reviewThreads.nodes[]? | select(.isResolved == false)] | length
-  }] | from_entries' 2>/dev/null || echo '{}')
+  }] | from_entries' 2>/dev/null) || {
+  echo "warning: unresolved-thread counts unavailable; CHG may read 'no' wrongly" >&2
+  unresolved_map='{}'
+}
 
 processed=$(echo "$data" | jq -r --arg me "$me" --argjson unresolved "$unresolved_map" '
   [.[] |
@@ -98,8 +101,8 @@ processed=$(echo "$data" | jq -r --arg me "$me" --argjson unresolved "$unresolve
    end) as $owner |
 
   # Action: what should $me do?
-  # NOTE: Action logic is duplicated in ~/.claude/skills/pr-triage/pr-review-session
-  # If you change this, update that file too (get_prioritized_actionable_prs function).
+  # NOTE: ~/.claude/skills/pr-triage/pr-review-session (get_prioritized_actionable_prs)
+  # has a copy of this logic that has drifted: it also treats app/dependabot as an auto bot.
   (if ($owner == $me or (.author.login // "unknown") == "app/github-actions") then
     if $merge == "CONFLICTING" then "resolve conflicts"
     elif $ci == "fail" then "fix ci"

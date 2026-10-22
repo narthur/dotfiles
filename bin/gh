@@ -2,8 +2,8 @@
 # Wrapper around gh that auto-injects --draft into `gh pr create`
 
 # The first gh on PATH that isn't this wrapper (/usr/bin on Linux, Homebrew on mac).
-self=$(realpath "$0")
-REAL_GH=$(type -ap gh | while read -r p; do [ "$(realpath "$p")" != "$self" ] && { echo "$p"; break; }; done)
+# -ef compares inodes, so symlinks to this wrapper are skipped too; no realpath needed (older macOS lacks it).
+REAL_GH=$(type -ap gh | while read -r p; do [ "$p" -ef "$0" ] || { echo "$p"; break; }; done)
 [ -n "$REAL_GH" ] || { echo "gh wrapper: no real gh on PATH" >&2; exit 127; }
 
 args=("$@")
