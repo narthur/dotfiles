@@ -103,7 +103,7 @@ When found, flag it and recommend:
 
 ### Step 0: Pull Latest
 
-Run the pull-and-sync script to pull both repos. It handles stashing and optional ActivityWatch settings merge:
+Run the pull-and-sync script to pull both repos. It handles stashing and optional ActivityWatch settings merge. Run it unsandboxed (`dangerouslyDisableSandbox: true`): its stash rewrites `~/.claude/hooks` and `~/.claude/skills`, which the sandbox makes read-only, so it refuses to start there.
 
 ```bash
 ~/.claude/skills/dotfiles-sync/pull-and-sync

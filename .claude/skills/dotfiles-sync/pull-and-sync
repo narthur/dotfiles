@@ -14,6 +14,14 @@ set -e
 NO_AW=0
 [[ "$1" == "--no-aw" ]] && NO_AW=1
 
+# Stash/merge rewrite files under ~/.claude/{hooks,skills}. Where those are read-only (Claude Code's
+# sandbox) the stash dies mid-reset and leaves a half-reverted tree, so refuse before touching anything.
+probe="$HOME/.claude/hooks/.pull-and-sync-probe"
+if ! { : > "$probe" && rm -f "$probe"; } 2>/dev/null; then
+  echo "pull-and-sync: ~/.claude/hooks is not writable (sandboxed?). Run it unsandboxed." >&2
+  exit 1
+fi
+
 # Warn if --no-aw is used but ActivityWatch is running
 if [[ $NO_AW -eq 1 ]] && command -v aw-export &>/dev/null && curl -sf http://localhost:5600/api/0/settings >/dev/null 2>&1; then
   echo "⚠ Warning: --no-aw was used, but ActivityWatch is running."
@@ -24,16 +32,18 @@ fi
 # Snapshot AW state if running and tools available
 AW_SNAPSHOT=""
 if [[ $NO_AW -eq 0 ]] && command -v aw-export &>/dev/null && curl -sf http://localhost:5600/api/0/settings >/dev/null 2>&1; then
-  AW_SNAPSHOT="/tmp/aw-before-pull.json"
+  AW_SNAPSHOT="$(mktemp "${TMPDIR:-/tmp}/aw-before-pull.XXXXXX")"
   aw-export "$AW_SNAPSHOT"
 fi
 
 # Pull both repos, stashing uncommitted changes first
 for git_dir in "$HOME/.dotfiles" "$HOME/.dotfiles-private"; do
   # Check for uncommitted changes in the worktree
+  stashed=0
   if git -C "$HOME" --git-dir="$git_dir" --work-tree="$HOME" status --porcelain | grep -q .; then
     echo "Stashing changes in $(basename $git_dir)..."
     git -C "$HOME" --git-dir="$git_dir" --work-tree="$HOME" stash
+    stashed=1
   fi
   
   echo "Pulling $(basename $git_dir)..."
@@ -47,8 +57,8 @@ for git_dir in "$HOME/.dotfiles" "$HOME/.dotfiles-private"; do
   git --git-dir="$git_dir" fetch
   git -C "$HOME" --git-dir="$git_dir" --work-tree="$HOME" merge FETCH_HEAD
   
-  # Restore stashed changes
-  if git -C "$HOME" --git-dir="$git_dir" --work-tree="$HOME" stash list | grep -q .; then
+  # Restore only the stash made above; older stashes in the list aren't ours to pop
+  if [[ $stashed -eq 1 ]]; then
     echo "Restoring stashed changes in $(basename $git_dir)..."
     git -C "$HOME" --git-dir="$git_dir" --work-tree="$HOME" stash pop
   fi
@@ -64,8 +74,9 @@ fi
 if [[ -n "$AW_SNAPSHOT" ]] && [[ -f "$AW_SNAPSHOT" ]]; then
   if git -C "$HOME" --git-dir="$HOME/.dotfiles" --work-tree="$HOME" diff HEAD -- .config/activitywatch/settings.json | grep -q .; then
     # Merge: local AW state wins on conflict, remote adds new entries
-    aw-merge "$AW_SNAPSHOT" ~/.config/activitywatch/settings.json > /tmp/aw-merged.json && \
-      mv /tmp/aw-merged.json ~/.config/activitywatch/settings.json
+    merged="$(mktemp "${TMPDIR:-/tmp}/aw-merged.XXXXXX")"
+    aw-merge "$AW_SNAPSHOT" ~/.config/activitywatch/settings.json > "$merged" && \
+      mv "$merged" ~/.config/activitywatch/settings.json
     
     # Push merged settings back to running AW instance
     aw-import
