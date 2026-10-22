@@ -231,3 +231,6 @@ bin/migrate-token-logs
 .config/ynab-cli-nodejs/
 # vite-plus installer shims (regenerated)
 .config/vite-plus/
+
+# Podman machine state (contains SSH keys)
+.config/containers/
