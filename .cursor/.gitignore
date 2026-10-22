@@ -43,3 +43,9 @@ projects/*/*
 !rules/
 !rules/**
 # <<< CURSOR MANAGED BLOCK <<<
+
+# Cursor un-ignores these for its own tools; dotfiles does not track them
+# (transcripts, old plans, its built-in skills). Outside the managed block so Cursor keeps them.
+projects/
+plans/
+skills-cursor/

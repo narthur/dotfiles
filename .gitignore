@@ -140,3 +140,94 @@ fires.log
 .dotfiles/
 .dotfiles-private/
 .config/codexbar/config.json.lock
+# App caches, profiles and runtime state — regenerated, machine-specific.
+# Signal's attachments.noindex holds message attachments: never track it.
+.config/obsidian/
+.config/Cursor/
+.config/discord/
+.config/zenflow-desktop/
+.config/chromium/
+.config/google-chrome-for-testing/
+.config/Signal/
+.config/unity3d/
+.config/libreoffice/
+.config/evolution/
+.config/herdr/session-snapshots/
+.config/go/telemetry/
+.config/.wrangler/
+.cursor/projects/
+.local/zed.app/
+.claude/token-usage/
+.claude/token-usage-backup-*/
+# Credentials: login tokens and API keys written by CLIs and test tooling
+.claude/.credentials.json
+.claude/playwright-*-auth.json
+.config/cursor/auth.json
+.config/cursor/prompt_history.json
+.config/neonctl/credentials.json
+.config/stripe/config.toml
+.config/graphite/user_config
+.config/ggshield/auth_config.yaml
+.config/io.datasette.llm/keys.json
+.config/pulse/cookie
+# Runtime noise: sockets, logs, caches, window/recent-file state, backups
+.claude/debug/
+.claude/stats-cache.json
+.claude/settings.json.bak.*
+.claude/chrome/
+.config/*/NativeMessagingHosts/
+.config/BraveSoftware/Brave-Browser/NativeMessagingHosts/
+.config/herdr/*.sock*
+.config/ibus/bus/
+.config/connections.db
+.config/dconf/user
+.config/turborepo/telemetry.json
+.config/slackcli/update-check.json
+.config/wireshark/recent*
+.config/totem/state.ini
+.config/simple-scan/state
+.config/QtProject.conf
+.config/.gsd-keyboard.settings-ported
+.config/menus/
+.config/i3/config.backup.*
+.config/systemd/user/*.backup
+.config/io.datasette.llm/logs.db
+.local/tmp/
+# Disabled or machine-local systemd units, and enable symlinks (setup scripts run systemctl enable)
+.config/systemd/user/*.wants/
+.config/systemd/user/aw-qt.service
+.config/systemd/user/agent-orchestrator*
+# ActivityWatch: default tomls and the server's live copy (the canonical settings.json is tracked in dotprivate)
+.config/activitywatch/*/
+# Retired experiments (agent-orchestrator, agent-runner): kept on disk, not versioned
+.config/agent-orchestrator/
+.config/launchd/com.narthur.agent-runner.plist
+.config/agents/
+# Machine-local or retired bin entries
+bin/lazyagentic
+bin/claude-worktree
+bin/claude-worktree-selector
+bin/migrate-token-logs
+# Unused .claude leftovers (publish.sh: reports publish as Artifacts since 2026-09-07, dotprivate c7a26a3)
+.claude/hooks/resolve-git-repo.sh
+.claude/client-mapping.json
+.claude/pricing.json
+.claude/skills/oz-cli
+.claude/skills/client-report/publish.sh
+# App-written preferences and state, empty files, machine-specific paths
+.config/warp-terminal/user_preferences.json
+.config/vlc/
+.config/Thunar/accels.scm
+.config/xfce4/
+.config/inkscape/
+.config/xournalpp/
+.config/gtk-3.0/bookmarks
+.config/user-dirs.*
+.config/*xdg-terminals.list
+.config/gitbutler/
+.config/astro/
+.config/enchant/
+.config/clerk/
+.config/ynab-cli-nodejs/
+# vite-plus installer shims (regenerated)
+.config/vite-plus/

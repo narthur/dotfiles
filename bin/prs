@@ -1,0 +1,219 @@
+#!/usr/bin/env bash
+# List open PRs in the current repo with review and CI status
+set -euo pipefail
+
+GREEN=$'\033[32m'
+GREY=$'\033[90m'
+RED=$'\033[31m'
+YELLOW=$'\033[33m'
+RESET=$'\033[0m'
+
+me=$(gh api user --jq '.login' 2>/dev/null)
+data=$(gh pr list --state open --json number,title,author,assignees,isDraft,reviews,reviewRequests,statusCheckRollup,mergeable --limit 100)
+
+if [ "$(echo "$data" | jq 'length')" -eq 0 ]; then
+  echo "No open PRs."
+  exit 0
+fi
+
+# Fetch unresolved review thread counts for all open PRs (GraphQL)
+repo_info=$(gh repo view --json owner,name -q '.owner.login + "/" + .name' 2>/dev/null)
+repo_owner="${repo_info%%/*}"
+repo_name="${repo_info#*/}"
+unresolved_map=$(gh api graphql -f query='
+  query($owner: String!, $repo: String!) {
+    repository(owner: $owner, name: $repo) {
+      pullRequests(states: OPEN, first: 100) {
+        nodes {
+          number
+          reviewThreads(first: 100) {
+            nodes { isResolved }
+          }
+        }
+      }
+    }
+  }' -f owner="$repo_owner" -f repo="$repo_name" \
+  --jq '[.data.repository.pullRequests.nodes[] | {
+    key: (.number | tostring),
+    value: [.reviewThreads.nodes[]? | select(.isResolved == false)] | length
+  }] | from_entries' 2>/dev/null || echo '{}')
+
+processed=$(echo "$data" | jq -r --arg me "$me" --argjson unresolved "$unresolved_map" '
+  [.[] |
+
+  # Human review: latest APPROVED/CHANGES_REQUESTED per non-bot reviewer
+  (.reviewRequests | length) as $pendingRequests |
+  (
+    [.reviews[]? |
+      select(.state == "APPROVED" or .state == "CHANGES_REQUESTED") |
+      select((.author.login // "") | test("\\[bot\\]$") | not)
+    ] |
+    group_by(.author.login) |
+    map(sort_by(.submittedAt) | last) |
+    if length == 0 then
+      if $pendingRequests == 0 then "none"
+      else "awaiting"
+      end
+    elif any(.state == "CHANGES_REQUESTED") then "changes req"
+    elif any(.state == "APPROVED") then "approved"
+    else "awaiting"
+    end
+  ) as $review |
+
+  # CI status from statusCheckRollup
+  (
+    (.statusCheckRollup // []) |
+    if length == 0 then "awaiting"
+    else
+      map(.conclusion // .state // "PENDING") |
+      if any(test("FAILURE|ERROR|CANCELLED|TIMED_OUT|ACTION_REQUIRED|STARTUP_FAILURE"; "i")) then "fail"
+      elif all(test("^(SUCCESS|NEUTRAL|SKIPPED)$"; "i")) then "pass"
+      else "awaiting"
+      end
+    end
+  ) as $ci |
+
+  # Unresolved review threads
+  ($unresolved[(.number | tostring)] // 0) as $unresolvedCount |
+
+  # Changes requested from anyone (humans + bots) OR unresolved review threads
+  (
+    [.reviews[]? |
+      select(.state == "APPROVED" or .state == "CHANGES_REQUESTED")
+    ] |
+    group_by(.author.login) |
+    map(sort_by(.submittedAt) | last) |
+    if any(.state == "CHANGES_REQUESTED") then "yes"
+    elif $unresolvedCount > 0 then "yes"
+    else "no"
+    end
+  ) as $changes |
+
+  # Merge conflicts
+  (.mergeable // "UNKNOWN") as $merge |
+
+  # Owner: first assignee if any, else author
+  (if (.assignees | length) > 0 then .assignees[0].login
+   else (.author.login // "unknown")
+   end) as $owner |
+
+  # Action: what should $me do?
+  # NOTE: Action logic is duplicated in ~/.claude/skills/pr-triage/pr-review-session
+  # If you change this, update that file too (get_prioritized_actionable_prs function).
+  (if ($owner == $me or (.author.login // "unknown") == "app/github-actions") then
+    if $merge == "CONFLICTING" then "resolve conflicts"
+    elif $ci == "fail" then "fix ci"
+    elif $changes == "yes" then "respond"
+    elif ($review == "approved" or ((.author.login // "unknown") == "app/github-actions" and ($review == "none" or $review == "awaiting"))) and $ci == "pass" and $merge == "MERGEABLE" then "merge"
+    elif $review == "none" and (.isDraft | not) and (.author.login // "unknown") != "app/github-actions" and $ci != "awaiting" then "add reviewers"
+    elif .isDraft then "work on"
+    else ""
+    end
+  else
+    if (.reviewRequests | any(.login == $me)) then "review"
+    else ""
+    end
+  end) as $action |
+
+  {
+    sort: (if $action == "review" then 0
+      elif $action == "resolve conflicts" then 1
+      elif $action == "fix ci" then 2
+      elif $action == "respond" then 3
+      elif $action == "merge" then 4
+      elif $action == "add reviewers" then 5
+      elif $action == "work on" then 6
+      else 7
+      end),
+    row: [
+      (.number | tostring),
+      (.title // ""),
+      ($owner |
+        if . == "app/copilot-swe-agent" then "copilot"
+        elif . == "app/github-actions" then "actions"
+        else .
+        end),
+      (if .isDraft then "draft" else "active" end),
+      $review, $ci, $changes, $merge, $action
+    ]
+  }
+  ] | sort_by(.sort) | .[].row | @tsv
+')
+
+# Compute column widths from data
+W_ID=2  # minimum: "ID"
+W_TITLE=5  # minimum: "TITLE"
+W_OWNER=5  # minimum: "OWNER"
+W_ACTION=6  # minimum: "ACTION"
+while IFS=$'\t' read -r num title owner _draft _review _ci _changes _merge action; do
+  (( ${#num} + 1 > W_ID )) && W_ID=$(( ${#num} + 1 ))  # +1 for '#' prefix
+  (( ${#title} > W_TITLE )) && W_TITLE=${#title}
+  (( ${#owner} > W_OWNER )) && W_OWNER=${#owner}
+  (( ${#action} > W_ACTION )) && W_ACTION=${#action}
+done <<< "$processed"
+
+# Cap title width to terminal width minus other columns
+max_title=$(( $(tput cols 2>/dev/null || echo 120) - W_ID - W_OWNER - W_ACTION - 21 ))
+(( max_title < 20 )) && max_title=20
+(( W_TITLE > max_title )) && W_TITLE=$max_title
+
+printf '%-*s %-*s %-*s %-4s%-4s%-4s%-4s%s\n' \
+  $W_ID "ID" $W_TITLE "TITLE" $W_OWNER "OWNER" "REV" "CI" "CHG" "MRG" "ACTION"
+hr() { printf '%*s' "$1" '' | tr ' ' '-'; }
+printf '%-*s %-*s %-*s %-4s%-4s%-4s%-4s%s\n' \
+  $W_ID "$(hr $W_ID)" $W_TITLE "$(hr $W_TITLE)" $W_OWNER "$(hr $W_OWNER)" "---" "---" "---" "---" "$(hr $W_ACTION)"
+
+while IFS=$'\t' read -r num title owner draft review ci changes merge action; do
+  [ -z "$num" ] && continue
+
+  # Truncate title
+  if [ "${#title}" -gt "$W_TITLE" ]; then
+    title="${title:0:$((W_TITLE - 2))}.."
+  fi
+
+  # ID: green=active, grey=draft
+  if [ "$draft" = "draft" ]; then
+    printf '%s%-*s%s ' "$GREY" $W_ID "#$num" "$RESET"
+  else
+    printf '%s%-*s%s ' "$GREEN" $W_ID "#$num" "$RESET"
+  fi
+
+  printf '%-*s %-*s ' $W_TITLE "$title" $W_OWNER "$owner"
+
+  # Review status (emoji=2 cols + 2 spaces = 4 visible)
+  case "$review" in
+    approved)      printf '%s✅%s  ' "$GREEN"  "$RESET" ;;
+    "changes req") printf '%s❌%s  ' "$RED"    "$RESET" ;;
+    none)          printf '%s⚪%s  ' "$GREY"   "$RESET" ;;
+    *)             printf '%s⏳%s  ' "$YELLOW" "$RESET" ;;
+  esac
+
+  # CI status (emoji=2 cols + 2 spaces = 4 visible)
+  case "$ci" in
+    pass) printf '%s✅%s  ' "$GREEN"  "$RESET" ;;
+    fail) printf '%s❌%s  ' "$RED"    "$RESET" ;;
+    *)    printf '%s⏳%s  ' "$YELLOW" "$RESET" ;;
+  esac
+
+  # Changes requested (emoji=2 cols + 2 spaces = 4 visible)
+  case "$changes" in
+    yes) printf '%s⚠️%s  ' "$YELLOW" "$RESET" ;;
+    *)   printf '%s✅%s  ' "$GREEN"  "$RESET" ;;
+  esac
+
+  # Merge conflicts (emoji=2 cols + 2 spaces = 4 visible)
+  case "$merge" in
+    CONFLICTING) printf '%s⚠️%s  ' "$YELLOW" "$RESET" ;;
+    UNKNOWN)     printf '%s? %s  ' "$GREY" "$RESET" ;;
+    *)           printf '%s✅%s  ' "$GREEN"  "$RESET" ;;
+  esac
+
+  # Action
+  if [ -n "$action" ]; then
+    printf '%s%s%s' "$YELLOW" "$action" "$RESET"
+  else
+    printf '%s—%s' "$GREY" "$RESET"
+  fi
+
+  echo
+done <<< "$processed"

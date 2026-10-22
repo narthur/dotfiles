@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+    echo "Usage: to-markdown <file> [<file> ...]"
+    echo ""
+    echo "Converts files to Markdown format. Supported types:"
+    echo "  .doc                                    — converted via libreoffice + pandoc"
+    echo "  .docx, .odt, .epub, .rst, .html, .htm  — converted via pandoc"
+    echo "  .pdf                                    — extracted via pdftotext"
+    echo "  .txt                                    — copied as-is"
+    exit 1
+}
+
+[[ $# -eq 0 ]] && usage
+
+EXIT_CODE=0
+
+convert_file() {
+    local input="$1"
+    local ext="${input##*.}"
+    ext="${ext,,}"  # lowercase
+    local output="${input%.*}.md"
+
+    if [[ -e "$output" ]]; then
+        echo "SKIP: $output already exists" >&2
+        return 1
+    fi
+
+    case "$ext" in
+        doc)
+            local tmpdir
+            tmpdir=$(mktemp -d)
+            libreoffice --headless --convert-to docx --outdir "$tmpdir" "$input" >/dev/null 2>&1
+            local docx_file="$tmpdir/$(basename "${input%.*}.docx")"
+            pandoc "$docx_file" -t markdown -o "$output"
+            rm -rf "$tmpdir"
+            ;;
+        docx|odt|epub|rst|html|htm)
+            pandoc "$input" -t markdown -o "$output"
+            ;;
+        pdf)
+            pdftotext "$input" - > "$output"
+            ;;
+        txt)
+            cp "$input" "$output"
+            ;;
+        md|markdown)
+            echo "SKIP: $input is already a Markdown file" >&2
+            return 1
+            ;;
+        *)
+            echo "ERROR: Unsupported file type: .$ext ($input)" >&2
+            return 1
+            ;;
+    esac
+
+    echo "OK: $input -> $output"
+}
+
+for file in "$@"; do
+    if [[ ! -f "$file" ]]; then
+        echo "ERROR: File not found: $file" >&2
+        EXIT_CODE=1
+        continue
+    fi
+
+    if ! convert_file "$file"; then
+        EXIT_CODE=1
+    fi
+done
+
+exit $EXIT_CODE

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<actions>
+<action>
+	<icon>utilities-terminal</icon>
+	<name>Open Terminal Here</name>
+	<submenu></submenu>
+	<unique-id>1772888588253602-1</unique-id>
+	<command>exo-open --working-directory %f --launch TerminalEmulator</command>
+	<description>Example for a custom action</description>
+	<range></range>
+	<patterns>*</patterns>
+	<startup-notify/>
+	<directories/>
+</action>
+<action>
+	<icon>text-x-generic</icon>
+	<name>Convert to Markdown</name>
+	<submenu></submenu>
+	<unique-id>1772888588253602-2</unique-id>
+	<command>to-markdown %F</command>
+	<description>Convert file(s) to Markdown format</description>
+	<range></range>
+	<patterns>*.doc;*.docx;*.odt;*.epub;*.rst;*.html;*.htm;*.pdf;*.txt</patterns>
+	<startup-notify/>
+	<text-files/>
+	<other-files/>
+</action>
+<action>
+	<icon>preferences-desktop-wallpaper</icon>
+	<name>Set as Wallpaper</name>
+	<submenu></submenu>
+	<unique-id>1772888588253602-3</unique-id>
+	<command>feh --bg-fill %f</command>
+	<description>Set the selected image as the i3 desktop wallpaper (via feh)</description>
+	<range></range>
+	<patterns>*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.webp;*.tiff;*.tif</patterns>
+	<image-files/>
+</action>
+</actions>

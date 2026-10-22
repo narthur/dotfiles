@@ -1,0 +1,36 @@
+[Default Applications]
+x-scheme-handler/obsidian=obsidian.desktop
+x-scheme-handler/slack=com.slack.Slack.desktop
+text/html=firefox-esr.desktop
+application/xhtml+xml=firefox-esr.desktop
+x-scheme-handler/http=firefox-esr.desktop
+x-scheme-handler/https=firefox-esr.desktop
+text/x-typescript=dev.zed.Zed.desktop
+text/vnd.trolltech.linguist=dev.zed.Zed.desktop
+text/javascript=dev.zed.Zed.desktop
+application/javascript=dev.zed.Zed.desktop
+application/x-javascript=dev.zed.Zed.desktop
+application/x-typescript=dev.zed.Zed.desktop
+text/jsx=dev.zed.Zed.desktop
+text/tsx=dev.zed.Zed.desktop
+text/plain=dev.zed.Zed.desktop
+application/x-tiled-tsx=dev.zed.Zed.desktop
+image/png=org.gnome.Loupe.desktop
+application/pdf=org.gnome.Evince.desktop
+image/jpeg=org.gnome.Loupe.desktop
+text/csv=org.gnome.TextEditor.desktop
+x-scheme-handler/claude-cli=claude-code-url-handler.desktop
+inode/directory=thunar.desktop
+application/x-wastebasket=thunar.desktop
+
+[Added Associations]
+image/png=org.gnome.Loupe.desktop;
+application/pdf=org.gnome.Evince.desktop;
+image/jpeg=org.gnome.Loupe.desktop;
+text/csv=org.gnome.TextEditor.desktop;
+text/x-log=org.gnome.TextEditor.desktop;
+text/plain=org.gnome.TextEditor.desktop;
+image/svg+xml=org.gnome.Loupe.desktop;org.inkscape.Inkscape.desktop;chromium.desktop;
+application/xml=org.gnome.TextEditor.desktop;
+image/x-eps=org.inkscape.Inkscape.desktop;
+text/html=org.gnome.TextEditor.desktop;
