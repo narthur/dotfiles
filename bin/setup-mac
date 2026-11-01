@@ -76,6 +76,7 @@ mkdir -p "$PNPM_HOME"
 export PATH="$PNPM_HOME:$PATH"
 run "install neonctl" pnpm install -g neonctl
 run "install surge" pnpm install -g surge
+run "install defuddle" pnpm install -g defuddle@0.19.5  # mail-clip article extractor
 
 log_section "Binary Manager (bin)"
 # Pre-configure bin to install to ~/.local/bin (non-interactive)
