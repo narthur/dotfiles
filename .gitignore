@@ -42,6 +42,7 @@ obsidian-backup-*.tgz
 .claude/backups/
 .claude/sessions/
 .claude/jobs/
+.claude/edit-review/
 .claude/tasks/
 .claude/security/
 .claude/state/
