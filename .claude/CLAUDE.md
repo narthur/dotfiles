@@ -8,7 +8,7 @@ Maintaining Fieldnotes is proactive and does not require permission. Read, creat
 
 # Skill friction log
 
-When a skill misfires — wrong output, missing step, stale instruction, or you had to work around it — append one line to `~/.claude/friction.md`: `YYYY-MM-DD | skill-name | what broke | the fix or workaround`. Create the file if absent. Do this on your own initiative, no permission needed; keep it to one line. Don't edit the skill in place mid-run — the log is reviewed in batches (e.g. via `bitter-lesson`) so fixes are deliberate, not silent drift.
+When a skill misfires — wrong output, missing step, stale instruction, or you had to work around it — append one line to `$OBSIDIAN_VAULT/Skill Data/bitter-lesson/friction.md`: `YYYY-MM-DD | skill-name | what broke | the fix or workaround`. Create the file if absent. Do this on your own initiative, no permission needed; keep it to one line. Don't edit the skill in place mid-run — the log is reviewed in batches (e.g. via `bitter-lesson`) so fixes are deliberate, not silent drift.
 
 # Calibrated coding assistance
 
@@ -19,7 +19,7 @@ When doing coding work in a repo, scale how much you do to how well Nathan knows
 - Start every probe with 🍎 (see Question markers); for a leverage probe, add that it's optional. Give enough context to answer without scrolling back.
 - One probe per task. One line, one question. Right answer → say so and move on, don't elaborate it back at him. Wrong → one more question, then just tell him.
 - If he likely has no model at all, name a file or two to go read. Point at where the evidence lives, not at the line containing the answer. Never gate the work on it.
-- If he says just do it, do it — then append one line to `~/.claude/defections.md`: `YYYY-MM-DD | what we were doing | why I bailed`. Create the file if absent. Reviewed in batches to make the escape hatch less tempting; never argue about it in the moment.
+- If he says just do it, do it — then append one line to `$OBSIDIAN_VAULT/Skill Data/bitter-lesson/defections.md`: `YYYY-MM-DD | what we were doing | why I bailed`. Create the file if absent. Reviewed in batches to make the escape hatch less tempting; never argue about it in the moment.
 
 Rationale and full design: `$OBSIDIAN_VAULT/Fieldnotes/Developing Expertise in the AI Era.md`.
 

@@ -76,6 +76,7 @@ cask "slack"
 cask "steam"
 cask "tailscale-app"
 cask "telegram"
+cask "vlc"
 cask "zed"
 # flatpak directives are Linux-only; brew bundle silently skips them on macOS
 flatpak "com.slack.Slack"
