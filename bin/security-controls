@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# Check that expected security controls are still in place and write the
+# result for pilot's sweep to read. Runs daily from launchd
+# (com.narthur.security-controls), outside the Claude Code sandbox, because
+# the sandbox hides listening ports, launchctl state and fdesetup output.
+#
+# Output: $OBSIDIAN_VAULT/Skill Data/pilot/security/controls.tsv
+#   line 1: "# checked <ISO time>"
+#   then:   check<TAB>ok|FAIL|UNKNOWN<TAB>detail
+#
+# A finding is not a job failure: this exits 0 whenever it wrote the file.
+# Retiring a control = delete its line here and record why in the
+# "Pilot Security Watch" fieldnote, not dismiss its card forever.
+set -uo pipefail
+
+VAULT="${OBSIDIAN_VAULT:-$HOME/Obsidian/Main}"
+OUT_DIR="$VAULT/Skill Data/pilot/security"
+OUT="$OUT_DIR/controls.tsv"
+mkdir -p "$OUT_DIR" || exit 1
+TMP="$(mktemp "$OUT_DIR/.controls.XXXXXX")" || exit 1
+trap 'rm -f "$TMP"' EXIT
+
+row() { printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "$TMP"; }
+
+printf '# checked %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$TMP"
+
+# --- listening services --------------------------------------------------------
+# netstat sees every socket regardless of owner. If it reports no listeners at
+# all, it was blocked (as inside the sandbox), so the port checks are UNKNOWN.
+listen="$(netstat -an -p tcp 2>/dev/null | awk '$6=="LISTEN"{print $4}')"
+disabled="$(launchctl print-disabled system 2>/dev/null)"
+
+# label service port
+port_check() {
+  local label="$1" svc="$2" port="$3" state
+  if [ -z "$listen" ]; then
+    row "$label" UNKNOWN "netstat returned no listeners at all"; return
+  fi
+  if printf '%s\n' "$listen" | grep -qE "[.:]$port\$"; then
+    row "$label" FAIL "something is listening on port $port"; return
+  fi
+  state="$(printf '%s\n' "$disabled" | grep -F "\"$svc\"" | sed -E 's/.*=> *//')"
+  case "$state" in
+    disabled|true) row "$label" ok "port $port closed; $svc disabled" ;;
+    enabled|false) row "$label" FAIL "$svc enabled in launchd (port $port not open yet)" ;;
+    *)             row "$label" ok "port $port closed; launchd state not listed" ;;
+  esac
+}
+port_check remote-login   com.openssh.sshd         22
+port_check screen-sharing com.apple.screensharing  5900
+
+# --- platform protections -------------------------------------------------------
+fw="$(/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate 2>&1)"
+case "$fw" in
+  *enabled*)  row firewall ok "$fw" ;;
+  *disabled*) row firewall FAIL "$fw" ;;
+  *)          row firewall UNKNOWN "${fw:-no output}" ;;
+esac
+
+fv="$(fdesetup status 2>&1 | head -1)"
+case "$fv" in
+  "FileVault is On."*)  row filevault ok "$fv" ;;
+  "FileVault is Off."*) row filevault FAIL "$fv" ;;
+  *)                    row filevault UNKNOWN "${fv:-no output}" ;;
+esac
+
+sip="$(csrutil status 2>&1)"
+case "$sip" in
+  *"status: enabled"*)  row sip ok "enabled" ;;
+  *"status: disabled"*) row sip FAIL "disabled" ;;
+  *)                    row sip UNKNOWN "${sip:-no output}" ;;
+esac
+
+gk="$(spctl --status 2>&1)"
+case "$gk" in
+  "assessments enabled")  row gatekeeper ok "$gk" ;;
+  "assessments disabled") row gatekeeper FAIL "$gk" ;;
+  *)                      row gatekeeper UNKNOWN "${gk:-no output}" ;;
+esac
+
+au="$(defaults read /Library/Preferences/com.apple.SoftwareUpdate AutomaticallyInstallMacOSUpdates 2>/dev/null)"
+case "$au" in
+  1) row macos-auto-install ok "AutomaticallyInstallMacOSUpdates = 1" ;;
+  0) row macos-auto-install FAIL "AutomaticallyInstallMacOSUpdates = 0" ;;
+  *) row macos-auto-install UNKNOWN "key not set" ;;
+esac
+
+# --- Claude Code hooks ------------------------------------------------------------
+# A hook counts only if settings.json references it AND the script exists.
+SETTINGS="$HOME/.claude/settings.json"
+hook_cmds="$(jq -r '.. | objects | .command? // empty' "$SETTINGS" 2>/dev/null)"
+# egress-guard retired on purpose (too many false alarms); see the fieldnote.
+for hook in sensitive-file-guard; do
+  if [ ! -r "$SETTINGS" ]; then
+    row "hook:$hook" UNKNOWN "cannot read $SETTINGS"
+  elif ! printf '%s\n' "$hook_cmds" | grep -q "$hook"; then
+    row "hook:$hook" FAIL "not referenced in settings.json"
+  else
+    path="$(printf '%s\n' "$hook_cmds" | grep -m1 "$hook" | awk '{print $1}')"
+    path="${path/#\~/$HOME}"
+    if [ -x "$path" ]; then row "hook:$hook" ok "$path"
+    else row "hook:$hook" FAIL "configured but $path is missing or not executable"
+    fi
+  fi
+done
+
+mv "$TMP" "$OUT" && trap - EXIT
+echo "wrote $(grep -vc '^#' "$OUT") checks to $OUT"

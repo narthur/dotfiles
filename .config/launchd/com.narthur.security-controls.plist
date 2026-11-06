@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.narthur.security-controls</string>
+
+    <!-- Checks that security controls are still in place and writes
+         Skill Data/pilot/security/controls.tsv for pilot's sweep. Runs here,
+         outside the Claude Code sandbox, because the sandbox hides listening
+         ports, launchctl state and fdesetup. See the "Pilot Security Watch"
+         fieldnote. Routed through cron-run for logging + Healthchecks. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>${HOME}/bin/cron-run</string>
+        <string>security-controls</string>
+        <string>${HOME}/bin/security-controls</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>${HOME}/bin:${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>OBSIDIAN_VAULT</key>
+        <string>${HOME}/Obsidian/Main</string>
+    </dict>
+
+    <!-- Daily 08:30, calendar-based (StartInterval jobs wedge on this Mac).
+         launchd reruns a missed slot once on wake. RunAtLoad gives a fresh
+         result right after install. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>8</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>
