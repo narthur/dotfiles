@@ -106,3 +106,105 @@ done
 
 mv "$TMP" "$OUT" && trap - EXIT
 echo "wrote $(grep -vc '^#' "$OUT") checks to $OUT"
+
+# === Inventory ===================================================================
+# A sorted, values-free list of what can run on this machine, for pilot to diff
+# against inventory.baseline (the accepted list). One line per item:
+#   kind<TAB>item<TAB>fingerprint
+# Fingerprints are hashes, signers or "dotfiles-clean" — never file contents,
+# since crontab lines, hosts entries or scripts can hold secrets.
+INV="$OUT_DIR/inventory.tsv"
+ITMP="$(mktemp "$OUT_DIR/.inventory.XXXXXX")" || exit 1
+trap 'rm -f "$ITMP"' EXIT
+inv() { printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "$ITMP"; }
+h() { shasum -a 256 "$@" 2>/dev/null | cut -c1-12; }
+
+# "dotfiles-clean" when the file matches HEAD in a dot repo, so routine dotfile
+# commits don't churn the inventory; otherwise a content hash.
+fp() {
+  local f="$1" rel="${1#$HOME/}" repo
+  for repo in "$HOME/.dotfiles" "$HOME/.dotfiles-private"; do
+    if [ "$(git --git-dir="$repo" rev-parse -q --verify "HEAD:$rel" 2>/dev/null)" = \
+         "$(git hash-object "$f" 2>/dev/null)" ]; then
+      echo dotfiles-clean; return
+    fi
+  done
+  h "$f"
+}
+
+signer() {
+  local s
+  s="$(codesign -dv --verbose=2 "$1" 2>&1 | sed -n 's/^Authority=//p' | head -1)"
+  echo "${s:-unsigned}"
+}
+
+# launchd plists: hash of the plist + signer of what it runs.
+for dir in "$HOME/Library/LaunchAgents" /Library/LaunchAgents /Library/LaunchDaemons; do
+  for p in "$dir"/*.plist; do
+    [ -e "$p" ] || continue
+    prog="$(plutil -extract Program raw -o - "$p" 2>/dev/null || plutil -extract ProgramArguments.0 raw -o - "$p" 2>/dev/null)"
+    inv launchd "$p" "$(h "$p") $(signer "$prog")"
+  done
+done
+
+# Loaded jobs that aren't Apple's. Per-launch "application.*" labels and
+# PID-suffixed ones are dropped as noise.
+launchctl list 2>/dev/null | awk 'NR>1{print $3}' \
+  | grep -vE '^(com\.apple\.|application\.)|\.[0-9]+$' | sort -u \
+  | while read -r l; do inv loaded "$l" -; done
+
+systemextensionsctl list 2>/dev/null | awk -F'\t' 'NF>=5 && $3!="teamID"{print $3"\t"$5}' \
+  | while IFS=$'\t' read -r id state; do inv sysext "$id" "$state"; done
+profiles list 2>/dev/null | sed -n 's/.*profileIdentifier: *//p' \
+  | while read -r id; do inv profile "$id" -; done
+
+crontab -l 2>/dev/null | grep -vE '^\s*(#|$)' | while read -r line; do
+  inv cron "line" "$(printf '%s' "$line" | shasum -a 256 | cut -c1-12)"
+done
+inv hosts /etc/hosts "$(h /etc/hosts)"
+
+for f in "$HOME"/.ssh/*; do
+  [ -e "$f" ] && inv ssh "$f" "$(stat -f %Sp "$f")"
+done
+
+for f in "$HOME"/.zshrc "$HOME"/.zshenv "$HOME"/.zprofile "$HOME"/.zlogin \
+         "$HOME"/.bashrc "$HOME"/.bash_profile "$HOME"/.profile; do
+  [ -f "$f" ] && inv startup "$f" "$(fp "$f")"
+done
+
+for dir in "$HOME/bin" "$HOME/.local/bin" /usr/local/bin; do
+  for f in "$dir"/*; do
+    # Version dirs in symlink targets are dropped so auto-updates (claude) don't churn.
+    if [ -L "$f" ]; then inv path "$f" "-> $(readlink "$f" | sed -E 's#/versions/[^/]+$#/versions/*#')"
+    elif [ -f "$f" ] && [ -x "$f" ]; then inv path "$f" "$(fp "$f")"
+    fi
+  done
+done
+
+# Browser extensions, by id only (versions update constantly).
+for root in "$HOME/Library/Application Support/Google/Chrome" \
+            "$HOME/Library/Application Support/BraveSoftware/Brave-Browser" \
+            "$HOME/Library/Application Support/Microsoft Edge" \
+            "$HOME/Library/Application Support/Vivaldi"; do
+  for e in "$root"/*/Extensions/*; do
+    [ -d "$e" ] && inv browser-ext "${root##*/}/$(basename "$(dirname "$(dirname "$e")")")" "$(basename "$e")"
+  done
+done
+for e in "$HOME/Library/Application Support/Firefox/Profiles"/*/extensions/*; do
+  [ -e "$e" ] && inv browser-ext "Firefox/$(basename "$(dirname "$(dirname "$e")")")" "$(basename "$e")"
+done
+
+# Global packages, names only.
+npm ls -g --depth=0 --parseable 2>/dev/null | tail -n +2 | sed 's#.*/node_modules/##' \
+  | while read -r n; do inv npm-global "$n" -; done
+pip3 list --user --format=freeze 2>/dev/null | cut -d= -f1 \
+  | while read -r n; do inv pip-user "$n" -; done
+
+# Listeners reachable from other machines, by process; loopback-only and port
+# numbers are dropped because dev servers make them churn.
+lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null | awk 'NR>1 && $9 !~ /^(127\.|\[::1\]|localhost)/{print $1}' \
+  | sort -u | while read -r c; do inv listen "$c" all-interfaces; done
+
+LC_ALL=C sort -u "$ITMP" -o "$ITMP"   # C order: sweep's comm must match
+mv "$ITMP" "$INV" && trap - EXIT
+echo "wrote $(wc -l < "$INV" | tr -d ' ') inventory items to $INV"
