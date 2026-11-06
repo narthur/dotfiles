@@ -118,7 +118,10 @@ echo "wrote $(grep -vc '^#' "$OUT") checks to $OUT"
 # secrets. Each external command also writes a "source<TAB>name<TAB>ok|unavailable"
 # row, so a source that stops working is one card instead of a silent gap.
 INV="$OUT_DIR/inventory.tsv"
-inv() { printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "$ITMP"; }
+# Items are often attacker-nameable filenames: control chars (tab, newline)
+# become "?" so a name can't forge rows, and fields are capped at 200 chars.
+clean() { printf '%s' "$1" | LC_ALL=C tr '\000-\037\177' '?' | cut -c1-200; }
+inv() { printf '%s\t%s\t%s\n' "$(clean "$1")" "$(clean "$2")" "$(clean "$3")" >> "$ITMP"; }
 src() { inv source "$1" "$2"; }
 hash12() { local s; s="$(shasum -a 256 "$@" 2>/dev/null | cut -c1-12)"; echo "${s:-unreadable}"; }
 
@@ -180,7 +183,7 @@ crontab -l 2>/dev/null | grep -vE '^\s*(#|$)' | while read -r line; do
   inv cron "$(printf '%s' "$line" | awk '
     /^[A-Za-z_][A-Za-z0-9_]*[ \t]*=/ {print "env"; next}
     $1 ~ /^@[a-z]+$/ {print $1; next}
-    $1$2$3 ~ /^[0-9*\/,-]+$/ && $4$5 ~ /^[0-9A-Za-z*\/,-]+$/ {print $1" "$2" "$3" "$4" "$5; next}
+    NF >= 6 && $1$2$3 ~ /^[0-9*\/,-]+$/ && $4 ~ /^([0-9*\/,-]+|[A-Za-z]{3}(-[A-Za-z]{3})?)$/ && $5 ~ /^([0-9*\/,-]+|[A-Za-z]{3}(-[A-Za-z]{3})?)$/ {print $1" "$2" "$3" "$4" "$5; next}
     {print "unparsed"}')" \
     "$(printf '%s' "$line" | shasum -a 256 | cut -c1-12)"
 done
@@ -230,7 +233,7 @@ done
 
 # Global packages, names only. npm is an asdf shim; the plist PATH includes it.
 # npm ls exits non-zero on extraneous packages; any output means it ran.
-npm_ls() { npm ls -g --depth=0 --parseable 2>/dev/null | grep .; }
+npm_ls() { local o; o="$(npm ls -g --depth=0 --parseable 2>/dev/null)"; [ -n "$o" ] && printf '%s\n' "$o"; }
 collect npm npm_ls | tail -n +2 | sed 's#.*/node_modules/##' \
   | while read -r n; do inv npm-global "$n" -; done
 collect pip3 pip3 list --user --format=freeze | sed -E 's/[ =@].*//' \
