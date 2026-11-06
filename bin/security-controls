@@ -70,7 +70,7 @@ case "$sip" in
   *"status: enabled."*) row sip ok "enabled" ;;
   *"status: enabled"*)  row sip FAIL "partly disabled: $(printf '%s' "$sip" | head -1)" ;;
   *"status: disabled"*) row sip FAIL "disabled" ;;
-  *)                    row sip UNKNOWN "${sip:-no output}" ;;
+  *)                    row sip UNKNOWN "$(printf '%s' "${sip:-no output}" | head -1)" ;;
 esac
 
 gk="$(spctl --status 2>&1)"
@@ -174,9 +174,14 @@ collect profiles profiles list | sed -n 's/.*profileIdentifier: *//p' \
   | while read -r id; do inv profile "$id" -; done
 
 # crontab -l exits 1 for "no crontab", so it isn't a source check. Item is the
-# schedule only (arguments can hold tokens); the hash tells lines apart.
+# schedule only (arguments can hold tokens); the hash tells lines apart. Any
+# line that doesn't parse as a schedule is "unparsed", never echoed.
 crontab -l 2>/dev/null | grep -vE '^\s*(#|$)' | while read -r line; do
-  inv cron "$(printf '%s' "$line" | awk '/^[A-Za-z_]+=/{print "env"; next}{print $1" "$2" "$3" "$4" "$5}')" \
+  inv cron "$(printf '%s' "$line" | awk '
+    /^[A-Za-z_][A-Za-z0-9_]*[ \t]*=/ {print "env"; next}
+    $1 ~ /^@[a-z]+$/ {print $1; next}
+    $1$2$3 ~ /^[0-9*\/,-]+$/ && $4$5 ~ /^[0-9A-Za-z*\/,-]+$/ {print $1" "$2" "$3" "$4" "$5; next}
+    {print "unparsed"}')" \
     "$(printf '%s' "$line" | shasum -a 256 | cut -c1-12)"
 done
 inv hosts /etc/hosts "$(hash12 /etc/hosts)"
@@ -217,12 +222,16 @@ for root in "$HOME/Library/Application Support/Google/Chrome" \
             "$HOME/Library/Application Support/Vivaldi" \
             "$HOME/Library/Application Support/Firefox/Profiles"; do
   for e in "$root"/*/Extensions/* "$root"/*/extensions/*; do
-    [ -e "$e" ] && [ "${e##*/}" != Temp ] && inv browser-ext "${root##*/}/$(basename "$(dirname "$(dirname "$e")")")" "$(basename "$e")"
+    b="${root%/Profiles}"
+    case "${e##*/}" in Temp|staged) continue ;; esac
+    [ -e "$e" ] && inv browser-ext "${b##*/}/$(basename "$(dirname "$(dirname "$e")")")" "$(basename "$e")"
   done
 done
 
 # Global packages, names only. npm is an asdf shim; the plist PATH includes it.
-collect npm npm ls -g --depth=0 --parseable | tail -n +2 | sed 's#.*/node_modules/##' \
+# npm ls exits non-zero on extraneous packages; any output means it ran.
+npm_ls() { npm ls -g --depth=0 --parseable 2>/dev/null | grep .; }
+collect npm npm_ls | tail -n +2 | sed 's#.*/node_modules/##' \
   | while read -r n; do inv npm-global "$n" -; done
 collect pip3 pip3 list --user --format=freeze | sed -E 's/[ =@].*//' \
   | while read -r n; do inv pip-user "$n" -; done
@@ -230,7 +239,9 @@ collect pip3 pip3 list --user --format=freeze | sed -E 's/[ =@].*//' \
 # This user's listeners bound beyond loopback, by process (lsof without root
 # can't see root daemons; the controls half checks ports 22/5900 via netstat).
 # Port numbers are dropped because dev servers make them churn.
-collect lsof lsof -nP -iTCP -sTCP:LISTEN | awk 'NR>1 && $9 !~ /^(127\.|\[::1\]|localhost)/{print $1}' \
+# ponytail: lsof exits 1 for "no listeners" and for errors alike; both read ok.
+lsof_listen() { lsof -nP -iTCP -sTCP:LISTEN; [ $? -le 1 ]; }
+collect lsof lsof_listen | awk 'NR>1 && $9 !~ /^(127\.|\[::1\]|localhost)/{print $1}' \
   | sort -u | while read -r c; do inv listen "$c" all-interfaces; done
 
 LC_ALL=C sort -u "$ITMP" -o "$ITMP"   # C order: sweep's comm must match
