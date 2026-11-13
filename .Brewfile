@@ -53,6 +53,7 @@ brew "taskratchet/tap/taskratchet"
 brew "withgraphite/tap/graphite"
 mas "Amphetamine", id: 937984704
 mas "Dashlane", id: 517914548
+mas "Horo", id: 1437226581
 cask "activitywatch"
 cask "anki"
 cask "raspberry-pi-imager"

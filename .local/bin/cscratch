@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Fuzzy-pick a file from Claude's scratchpads (newest first) and open it.
+# Usage: cscratch [query]   — query pre-fills fzf, e.g. `cscratch spec-v3`
+# Keys: enter = open, ctrl-e = $EDITOR, ctrl-y = copy path
+# ponytail: one level of `ls -t` over every file; fine for hundreds of files.
+root="${TMPDIR_CLAUDE:-/private/tmp/claude-$(id -u)}"
+f=$(find "$root" -path '*/scratchpad/*' -type f -print0 2>/dev/null \
+  | xargs -0 ls -t 2>/dev/null \
+  | fzf --query="$*" --select-1 --exit-0 \
+      --delimiter=/ --with-nth=-1 \
+      --preview='head -100 {}' \
+      --bind="ctrl-y:execute-silent(printf %s {} | pbcopy)+abort" \
+      --bind="ctrl-e:become(${EDITOR:-vim} {})") || exit
+[ -n "$f" ] && open "$f"
