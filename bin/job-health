@@ -1,0 +1,220 @@
+#!/usr/bin/env python3
+"""Health of the local com.narthur.* launchd jobs, from ~/.local/state/job-runs.tsv.
+
+  job-health            one row per job: state, slug, last ok, last fail, expected next
+  job-health --quiet    no output; exit 1 if any job is down or never ran
+  job-health --agent    (launchd, hourly) snapshot launchctl run counters, then ping
+                        Healthchecks check `local-jobs` with the overall result
+  job-health --seed     one-time: write an `ok` row for every pinging job with no
+                        history, timestamped by its log file's mtime
+  job-health --test     self-check of the schedule maths
+
+Jobs that ping (via cron-run or hc-ping) log their own rows. Jobs that never ping
+get synthetic `ok` rows from --agent when launchctl's `runs` counter moves (or, for
+KeepAlive jobs, while they're running). Only --agent calls launchctl, because the
+Claude sandbox can't; everything else just reads files.
+
+Period = the longest gap between scheduled runs in the plist. A job is late past
+that, down past that + GRACE, and down at once if its latest finished run failed.
+Design: Fieldnotes/Local Job Health Plan.md
+"""
+import json, os, re, subprocess, sys, urllib.request
+from datetime import datetime, timedelta
+
+HOME = os.path.expanduser("~")
+AGENTS = f"{HOME}/Library/LaunchAgents"
+LOG = f"{HOME}/.local/state/job-runs.tsv"
+RUNS = f"{HOME}/.local/state/job-health-runs.tsv"
+GRACE = timedelta(hours=12)  # must exceed the longest overnight sleep; one value for all jobs
+SNAPSHOT = timedelta(hours=1)  # --agent cadence; floor on synthetic jobs' period
+SELF = "job-health"  # watched by Healthchecks, not by itself
+
+
+def max_gap(cal, start=datetime(2026, 1, 1), days=70):
+    """Longest gap between StartCalendarInterval fires, minute by minute."""
+    cals = cal if isinstance(cal, list) else [cal]
+    fires, t = [], start
+    while t < start + timedelta(days=days):
+        for c in cals:
+            if (c.get("Minute", t.minute) == t.minute and c.get("Hour", t.hour) == t.hour
+                    and c.get("Day", t.day) == t.day and c.get("Month", t.month) == t.month
+                    and c.get("Weekday", t.isoweekday() % 7) % 7 == t.isoweekday() % 7):
+                fires.append(t)
+                break
+        t += timedelta(minutes=1)
+    return max(b - a for a, b in zip(fires, fires[1:]))
+
+
+def jobs():
+    """slug -> {label, gap, pings, keepalive, log}"""
+    out = {}
+    for f in sorted(os.listdir(AGENTS)):
+        if not (f.startswith("com.narthur.") and f.endswith(".plist")):
+            continue
+        # plutil, not plistlib: launchd's parser tolerates `--` in XML comments, expat doesn't
+        r = subprocess.run(["plutil", "-convert", "json", "-o", "-", f"{AGENTS}/{f}"],
+                           capture_output=True, text=True)
+        if r.returncode:
+            print(f"job-health: can't parse {f}", file=sys.stderr)
+            continue
+        p = json.loads(r.stdout)
+        label, args = p["Label"], p.get("ProgramArguments", [])
+        cron = bool(args) and args[0].endswith("/cron-run")
+        slug = args[1] if cron else label.removeprefix("com.narthur.")
+        if slug == SELF:
+            continue
+        try:
+            pings = cron or "hc-ping" in open(args[0], errors="ignore").read()
+        except OSError:
+            pings = False
+        keep = bool(p.get("KeepAlive"))
+        if "StartInterval" in p:
+            gap = timedelta(seconds=p["StartInterval"])
+        elif "StartCalendarInterval" in p:
+            gap = max_gap(p["StartCalendarInterval"])
+        elif keep:
+            gap = SNAPSHOT
+        else:
+            continue  # RunAtLoad-only: nothing to expect
+        if not pings:
+            gap = max(gap, SNAPSHOT)
+        log = p.get("StandardOutPath") if not cron else None
+        out[slug] = dict(label=label, gap=gap, pings=pings, keep=keep,
+                         log=log or f"{HOME}/.local/log/{slug}.log")
+    return out
+
+
+def now():
+    return datetime.now().astimezone()
+
+
+def append(slug, state, when=None):
+    os.makedirs(os.path.dirname(LOG), exist_ok=True)
+    with open(LOG, "a") as fh:
+        fh.write(f"{(when or now()).isoformat(timespec='seconds')}\t{slug}\t{state}\n")
+
+
+def history():
+    """slug -> {ok, fail, last} where last is the latest finished state."""
+    h = {}
+    try:
+        lines = open(LOG).read().splitlines()  # ponytail: no rotation, ~25k rows/yr; roll yearly if reads slow
+    except FileNotFoundError:
+        lines = []
+    for line in lines:
+        try:
+            ts, slug, state = line.split("\t")[:3]
+            t = datetime.fromisoformat(ts)
+        except ValueError:
+            continue
+        if state not in ("ok", "fail"):
+            continue
+        r = h.setdefault(slug, {"ok": None, "fail": None, "last": None})
+        r[state], r["last"] = t, state
+    return h
+
+
+def evaluate():
+    js, h, t = jobs(), history(), now()
+    rows = []
+    for slug, j in js.items():
+        r = h.get(slug, {"ok": None, "fail": None, "last": None})
+        if r["last"] is None:
+            state = "never"
+        elif r["last"] == "fail" or r["ok"] is None or t - r["ok"] > j["gap"] + GRACE:
+            state = "down"
+        elif t - r["ok"] > j["gap"]:
+            state = "late"
+        else:
+            state = "up"
+        nxt = r["ok"] + j["gap"] if r["ok"] else None
+        rows.append((state, slug, r["ok"], r["fail"], nxt))
+    unknown = sorted(set(h) - set(js))
+    return rows, unknown
+
+
+def fmt(t):
+    return t.strftime("%Y-%m-%d %H:%M") if t else "-"
+
+
+def agent():
+    """Snapshot launchctl counters for non-pinging jobs, then ping local-jobs."""
+    uid, prev = os.getuid(), {}
+    try:
+        prev = dict(l.split("\t") for l in open(RUNS).read().splitlines() if "\t" in l)
+    except FileNotFoundError:
+        pass
+    cur = dict(prev)
+    for slug, j in jobs().items():
+        if j["pings"]:
+            continue
+        out = subprocess.run(["launchctl", "print", f"gui/{uid}/{j['label']}"],
+                             capture_output=True, text=True).stdout
+        runs = re.search(r"^\s*runs = (\d+)", out, re.M)
+        running = re.search(r"^\s*state = running", out, re.M)
+        if not runs:
+            continue  # not loaded: no row, so it goes late/down on its own
+        cur[slug] = runs.group(1)
+        if (j["keep"] and running) or (not j["keep"] and runs.group(1) != prev.get(slug)):
+            append(slug, "ok")
+    with open(RUNS, "w") as fh:
+        fh.writelines(f"{k}\t{v}\n" for k, v in cur.items())
+
+    rows, _ = evaluate()
+    bad = any(r[0] in ("down", "never") for r in rows)
+    base = subprocess.run(["security", "find-generic-password", "-a", "healthchecks", "-s",
+                           "healthchecks-ping-base-url", "-w"], capture_output=True,
+                          text=True, stdin=subprocess.DEVNULL).stdout.strip()
+    if not base:
+        print("job-health: no ping key in Keychain; local-jobs not pinged", file=sys.stderr)
+        return bad
+    url = f"{base.rstrip('/')}/local-jobs{'/fail' if bad else ''}?create=1"
+    try:
+        urllib.request.urlopen(urllib.request.Request(url, method="POST"), timeout=10)
+    except Exception as e:  # never print the URL: it embeds the ping key
+        print(f"job-health: local-jobs ping failed: {type(e).__name__}", file=sys.stderr)
+    return bad
+
+
+def seed():
+    h = history()
+    for slug, j in jobs().items():
+        if not j["pings"] or slug in h:
+            continue
+        try:
+            when = datetime.fromtimestamp(os.path.getmtime(j["log"])).astimezone()
+        except OSError:
+            print(f"  {slug}: no log at {j['log']}, left as never")
+            continue
+        append(slug, "ok", when)
+        print(f"  {slug}: seeded ok at {fmt(when)}")
+
+
+def test():
+    assert max_gap({"Weekday": 0, "Hour": 3, "Minute": 0}) == timedelta(days=7)
+    assert max_gap({"Weekday": 7, "Hour": 3, "Minute": 0}) == timedelta(days=7)  # 7 = Sunday too
+    assert max_gap({"Day": 1, "Hour": 4, "Minute": 0}) == timedelta(days=31)
+    assert max_gap({"Minute": 50}) == timedelta(hours=1)
+    mail = [{"Hour": h, "Minute": 5} for h in range(8, 23, 2)]
+    assert max_gap(mail) == timedelta(hours=10)  # 22:05 -> 08:05
+    print("ok")
+
+
+if __name__ == "__main__":
+    arg = sys.argv[1] if len(sys.argv) > 1 else ""
+    if arg == "--test":
+        test()
+    elif arg == "--seed":
+        seed()
+    elif arg == "--agent":
+        sys.exit(1 if agent() else 0)
+    elif arg in ("-h", "--help"):
+        print(__doc__)
+    else:
+        rows, unknown = evaluate()
+        if arg != "--quiet":
+            for state, slug, ok, fail, nxt in sorted(rows, key=lambda r: (r[0] == "up", r[1])):
+                print(f"{state}\t{slug}\tok {fmt(ok)}\tfail {fmt(fail)}\tnext {fmt(nxt)}")
+            for slug in unknown:
+                print(f"unknown\t{slug}\t(no installed plist; ad-hoc run?)")
+        sys.exit(1 if any(r[0] in ("down", "never") for r in rows) else 0)

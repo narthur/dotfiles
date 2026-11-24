@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Usage: cron-run <logname> <command> [args...]
 #
-# Timestamps a scheduled job's output into ~/.local/log/<logname>.log, heartbeats
-# Healthchecks.io using <logname> as the check slug, and propagates the job's
+# Timestamps a scheduled job's output into ~/.local/log/<logname>.log, records
+# a heartbeat via hc-ping (job-runs.tsv) using <logname> as the slug, and propagates the job's
 # real exit status.
 #
 # The exit status matters: piping the command through the timestamping loop makes
