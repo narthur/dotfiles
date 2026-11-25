@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Usage: wait-for-net [max_seconds]   (default 300)
+#
+# Block until DNS resolves, then exit 0. Gives up silently after max_seconds and
+# still exits 0, so the job runs and fails on its own terms if the network never
+# comes back. Never makes a job worse than it was.
+#
+# Why: launchd fires calendar jobs at dark/maintenance wakes before Wi-Fi is up.
+# finance-sync (Errno 8), mail-clip (TLS timeout) and cards-gen all failed this
+# way in Nov 2026, and a failed daily run stays "down" in job-health for 24h.
+# getaddrinfo is the exact call that failed, so it is the test.
+max=${1:-300}
+for ((t = 0; t < max; t += 10)); do
+    python3 -c 'import socket; socket.getaddrinfo("apple.com", 443)' 2>/dev/null && exit 0
+    [ "$t" -eq 0 ] && echo "wait-for-net: no DNS, waiting up to ${max}s"
+    sleep 10
+done
+echo "wait-for-net: still no DNS after ${max}s, running anyway"
+exit 0

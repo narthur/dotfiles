@@ -55,3 +55,5 @@ eval "$(atuin init zsh)"
 
 # Disable Claude Code mouse click capture (stops accidental prompt submits; keeps scroll + restores terminal link/text selection)
 export CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1
+
+alias claude='taskpolicy -c utility claude'
